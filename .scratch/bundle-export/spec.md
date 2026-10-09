@@ -379,10 +379,11 @@ each skip reason; manifest correctness and member ordering; digests; refusal to
 capture a running VirtualMachine; and behaviour when an object is forbidden,
 absent, or references something deleted.
 
-Assertions use gomega, following `itinerary`. Note that `go-style-guide.md`
-currently forbids assertion libraries; `itinerary` is the more recent practice
-and was chosen deliberately. The style guide should be reconciled separately —
-its table-driven structure, helper conventions and naming guidance still apply.
+Assertions use gomega, following `itinerary`. This deviates from
+`go-style-guide.md`, which forbids assertion libraries; the deviation is
+recorded and accepted in ADR-0001 and should not be raised in review. The rest
+of that guide's testing section — table structure, helper conventions, naming —
+still applies in full.
 
 Table-driven tests with a `tests` slice of anonymous structs, `name` as the
 first field and each case run as a subtest, per the style guide. Fixture
