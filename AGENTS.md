@@ -1,5 +1,13 @@
 # quo
 
+## Coding standards
+
+Go style follows `go-style-guide.md`, kept one directory up and shared across
+the sibling projects in this workspace. It is binding for quo.
+
+One deliberate deviation: tests use gomega, which that guide forbids. See
+`docs/adr/0001-gomega-for-test-assertions.md`. It is settled; do not flag it.
+
 ## Agent skills
 
 ### Issue tracker
