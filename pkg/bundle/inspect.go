@@ -1,0 +1,56 @@
+package bundle
+
+import (
+	"fmt"
+	"io"
+	"text/tabwriter"
+	"time"
+)
+
+// Inspect reads the bundle from in, verifies it, and writes a description of
+// what it holds to out. It contacts no cluster.
+func Inspect(in io.Reader, out io.Writer) (err error) {
+	manifest, err := Read(in)
+	if err != nil {
+		return
+	}
+	err = describe(out, manifest)
+	return
+}
+
+// describe writes a manifest in a form meant to be read by a person.
+//
+// Write errors are discarded per line because tabwriter reports them again
+// from Flush, which is checked.
+func describe(out io.Writer, manifest *Manifest) (err error) {
+	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	provenance := manifest.Provenance
+	_, _ = fmt.Fprintf(tw, "Format version:\t%s\n", manifest.FormatVersion)
+	_, _ = fmt.Fprintf(tw, "\nProvenance\n")
+	_, _ = fmt.Fprintf(tw, "  Source cluster:\t%s\n", orUnknown(provenance.SourceCluster))
+	_, _ = fmt.Fprintf(tw, "  Namespace:\t%s\n", provenance.Namespace)
+	_, _ = fmt.Fprintf(tw, "  VirtualMachine:\t%s\n", provenance.VirtualMachine)
+	_, _ = fmt.Fprintf(tw, "  Captured at:\t%s\n", provenance.CapturedAt.UTC().Format(time.RFC3339))
+	_, _ = fmt.Fprintf(tw, "  KubeVirt version:\t%s\n", orUnknown(provenance.KubeVirtVersion))
+	_, _ = fmt.Fprintf(tw, "  Kubernetes version:\t%s\n", orUnknown(provenance.KubernetesVersion))
+	_, _ = fmt.Fprintf(tw, "\nMembers (%d), digests verified\n", len(manifest.Members))
+	for i := range manifest.Members {
+		member := manifest.Members[i]
+		_, _ = fmt.Fprintf(tw, "  %s\t%d bytes\t%s\n", member.Path, member.Size, member.Digest)
+	}
+	err = tw.Flush()
+	if err != nil {
+		err = fmt.Errorf("write description: %w", err)
+		return
+	}
+	return
+}
+
+// orUnknown renders a value quo was not able to read.
+func orUnknown(value string) (rendered string) {
+	rendered = value
+	if rendered == "" {
+		rendered = "(unknown)"
+	}
+	return
+}
