@@ -1,4 +1,4 @@
-# kvo
+# quo
 
 ## Agent skills
 
