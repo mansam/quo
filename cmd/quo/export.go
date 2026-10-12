@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -29,6 +30,7 @@ func runExport(args []string) (err error) {
 	if err != nil {
 		return
 	}
+	parsed.opt.Progress = newReporter(os.Stderr)
 	err = capture.ExportToFile(context.TODO(), c, parsed.opt, parsed.output)
 	if err != nil {
 		return
@@ -39,6 +41,49 @@ func runExport(args []string) (err error) {
 		parsed.opt.Namespace,
 		parsed.opt.Name,
 		parsed.output)
+	return
+}
+
+// newReporter returns the progress reporter the CLI uses. It rewrites one
+// line of out while a disk transfers and starts a new line once the disk has
+// finished, so that a capture taking hours can be told apart from one that
+// has stopped making progress.
+//
+// Progress goes to standard error so that standard output stays the result of
+// the command.
+func newReporter(out io.Writer) (report func(p capture.Progress)) {
+	report = func(p capture.Progress) {
+		ending := "\r"
+		if p.Done {
+			ending = "\n"
+		}
+		_, _ = fmt.Fprintf(
+			out,
+			"disk %d/%d %s (%s): %s%s",
+			p.Disk,
+			p.Disks,
+			p.Claim,
+			strings.Join(p.Volumes, ", "),
+			formatSize(p.Transferred),
+			ending)
+	}
+	return
+}
+
+// formatSize renders a byte count for a person.
+func formatSize(count int64) (rendered string) {
+	const unit = 1024
+	if count < unit {
+		rendered = fmt.Sprintf("%d B", count)
+		return
+	}
+	divisor := int64(unit)
+	at := 0
+	for remaining := count / unit; remaining >= unit; remaining /= unit {
+		divisor *= unit
+		at++
+	}
+	rendered = fmt.Sprintf("%.1f %ciB", float64(count)/float64(divisor), "KMGTPE"[at])
 	return
 }
 

@@ -3,6 +3,8 @@ package bundle
 import (
 	"archive/tar"
 	"bytes"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -13,7 +15,13 @@ import (
 // The carried object the fixtures put in a bundle.
 const objectPath = "objects/virtualmachine/db-01.yaml"
 
+// The claim behind the disk the fixtures stage.
+const diskClaim = "db-01-root"
+
 var objectBody = []byte("apiVersion: kubevirt.io/v1\nkind: VirtualMachine\n")
+
+// Stand-in for the compressed bytes an export server sends.
+var diskBody = []byte("\x1f\x8b\x08not really gzip, but opaque to quo")
 
 func TestReadReturnsTheManifestOfABundleItWrote(t *testing.T) {
 	g := gomega.NewGomegaWithT(t)
@@ -174,17 +182,97 @@ func TestInspectReportsAVersionItCouldNotRead(t *testing.T) {
 	g := gomega.NewGomegaWithT(t)
 	provenance := testProvenance()
 	provenance.KubeVirtVersion = ""
-	writer := &Writer{}
-	writer.Add(objectPath, objectBody)
-	captured := &bytes.Buffer{}
-	err := writer.Write(captured, provenance)
-	g.Expect(err).ToNot(gomega.HaveOccurred())
+	captured := writeBundle(t, provenance)
 	described := &bytes.Buffer{}
 
-	err = Inspect(bytes.NewReader(captured.Bytes()), described)
+	err := Inspect(bytes.NewReader(captured), described)
 
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	g.Expect(described.String()).To(gomega.ContainSubstring("(unknown)"))
+}
+
+func TestWriterStagesADiskWithoutHoldingItInMemory(t *testing.T) {
+	g := gomega.NewGomegaWithT(t)
+	disk := testDisk()
+
+	archive := writeBundle(t, testProvenance(), staged(t, disk))
+
+	manifest, err := Read(bytes.NewReader(archive))
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	g.Expect(manifest.Disks).To(gomega.Equal([]Disk{disk}))
+	// The disk is indexed with the size and digest it turned out to have, not
+	// the widest values the reservation was sized from.
+	g.Expect(manifest.Members).To(gomega.ContainElement(Member{
+		Path:   disk.Path,
+		Size:   int64(len(diskBody)),
+		Digest: digest(diskBody),
+	}))
+}
+
+func TestWriterFillsTheManifestInWhateverPrecisionTheCaptureTimeHas(t *testing.T) {
+	tests := []struct {
+		name       string
+		capturedAt time.Time
+	}{
+		{
+			name:       "a capture time on the second writes a plain tar header",
+			capturedAt: time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC),
+		},
+		{
+			// Which puts a record of its own in front of the manifest.
+			name:       "a capture time with nanoseconds writes an extended tar header",
+			capturedAt: time.Date(2026, 10, 9, 12, 0, 0, 123456789, time.UTC),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := gomega.NewGomegaWithT(t)
+			provenance := testProvenance()
+			provenance.CapturedAt = tt.capturedAt
+
+			archive := writeBundle(t, provenance, staged(t, testDisk()))
+
+			manifest, err := Read(bytes.NewReader(archive))
+			g.Expect(err).ToNot(gomega.HaveOccurred())
+			g.Expect(manifest.Provenance.CapturedAt).To(gomega.BeTemporally("==", tt.capturedAt))
+			g.Expect(manifest.Disks).To(gomega.HaveLen(1))
+		})
+	}
+}
+
+func TestWriterReportsADiskThatWasDeclaredButNeverStaged(t *testing.T) {
+	g := gomega.NewGomegaWithT(t)
+	file, err := os.Create(filepath.Join(t.TempDir(), "bundle"))
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	defer func() {
+		_ = file.Close()
+	}()
+	writer := NewWriter(file)
+	writer.Reserve(testDisk())
+	err = writer.Open(testProvenance())
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+
+	err = writer.Close()
+
+	g.Expect(err).To(gomega.HaveOccurred())
+	g.Expect(err.Error()).To(gomega.ContainSubstring("never staged"))
+}
+
+func TestInspectListsTheDisksAndTheVolumesEachServes(t *testing.T) {
+	g := gomega.NewGomegaWithT(t)
+	disk := testDisk()
+	archive := writeBundle(t, testProvenance(), staged(t, disk))
+	described := &bytes.Buffer{}
+
+	err := Inspect(bytes.NewReader(archive), described)
+
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	report := described.String()
+	g.Expect(report).To(gomega.ContainSubstring("Disks (1)"))
+	g.Expect(report).To(gomega.ContainSubstring("db-01-root"))
+	g.Expect(report).To(gomega.ContainSubstring(string(DiskGzip)))
+	g.Expect(report).To(gomega.ContainSubstring("rootdisk, clone-of-rootdisk"))
 }
 
 // rawMember is a tar member written exactly as given.
@@ -227,15 +315,93 @@ func tarball(t *testing.T, members ...rawMember) (archive []byte) {
 // validBundle builds a bundle carrying one object.
 func validBundle(t *testing.T) (archive []byte) {
 	t.Helper()
-	writer := &Writer{}
-	writer.Add(objectPath, objectBody)
-	buf := &bytes.Buffer{}
-	err := writer.Write(buf, testProvenance())
-	if err != nil {
-		t.Fatalf("write bundle: %v", err)
-	}
-	archive = buf.Bytes()
+	archive = writeBundle(t, testProvenance())
 	return
+}
+
+// stagedDisk is a disk a test stages into a bundle out of a file, the way a
+// capture stages one it has just downloaded.
+type stagedDisk struct {
+	disk   Disk
+	source string
+}
+
+// writeBundle writes a bundle carrying the fixture object and the given
+// disks, and returns the bytes that landed on disk.
+func writeBundle(t *testing.T, provenance Provenance, disks ...stagedDisk) (archive []byte) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "bundle")
+	file, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("create bundle: %v", err)
+	}
+	defer func() {
+		_ = file.Close()
+	}()
+	writer := NewWriter(file)
+	writer.Add(objectPath, objectBody)
+	for i := range disks {
+		writer.Reserve(disks[i].disk)
+	}
+	err = writer.Open(provenance)
+	if err != nil {
+		t.Fatalf("open bundle: %v", err)
+	}
+	for i := range disks {
+		stage(t, writer, disks[i])
+	}
+	err = writer.Close()
+	if err != nil {
+		t.Fatalf("close bundle: %v", err)
+	}
+	archive, err = os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read bundle: %v", err)
+	}
+	return
+}
+
+// testDisk is the disk the fixtures stage: one claim, two volumes.
+func testDisk() (disk Disk) {
+	disk = Disk{
+		Claim:   diskClaim,
+		Path:    DiskPath(diskClaim, DiskGzip),
+		Format:  DiskGzip,
+		Volumes: []string{"rootdisk", "clone-of-rootdisk"},
+	}
+	return
+}
+
+// staged writes the fixture disk content to a file for the writer to pick up.
+func staged(t *testing.T, disk Disk) (ready stagedDisk) {
+	t.Helper()
+	source := filepath.Join(t.TempDir(), "disk")
+	err := os.WriteFile(source, diskBody, 0o600)
+	if err != nil {
+		t.Fatalf("stage disk: %v", err)
+	}
+	ready = stagedDisk{disk: disk, source: source}
+	return
+}
+
+// stage writes one staged disk into the bundle.
+func stage(t *testing.T, writer *Writer, ready stagedDisk) {
+	t.Helper()
+	file, err := os.Open(ready.source)
+	if err != nil {
+		t.Fatalf("open staged disk: %v", err)
+	}
+	defer func() {
+		_ = file.Close()
+	}()
+	info, err := file.Stat()
+	if err != nil {
+		t.Fatalf("measure staged disk: %v", err)
+	}
+	err = writer.Stage(ready.disk.Path, file, info.Size())
+	if err != nil {
+		t.Fatalf("stage disk %q: %v", ready.disk.Claim, err)
+	}
 }
 
 // indexing builds a manifest that correctly indexes the carried object, for
