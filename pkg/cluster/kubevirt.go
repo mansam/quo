@@ -2,15 +2,15 @@ package cluster
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"io"
 
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 )
 
@@ -38,6 +38,8 @@ var (
 type KubeVirt struct {
 	dynamic   dynamic.Interface
 	discovery discovery.DiscoveryInterface
+	core      kubernetes.Interface
+	config    *rest.Config
 	host      string
 }
 
@@ -65,9 +67,16 @@ func NewKubeVirt(kubeconfig string) (c *KubeVirt, err error) {
 		err = fmt.Errorf("build discovery client: %w", err)
 		return
 	}
+	coreClient, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		err = fmt.Errorf("build core client: %w", err)
+		return
+	}
 	c = &KubeVirt{
 		dynamic:   dynamicClient,
 		discovery: discoveryClient,
+		core:      coreClient,
+		config:    config,
 		host:      config.Host,
 	}
 	return
@@ -101,11 +110,20 @@ func (r *KubeVirt) GetInfo(ctx context.Context) (info Info, err error) {
 	return
 }
 
-// OpenDisk is not implemented in this build. Disks arrive with
-// VirtualMachineExport support. The method is part of the interface already so
-// that its shape is settled and no test ever needs an HTTP server.
-func (r *KubeVirt) OpenDisk(ctx context.Context, namespace, claim string) (stream io.ReadCloser, err error) {
-	err = errors.New("capturing disks is not implemented in this build")
+// ExportDisks creates a VirtualMachineExport for the named VirtualMachine and
+// waits for it to become ready.
+func (r *KubeVirt) ExportDisks(ctx context.Context, namespace, name string) (export DiskExport, err error) {
+	created, err := newVMExport(r, namespace, name)
+	if err != nil {
+		return
+	}
+	err = created.start(ctx)
+	if err != nil {
+		// Anything created before the failure is removed again.
+		_ = created.Close()
+		return
+	}
+	export = created
 	return
 }
 

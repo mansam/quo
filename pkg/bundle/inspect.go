@@ -3,6 +3,7 @@ package bundle
 import (
 	"fmt"
 	"io"
+	"strings"
 	"text/tabwriter"
 	"time"
 )
@@ -33,6 +34,7 @@ func describe(out io.Writer, manifest *Manifest) (err error) {
 	_, _ = fmt.Fprintf(tw, "  Captured at:\t%s\n", provenance.CapturedAt.UTC().Format(time.RFC3339))
 	_, _ = fmt.Fprintf(tw, "  KubeVirt version:\t%s\n", orUnknown(provenance.KubeVirtVersion))
 	_, _ = fmt.Fprintf(tw, "  Kubernetes version:\t%s\n", orUnknown(provenance.KubernetesVersion))
+	describeDisks(tw, manifest)
 	_, _ = fmt.Fprintf(tw, "\nMembers (%d), digests verified\n", len(manifest.Members))
 	for i := range manifest.Members {
 		member := manifest.Members[i]
@@ -44,6 +46,29 @@ func describe(out io.Writer, manifest *Manifest) (err error) {
 		return
 	}
 	return
+}
+
+// describeDisks writes the disks a bundle carries and the volumes each one
+// serves. A bundle carrying no disks produces no output here.
+func describeDisks(out io.Writer, manifest *Manifest) {
+	if len(manifest.Disks) == 0 {
+		return
+	}
+	sizeOf := make(map[string]int64, len(manifest.Members))
+	for i := range manifest.Members {
+		sizeOf[manifest.Members[i].Path] = manifest.Members[i].Size
+	}
+	_, _ = fmt.Fprintf(out, "\nDisks (%d)\n", len(manifest.Disks))
+	for i := range manifest.Disks {
+		disk := manifest.Disks[i]
+		_, _ = fmt.Fprintf(
+			out,
+			"  %s\t%d bytes\t%s\tvolumes: %s\n",
+			disk.Claim,
+			sizeOf[disk.Path],
+			disk.Format,
+			strings.Join(disk.Volumes, ", "))
+	}
 }
 
 // orUnknown renders a value quo was not able to read.

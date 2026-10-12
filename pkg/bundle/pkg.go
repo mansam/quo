@@ -24,6 +24,22 @@ const (
 	ManifestPath = "manifest.yaml"
 	// ObjectsDir groups the objects a bundle carries.
 	ObjectsDir = "objects"
+	// DisksDir groups the disks a bundle carries.
+	DisksDir = "disks"
+)
+
+// DiskFormat names the form a disk is stored in. quo compresses nothing
+// itself, so this records what the export server sent.
+type DiskFormat string
+
+// Disk formats
+const (
+	// DiskGzip is a gzip-compressed raw disk image.
+	DiskGzip DiskFormat = "gzip"
+	// DiskArchiveGzip is a gzip-compressed tar of a filesystem volume's
+	// content, which is the compressed form offered for a volume that holds
+	// files rather than a block device.
+	DiskArchiveGzip DiskFormat = "tar.gz"
 )
 
 // VirtualMachinePath is where the named VirtualMachine sits inside a bundle.
@@ -31,5 +47,19 @@ const (
 // path of its own.
 func VirtualMachinePath(name string) (member string) {
 	member = path.Join(ObjectsDir, "virtualmachine", name+".yaml")
+	return
+}
+
+// DiskPath is where the disk backing the named PersistentVolumeClaim sits
+// inside a bundle. The extension says which compressed form the bytes are in.
+func DiskPath(claim string, format DiskFormat) (member string) {
+	extension := ".gz"
+	switch format {
+	case DiskArchiveGzip:
+		extension = ".tar.gz"
+	case DiskGzip:
+		extension = ".gz"
+	}
+	member = path.Join(DisksDir, claim+extension)
 	return
 }

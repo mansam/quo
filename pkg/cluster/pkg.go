@@ -17,10 +17,46 @@ type Cluster interface {
 	GetVirtualMachine(ctx context.Context, namespace, name string) (vm *unstructured.Unstructured, err error)
 	// GetInfo returns what a bundle records about the cluster it came from.
 	GetInfo(ctx context.Context) (info Info, err error)
-	// OpenDisk opens a byte stream carrying the disk that backs the named
-	// PersistentVolumeClaim. The caller closes it.
-	OpenDisk(ctx context.Context, namespace, claim string) (stream io.ReadCloser, err error)
+	// ExportDisks creates a VirtualMachineExport for the named VirtualMachine
+	// and waits for it to become ready. The caller closes the result, which
+	// removes the export from the cluster.
+	ExportDisks(ctx context.Context, namespace, name string) (export DiskExport, err error)
 }
+
+// DiskExport is a VirtualMachineExport that has become ready: the disks of one
+// VirtualMachine, each addressed by the PersistentVolumeClaim behind it.
+type DiskExport interface {
+	// Disks returns what the export offers, in the order its status lists it.
+	Disks() (disks []ExportedDisk)
+	// OpenDisk opens the byte stream carrying the disk that backs the named
+	// PersistentVolumeClaim. The caller closes it.
+	OpenDisk(ctx context.Context, claim string) (stream io.ReadCloser, err error)
+	// Close removes the export from the cluster.
+	Close() (err error)
+}
+
+// ExportedDisk is one disk an export offers.
+type ExportedDisk struct {
+	// Claim is the PersistentVolumeClaim the disk is held in.
+	Claim string
+	// Format is the compressed form the bytes arrive in.
+	Format DiskFormat
+}
+
+// DiskFormat names the form a disk arrives in. quo always asks for a
+// compressed one, so that a sparsely used volume transfers at roughly its used
+// size rather than its provisioned size.
+type DiskFormat string
+
+// Disk formats
+const (
+	// FormatGzip is a gzip-compressed raw disk image, which is what a volume
+	// holding a block device is offered as.
+	FormatGzip DiskFormat = "gzip"
+	// FormatArchiveGzip is a gzip-compressed tar, which is what a volume
+	// holding files is offered as.
+	FormatArchiveGzip DiskFormat = "tar.gz"
+)
 
 // Info describes the cluster a bundle was captured from.
 //

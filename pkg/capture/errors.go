@@ -1,6 +1,31 @@
 package capture
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
+
+// DiskNotExportedError reports a claim the VirtualMachine references that the
+// export does not offer. Capturing without it would produce a bundle missing
+// one of the machine's disks, which is worse than no bundle at all.
+type DiskNotExportedError struct {
+	Claim   string
+	Volumes []string
+}
+
+// Error names the claim and the volumes that would have been served by it.
+func (r *DiskNotExportedError) Error() string {
+	return fmt.Sprintf(
+		"the export offers no disk for PersistentVolumeClaim %q, which backs volume %s",
+		r.Claim,
+		strings.Join(r.Volumes, ", "))
+}
+
+// Is reports whether err is a DiskNotExportedError.
+func (r *DiskNotExportedError) Is(err error) (matched bool) {
+	_, matched = err.(*DiskNotExportedError)
+	return
+}
 
 // NotStoppedError reports a VirtualMachine that quo will not capture because
 // it is not stopped. Capturing a running VirtualMachine would read its disks

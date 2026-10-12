@@ -11,6 +11,7 @@ type Manifest struct {
 	FormatVersion string     `json:"formatVersion"`
 	Provenance    Provenance `json:"provenance"`
 	Members       []Member   `json:"members"`
+	Disks         []Disk     `json:"disks,omitempty"`
 }
 
 // Provenance is what a bundle records about where it came from, so that a
@@ -31,4 +32,22 @@ type Member struct {
 	Path   string `json:"path"`
 	Size   int64  `json:"size"`
 	Digest string `json:"digest"`
+}
+
+// Disk maps the volumes of the captured VirtualMachine onto the bundle member
+// holding their content.
+//
+// A disk is keyed by the PersistentVolumeClaim that backs it rather than by
+// volume name. A VirtualMachine's volumes are a named list and nothing stops
+// two of them referencing one claim, so keying by volume name would store the
+// same bytes twice. Volumes is therefore a list: a member serving two volumes
+// records both.
+//
+// Format names what the bytes are. quo stores what the export server sent and
+// compresses nothing itself, so a reader needs to be told which form arrived.
+type Disk struct {
+	Claim   string     `json:"claim"`
+	Path    string     `json:"path"`
+	Format  DiskFormat `json:"format"`
+	Volumes []string   `json:"volumes"`
 }

@@ -15,13 +15,18 @@ import (
 	"github.com/mansam/kvo/pkg/cluster"
 )
 
-// Export captures the VirtualMachine named in opt and writes a bundle to w.
+// Export captures the VirtualMachine named in opt and writes a bundle to out.
 //
 // It refuses a VirtualMachine that is not stopped, before writing anything.
 // The VirtualMachine is carried exactly as the cluster returned it: quo
 // normalises nothing, so MAC addresses, firmware UUID, serial and chassis
 // values travel as they are.
-func Export(ctx context.Context, c cluster.Cluster, opt Options, w io.Writer) (err error) {
+//
+// The destination is seekable because the manifest is the first member of a
+// bundle and indexes every other one, including disks whose size and digest
+// are only known once they have arrived. The writer reserves room for the
+// manifest at the front and fills it in at the end.
+func Export(ctx context.Context, c cluster.Cluster, opt Options, out io.WriteSeeker) (err error) {
 	vm, err := c.GetVirtualMachine(ctx, opt.Namespace, opt.Name)
 	if err != nil {
 		return
@@ -44,7 +49,7 @@ func Export(ctx context.Context, c cluster.Cluster, opt Options, w io.Writer) (e
 		err = fmt.Errorf("marshal VirtualMachine %s/%s: %w", opt.Namespace, opt.Name, err)
 		return
 	}
-	writer := &bundle.Writer{}
+	writer := bundle.NewWriter(out)
 	writer.Add(bundle.VirtualMachinePath(opt.Name), encoded)
 	provenance := bundle.Provenance{
 		SourceCluster:     info.SourceCluster,
@@ -54,7 +59,28 @@ func Export(ctx context.Context, c cluster.Cluster, opt Options, w io.Writer) (e
 		KubeVirtVersion:   info.KubeVirtVersion,
 		KubernetesVersion: info.KubernetesVersion,
 	}
-	err = writer.Write(w, provenance)
+	claims := claimedVolumes(vm)
+	if len(claims) == 0 {
+		err = writeBundle(ctx, writer, provenance, nil)
+		return
+	}
+	// The export is created before anything is written and removed whatever
+	// happens afterwards.
+	export, err := c.ExportDisks(ctx, opt.Namespace, opt.Name)
+	if err != nil {
+		return
+	}
+	defer func() {
+		// A capture that has just spent hours transferring disks is not worth
+		// failing over an export that outlives it, and the export expires on
+		// its own. The capture record will record this once it exists.
+		_ = export.Close()
+	}()
+	transfers, err := planTransfers(claims, export, opt)
+	if err != nil {
+		return
+	}
+	err = writeBundle(ctx, writer, provenance, transfers)
 	return
 }
 
@@ -62,8 +88,13 @@ func Export(ctx context.Context, c cluster.Cluster, opt Options, w io.Writer) (e
 //
 // The bundle is written beside dest under a temporary name and moved into
 // place only once the capture has succeeded, so a capture that fails part-way
-// leaves no bundle behind to be mistaken for a whole one.
+// leaves no bundle behind to be mistaken for a whole one. Disks are staged
+// beside it too, because the directory the user chose for the bundle is the
+// one they chose for having room.
 func ExportToFile(ctx context.Context, c cluster.Cluster, opt Options, dest string) (err error) {
+	if opt.Scratch == "" {
+		opt.Scratch = filepath.Dir(dest)
+	}
 	partial, err := os.CreateTemp(filepath.Dir(dest), ".quo-*.partial")
 	if err != nil {
 		err = fmt.Errorf("create temporary bundle: %w", err)
