@@ -2,11 +2,11 @@ package main
 
 import (
 	"context"
-	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/mansam/quo/pkg/bundle"
@@ -21,6 +21,9 @@ type exportArgs struct {
 	kubeconfig string
 }
 
+// bundleExtension is what the name of a bundle file ends in.
+const bundleExtension = ".quo"
+
 // runExport captures a VirtualMachine into a bundle.
 func runExport(args []string) (err error) {
 	parsed, err := parseExportArgs(args)
@@ -32,7 +35,8 @@ func runExport(args []string) (err error) {
 		return
 	}
 	parsed.opt.Progress = newReporter(os.Stderr)
-	record, err := capture.ExportToFile(context.TODO(), c, parsed.opt, parsed.output)
+	dest := bundleDest(parsed.output, parsed.opt.Name)
+	record, err := capture.ExportToFile(context.TODO(), c, parsed.opt, dest)
 	if err != nil {
 		return
 	}
@@ -41,7 +45,7 @@ func runExport(args []string) (err error) {
 		"Captured %s/%s to %s\n",
 		parsed.opt.Namespace,
 		parsed.opt.Name,
-		parsed.output)
+		dest)
 	if err != nil {
 		return
 	}
@@ -126,8 +130,8 @@ func parseExportArgs(args []string) (parsed exportArgs, err error) {
 	fs := flag.NewFlagSet("export", flag.ContinueOnError)
 	fs.StringVar(&parsed.opt.Namespace, "n", "", "namespace of the VirtualMachine")
 	fs.StringVar(&parsed.opt.Namespace, "namespace", "", "namespace of the VirtualMachine")
-	fs.StringVar(&parsed.output, "o", "", "path to write the bundle to")
-	fs.StringVar(&parsed.output, "output", "", "path to write the bundle to")
+	fs.StringVar(&parsed.output, "o", "", "directory or file to write the bundle to")
+	fs.StringVar(&parsed.output, "output", "", "directory or file to write the bundle to")
 	fs.StringVar(&parsed.kubeconfig, "kubeconfig", "", "path to a kubeconfig file")
 	positional, err := parseFlags(fs, args)
 	if err != nil {
@@ -138,7 +142,7 @@ func parseExportArgs(args []string) (parsed exportArgs, err error) {
 	if err != nil {
 		return
 	}
-	err = validateExport(parsed.opt, parsed.output)
+	err = validateVirtualMachine(parsed.opt)
 	return
 }
 
@@ -159,16 +163,30 @@ func onlyVirtualMachine(positional []string) (name string, err error) {
 	return
 }
 
-// validateExport checks the command line names a VirtualMachine and somewhere
-// to put it.
-func validateExport(opt capture.Options, output string) (err error) {
-	err = validateVirtualMachine(opt)
+// bundleDest returns the path to write the bundle to, given the output path
+// from the command line and the name of the VirtualMachine.
+//
+// An output path that names a directory, and no output path at all, both mean
+// the bundle is named after the VirtualMachine: the first writes it in that
+// directory, the second in the current one. Any other output path is the path
+// of the bundle file itself.
+//
+// An output path that cannot be read is taken to be a file, so that a path
+// under a directory that does not exist is reported by the capture rather than
+// turned into a directory name it never had.
+func bundleDest(output string, name string) (dest string) {
+	dest = output
+	if output == "" {
+		dest = name + bundleExtension
+		return
+	}
+	info, err := os.Stat(output)
 	if err != nil {
 		return
 	}
-	if output == "" {
-		err = errors.New("an output path is required: -o <path>")
+	if !info.IsDir() {
 		return
 	}
+	dest = filepath.Join(output, name+bundleExtension)
 	return
 }

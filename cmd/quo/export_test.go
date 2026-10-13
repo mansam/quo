@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -42,6 +44,57 @@ func TestExportSaysOnCompletionWhatItCouldNotCollect(t *testing.T) {
 	g.Expect(said).To(gomega.ContainSubstring("Skipped 2 of 3 objects"))
 	g.Expect(said).To(gomega.ContainSubstring("Secret db-01-cloudinit: forbidden"))
 	g.Expect(said).To(gomega.ContainSubstring("KubeVirt: forbidden"))
+}
+
+func TestExportNamesTheBundleWhenTheOutputPathDoesNot(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "chosen.quo")
+	err := os.WriteFile(file, nil, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name   string
+		output string
+		want   string
+	}{
+		{
+			name:   "no output path is the VirtualMachine's name here",
+			output: "",
+			want:   "db-01.quo",
+		},
+		{
+			name:   "the current directory is named as any other directory is",
+			output: ".",
+			want:   filepath.Join(".", "db-01.quo"),
+		},
+		{
+			name:   "a directory holds a bundle named after the VirtualMachine",
+			output: dir,
+			want:   filepath.Join(dir, "db-01.quo"),
+		},
+		{
+			name:   "an existing file is the bundle itself",
+			output: file,
+			want:   file,
+		},
+		{
+			name:   "a path that does not exist yet is the bundle itself",
+			output: filepath.Join(dir, "not-here-yet.quo"),
+			want:   filepath.Join(dir, "not-here-yet.quo"),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := gomega.NewGomegaWithT(t)
+
+			dest := bundleDest(tt.output, "db-01")
+
+			g.Expect(dest).To(gomega.Equal(tt.want))
+		})
+	}
 }
 
 func TestExportProgressCoversTheLineItReplaces(t *testing.T) {

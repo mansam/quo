@@ -42,6 +42,13 @@ func TestExportAcceptsFlagsOnEitherSideOfTheName(t *testing.T) {
 			wantVM:        "db-01",
 			wantOutput:    "/tmp/db-01.bundle",
 		},
+		{
+			name:          "no output path, which is allowed",
+			args:          []string{"-n", "support-cases", "db-01"},
+			wantNamespace: "support-cases",
+			wantVM:        "db-01",
+			wantOutput:    "",
+		},
 	}
 
 	for _, tt := range tests {
@@ -70,10 +77,6 @@ func TestExportRejectsACommandLineItCannotActOn(t *testing.T) {
 		{
 			name: "no VirtualMachine name is rejected",
 			args: []string{"-n", "support-cases", "-o", "/tmp/db-01.bundle"},
-		},
-		{
-			name: "no output path is rejected",
-			args: []string{"-n", "support-cases", "db-01"},
 		},
 		{
 			name: "a second VirtualMachine name is rejected",
