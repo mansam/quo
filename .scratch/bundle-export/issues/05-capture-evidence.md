@@ -16,22 +16,36 @@ capture).
 
 **Status:** ready-for-agent
 
-- [ ] Captures the StorageClass behind each PersistentVolumeClaim
-- [ ] Captures the CDI StorageProfile for each of those StorageClasses, which is
+- [x] Captures the StorageClass behind each PersistentVolumeClaim
+- [x] Captures the CDI StorageProfile for each of those StorageClasses, which is
       what actually decided the volume mode and access modes a disk got
-- [ ] Captures the bound PersistentVolume for each claim, showing real capacity,
+- [x] Captures the bound PersistentVolume for each claim, showing real capacity,
       CSI driver and volume attributes rather than what was requested
-- [ ] Captures KubeVirt's own configuration, above all its enabled feature gates
-- [ ] Calls the expand-spec subresource and records the result as evidence
-- [ ] quo does **not** use the expanded form to rewrite the VirtualMachine; it
+- [x] Captures KubeVirt's own configuration, above all its enabled feature gates
+- [x] Calls the expand-spec subresource and records the result as evidence
+- [x] quo does **not** use the expanded form to rewrite the VirtualMachine; it
       is captured because expansion is version-dependent and a difference
       between the source cluster's resolution and the target's is a plausible
       cause of the problem being investigated
-- [ ] Evidence is stored separately from carried objects in the bundle and
+- [x] Evidence is stored separately from carried objects in the bundle and
       distinguished in the manifest
-- [ ] CDI not being installed is recorded as **not installed** in the capture
+- [x] CDI not being installed is recorded as **not installed** in the capture
       record, not treated as an error
-- [ ] Forbidden cluster-scoped reads are recorded and the capture proceeds
-- [ ] `quo inspect` presents evidence distinctly from carried objects
-- [ ] Tests cover each evidence source, CDI being absent, and a namespace-scoped
+- [x] Forbidden cluster-scoped reads are recorded and the capture proceeds
+- [x] `quo inspect` presents evidence distinctly from carried objects
+- [x] Tests cover each evidence source, CDI being absent, and a namespace-scoped
       caller who can read none of it
+
+## Comments
+
+The vocabulary in this ticket is superseded. A bundle no longer sorts what it
+collects into carried objects and evidence: it holds one set of resources, and
+the capture record's outcomes are collected, required and skipped. The source
+cluster's expansion of the VirtualMachine is a member of its own rather than a
+resource, recorded under its own kind. See
+`docs/adr/0002-one-set-of-resources-in-a-bundle.md` and the rewritten sections
+of `spec.md`.
+
+The acceptance item "`quo inspect` presents evidence distinctly from carried
+objects" no longer applies: there is nothing to present distinctly. What
+replaced it is that inspect names the member holding the expanded spec.

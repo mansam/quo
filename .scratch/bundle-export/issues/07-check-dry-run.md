@@ -11,20 +11,30 @@ that omitted it would miss the common failure).
 
 **Status:** ready-for-agent
 
-- [ ] `quo check` reports every object a capture would collect, with the
+- [x] `quo check` reports every object a capture would collect, with the
       disposition it would get
-- [ ] It reports everything that would be skipped, with the same reason
+- [x] It reports everything that would be skipped, with the same reason
       vocabulary as the capture record — forbidden, not found, not installed
-- [ ] It transfers no disk data and creates no VirtualMachineExport
-- [ ] It reports the local scratch space a capture would need, which is the
+- [x] It transfers no disk data and creates no VirtualMachineExport
+- [x] It reports the local scratch space a capture would need, which is the
       largest single disk rather than the total
-- [ ] It reports the total provisioned disk size, so the engineer knows the
+- [x] It reports the total provisioned disk size, so the engineer knows the
       scale of what they are about to transfer
-- [ ] It reports whether the VirtualMachine is currently running, since that
+- [x] It reports whether the VirtualMachine is currently running, since that
       would make a capture refuse
-- [ ] It exits zero when it could reach the cluster and report, even if it found
+- [x] It exits zero when it could reach the cluster and report, even if it found
       things that would be skipped; non-zero only when it could not report at
       all
-- [ ] Output is readable by a person at a terminal, not only machine-parseable
-- [ ] Tests cover a clean check, a check with forbidden evidence, and a check
+- [x] Output is readable by a person at a terminal, not only machine-parseable
+- [x] Tests cover a clean check, a check with forbidden evidence, and a check
       against a running VirtualMachine
+
+## Comments
+
+The vocabulary in this ticket is superseded. A bundle no longer sorts what it
+collects into carried objects and evidence: it holds one set of resources, and
+the capture record's outcomes are collected, required and skipped. The source
+cluster's expansion of the VirtualMachine is a member of its own rather than a
+resource, recorded under its own kind. See
+`docs/adr/0002-one-set-of-resources-in-a-bundle.md` and the rewritten sections
+of `spec.md`.

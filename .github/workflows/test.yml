@@ -1,0 +1,73 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # Everything that needs no cluster. This is the job that has to pass for
+  # everyday work.
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go build ./...
+      - run: go vet ./...
+      - run: go test ./...
+      # The live suite is excluded from the default run, so it is vetted and
+      # built here to catch a change that stops it compiling. Its tests that
+      # need a cluster skip and say so; the ones that do not still run.
+      - run: go vet -tags live ./...
+      - run: go test -tags live ./test/live/...
+
+  # Whether this repository has credentials for a cluster the live suite can
+  # use. A job-level `if` cannot read the secrets context, so the answer is
+  # worked out here and passed on as an output.
+  cluster:
+    runs-on: ubuntu-latest
+    outputs:
+      available: ${{ steps.check.outputs.available }}
+    steps:
+      - id: check
+        env:
+          KUBECONFIG_CONTENT: ${{ secrets.KUBECONFIG }}
+        run: |
+          if [ -n "$KUBECONFIG_CONTENT" ]; then
+            echo 'available=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'available=false' >> "$GITHUB_OUTPUT"
+          fi
+
+  # The live suite, which needs a KubeVirt cluster with the ObjectGraph
+  # feature gate enabled. See docs/testing-against-a-cluster.md for what the
+  # cluster must have. Where there is one, this job has to pass. Where there
+  # is not, it does not run.
+  live:
+    needs: cluster
+    if: needs.cluster.outputs.available == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Write the kubeconfig
+        env:
+          KUBECONFIG_CONTENT: ${{ secrets.KUBECONFIG }}
+        run: |
+          install -m 600 /dev/null "${RUNNER_TEMP}/kubeconfig"
+          printf '%s' "$KUBECONFIG_CONTENT" > "${RUNNER_TEMP}/kubeconfig"
+      - name: Run the live suite
+        env:
+          QUO_LIVE_KUBECONFIG: ${{ runner.temp }}/kubeconfig
+          QUO_LIVE_STORAGE_CLASS: ${{ vars.QUO_LIVE_STORAGE_CLASS }}
+        run: go test -tags live -v -timeout 40m ./test/live/...

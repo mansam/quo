@@ -10,22 +10,23 @@ problem it was captured for.
 ### The artifact
 
 **Bundle**:
-The archive quo produces: a stopped VirtualMachine, all of its disks, and its
-closure, captured faithfully enough that deploying it elsewhere reproduces
-the problem it was captured for.
+The archive quo produces: a stopped VirtualMachine, all of its disks, and
+every resource it depends on, captured faithfully enough that deploying it
+elsewhere reproduces the problem it was captured for.
 _Avoid_: appliance, image, export, backup, snapshot, archive, package
 
 **Fidelity**:
 The governing constraint on quo. A bundle must reproduce the captured VM
 closely enough that a problem present in the original is present in the
-deployment, so quo changes nothing it is not forced to change. Where
-faithfulness and convenience conflict, faithfulness wins.
+deployment, so quo changes nothing it is not forced to change. When being
+faithful to the original and being convenient conflict, quo is faithful.
 _Avoid_: accuracy, exactness, parity
 
-**Closure**:
-The set of cluster objects a VirtualMachine transitively depends on and which
-must be accounted for before the bundle is self-contained.
-_Avoid_: dependencies, references, related objects
+**Related resources**:
+The resources a VirtualMachine depends on, whether it names them itself or
+reaches them through another resource, and which must be accounted for before
+a bundle is self-contained.
+_Avoid_: closure, dependency graph, transitive dependencies
 
 **Manifest**:
 The first member of a bundle: its format version, provenance, requirements,
@@ -36,29 +37,25 @@ _Avoid_: index, header, metadata, descriptor, table of contents
 
 **Capture record**:
 The part of the manifest listing every object quo tried to capture and what
-became of it — carried, evidence, requirement, or skipped — with a reason
-for anything skipped. Lets a reader tell "this did not exist" apart from "we
-were not allowed to look".
+became of it. Lets a reader tell "this did not exist" apart from "we were not
+allowed to look".
 _Avoid_: report, log, inventory, audit, summary, results
 
-### What becomes of each dependency
+### What became of each object
 
-Every member of the closure is handled in one of these ways.
+**Outcome**:
+What a capture record says happened to one object: collected, required, or
+skipped. Anything skipped carries a reason.
+_Avoid_: disposition, status, result, state
 
-**Carried object**:
-A referenced object shipped verbatim in the bundle and recreated on the
-target, because its content is the thing that matters.
-_Avoid_: embedded object, bundled resource, copy
-
-**Evidence**:
-An object captured because it explains the environment the VirtualMachine
-came from, not because anything will recreate it — a StorageClass, the
-resolved form of an instancetype. Read by a support engineer; never applied
-to a target.
-_Avoid_: context, reference copy, informational object, extras
+**Collected**:
+An object the bundle holds. A bundle does not say which of them a target
+would recreate, because that depends on the target and on the mappings given
+at deploy time, not on anything the capture can see.
+_Avoid_: carried object, included object, embedded object, copy
 
 **Requirement**:
-Something a bundle declares it needs from the target but does not carry — a
+Something a bundle declares it needs from the target but does not hold — a
 network, a storage class, a container disk image. Named abstractly in the
 bundle and mapped at deploy time.
 _Avoid_: dependency, placeholder, abstract resource, slot
@@ -83,3 +80,10 @@ from: source cluster, namespace and VM name, capture time, KubeVirt and
 Kubernetes versions, and the platform context a support engineer needs to
 interpret what they are looking at.
 _Avoid_: metadata, history, origin, source details
+
+**Expanded spec**:
+The source cluster's own resolution of the VirtualMachine, with its
+instancetype and preference folded in and the cluster's defaults applied. A
+bundle holds it as a member of its own rather than as a resource: no object
+on the cluster has that name and nothing will apply it to a target.
+_Avoid_: expanded VirtualMachine, resolved spec, rendered spec
