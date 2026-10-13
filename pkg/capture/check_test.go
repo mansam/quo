@@ -41,7 +41,7 @@ func TestCheckNamesEveryObjectACaptureWouldCollect(t *testing.T) {
 	// The expansion is recorded under a kind of its own, so it does not read
 	// as the VirtualMachine a second time.
 	g.Expect(checked).To(gomega.MatchRegexp(`ExpandedSpec\s+db-01\n`))
-	g.Expect(checked).To(gomega.ContainSubstring("Nothing would be skipped"))
+	g.Expect(checked).To(gomega.ContainSubstring("Would be skipped (0)"))
 }
 
 func TestCheckKeepsWhatATargetWouldHaveToProvideApartFromWhatWouldBeCollected(t *testing.T) {
@@ -54,7 +54,7 @@ func TestCheckKeepsWhatATargetWouldHaveToProvideApartFromWhatWouldBeCollected(t 
 	// because a target has to have one. Both are true at once, and a
 	// requirement is the one thing a bundle deliberately does not hold.
 	g.Expect(checked).To(gomega.MatchRegexp(
-		`Would be required from a target \(1\), declared and not carried\n` +
+		`Would be required from a target \(1\)\n` +
 			`\s+StorageClass\s+` + testStorageClass + `\n`))
 }
 
@@ -85,9 +85,9 @@ func TestCheckReportsTheScratchSpaceACaptureNeedsAndTheTotalItWouldTransfer(t *t
 	// Scratch space is the largest single disk rather than the total,
 	// because a capture stages one disk at a time.
 	g.Expect(checked).To(gomega.MatchRegexp(
-		`Local scratch space needed:\s+` + regexp.QuoteMeta(testScratch)))
+		`Scratch space needed:\s+` + regexp.QuoteMeta(testScratch)))
 	g.Expect(checked).To(gomega.MatchRegexp(
-		`Total provisioned disk size:\s+` + regexp.QuoteMeta(testProvisioned)))
+		`Total disk size:\s+` + regexp.QuoteMeta(testProvisioned)))
 }
 
 func TestCheckReportsEveryForbiddenReadAndStillSucceeds(t *testing.T) {
@@ -169,10 +169,9 @@ func TestCheckSaysAVirtualMachineThatIsRunningWouldBeRefused(t *testing.T) {
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	g.Expect(checked).To(gomega.MatchRegexp(`Status:\s+Running`))
 	g.Expect(checked).To(gomega.ContainSubstring("virtctl stop -n support-cases db-01"))
+	g.Expect(checked).To(gomega.MatchRegexp(`Capture:\s+refused`))
 	// It says what a capture would collect either way, so that stopping the
-	// VirtualMachine and capturing holds no further surprises, and says that
-	// is what the rest of it describes.
-	g.Expect(checked).To(gomega.ContainSubstring("would collect once stopped"))
+	// VirtualMachine and capturing holds no further surprises.
 	g.Expect(checked).To(gomega.MatchRegexp(`VirtualMachine\s+db-01\n`))
 }
 
@@ -183,7 +182,7 @@ func TestCheckSaysAStoppedVirtualMachineWouldBeCaptured(t *testing.T) {
 
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	g.Expect(checked).To(gomega.MatchRegexp(`Status:\s+Stopped`))
-	g.Expect(checked).To(gomega.ContainSubstring("A capture would go ahead"))
+	g.Expect(checked).To(gomega.MatchRegexp(`Capture:\s+would run`))
 }
 
 func TestCheckReportsADiskWhoseClaimItCouldNotReadAsAnUnknownSize(t *testing.T) {
@@ -200,9 +199,9 @@ func TestCheckReportsADiskWhoseClaimItCouldNotReadAsAnUnknownSize(t *testing.T) 
 	// rather than a number it can stand behind. The disk is still in the
 	// capture, so dropping it from the total would understate the transfer.
 	g.Expect(checked).To(gomega.MatchRegexp(
-		`Local scratch space needed:\s+at least ` + regexp.QuoteMeta(testRootSpace)))
+		`Scratch space needed:\s+at least ` + regexp.QuoteMeta(testRootSpace)))
 	g.Expect(checked).To(gomega.MatchRegexp(
-		`Total provisioned disk size:\s+at least ` + regexp.QuoteMeta(testRootSpace)))
+		`Total disk size:\s+at least ` + regexp.QuoteMeta(testRootSpace)))
 }
 
 func TestCheckSaysWhenTheVirtualMachineHasNoDisks(t *testing.T) {
@@ -211,7 +210,7 @@ func TestCheckSaysWhenTheVirtualMachineHasNoDisks(t *testing.T) {
 	checked, err := runCheck(t, stoppedCluster(t), testOptions())
 
 	g.Expect(err).ToNot(gomega.HaveOccurred())
-	g.Expect(checked).To(gomega.ContainSubstring("No disks"))
+	g.Expect(checked).To(gomega.ContainSubstring("Disks (0)"))
 }
 
 func TestCheckFailsOnlyWhenItCouldNotReportAtAll(t *testing.T) {

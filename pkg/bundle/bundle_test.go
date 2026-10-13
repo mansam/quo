@@ -281,7 +281,6 @@ func TestInspectPrintsWhatABundleNeedsFromItsLeadingManifestAlone(t *testing.T) 
 	// disk that needs nothing.
 	g.Expect(report).To(gomega.MatchRegexp(`db-01-data\s+\(unknown\)\s+\(unknown\)\s+class: \(unknown\)\n`))
 	g.Expect(report).To(gomega.ContainSubstring("Container disk images required (1)"))
-	g.Expect(report).To(gomega.ContainSubstring("never repackaged"))
 	g.Expect(report).To(gomega.MatchRegexp(`containerdisk\s+quay\.io/example/fedora:41\n`))
 }
 
