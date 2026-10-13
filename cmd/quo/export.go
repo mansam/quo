@@ -92,20 +92,30 @@ func subject(attempt bundle.Attempt) (named string) {
 // Progress goes to standard error so that standard output stays the result of
 // the command.
 func newReporter(out io.Writer) (report func(p capture.Progress)) {
+	// Width of the line last written, so that a shorter line can be padded
+	// over the one it replaces. A carriage return moves the cursor back to
+	// the start of the line without removing what is already there, so
+	// "1023.5 MiB" followed by "1.1 GiB" would otherwise read "1.1 GiBMiB".
+	written := 0
 	report = func(p capture.Progress) {
-		ending := "\r"
-		if p.Done {
-			ending = "\n"
-		}
-		_, _ = fmt.Fprintf(
-			out,
-			"disk %d/%d %s (%s): %s%s",
+		line := fmt.Sprintf(
+			"disk %d/%d %s (%s): %s",
 			p.Disk,
 			p.Disks,
 			p.Claim,
 			strings.Join(p.Volumes, ", "),
-			capture.FormatSize(p.Transferred),
-			ending)
+			capture.FormatSize(p.Transferred))
+		padding := ""
+		if len(line) < written {
+			padding = strings.Repeat(" ", written-len(line))
+		}
+		written = len(line)
+		ending := "\r"
+		if p.Done {
+			ending = "\n"
+			written = 0
+		}
+		_, _ = fmt.Fprint(out, line, padding, ending)
 	}
 	return
 }
