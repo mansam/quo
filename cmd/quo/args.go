@@ -4,7 +4,7 @@ import (
 	"errors"
 	"flag"
 
-	"github.com/mansam/kvo/pkg/capture"
+	"github.com/mansam/quo/pkg/capture"
 )
 
 // validateVirtualMachine checks a command line names a VirtualMachine. Every

@@ -30,7 +30,7 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 
-	"github.com/mansam/kvo/pkg/cluster"
+	"github.com/mansam/quo/pkg/cluster"
 )
 
 // Environment the suite reads.

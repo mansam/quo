@@ -11,8 +11,8 @@ import (
 
 	"github.com/onsi/gomega"
 
-	"github.com/mansam/kvo/pkg/bundle"
-	"github.com/mansam/kvo/pkg/cluster"
+	"github.com/mansam/quo/pkg/bundle"
+	"github.com/mansam/quo/pkg/cluster"
 )
 
 func TestExportRecordsWhatBecameOfEveryObjectItAttempted(t *testing.T) {

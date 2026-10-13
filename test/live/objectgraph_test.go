@@ -10,7 +10,7 @@ import (
 
 	k8serr "k8s.io/apimachinery/pkg/api/errors"
 
-	"github.com/mansam/kvo/pkg/cluster"
+	"github.com/mansam/quo/pkg/cluster"
 )
 
 // The objectgraph subresource, which is KubeVirt's own account of what a

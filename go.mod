@@ -1,4 +1,4 @@
-module github.com/mansam/kvo
+module github.com/mansam/quo
 
 go 1.26.7
 

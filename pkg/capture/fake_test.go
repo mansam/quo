@@ -11,7 +11,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
-	"github.com/mansam/kvo/pkg/cluster"
+	"github.com/mansam/quo/pkg/cluster"
 )
 
 // The VirtualMachine every test captures.

@@ -357,8 +357,9 @@ difficulty — quo captures these VirtualMachines normally.
 
 ### Naming
 
-The tool is `quo`. The repository, module path and working directory still say
-`kvo` and need renaming; this is not a blocker for implementation.
+The tool is `quo` and so is the module path. The GitHub repository and the
+working directory on disk still say `kvo` and need renaming; this is not a
+blocker for implementation.
 
 ## Testing Decisions
 

@@ -6,7 +6,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
-	"github.com/mansam/kvo/pkg/cluster"
+	"github.com/mansam/quo/pkg/cluster"
 )
 
 // closure collects the objects a VirtualMachine depends on, in the order they
