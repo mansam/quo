@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"sigs.k8s.io/yaml"
 
 	"github.com/mansam/kvo/pkg/bundle"
 	"github.com/mansam/kvo/pkg/cluster"
@@ -44,13 +43,15 @@ func Export(ctx context.Context, c cluster.Cluster, opt Options, out io.WriteSee
 	if err != nil {
 		return
 	}
-	encoded, err := yaml.Marshal(vm.Object)
+	writer := bundle.NewWriter(out)
+	err = carryVirtualMachine(writer, vm)
 	if err != nil {
-		err = fmt.Errorf("marshal VirtualMachine %s/%s: %w", opt.Namespace, opt.Name, err)
 		return
 	}
-	writer := bundle.NewWriter(out)
-	writer.Add(bundle.VirtualMachinePath(opt.Name), encoded)
+	err = carryClosure(ctx, c, writer, vm)
+	if err != nil {
+		return
+	}
 	provenance := bundle.Provenance{
 		SourceCluster:     info.SourceCluster,
 		Namespace:         opt.Namespace,

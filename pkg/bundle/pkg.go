@@ -12,7 +12,10 @@
 // export server produced.
 package bundle
 
-import "path"
+import (
+	"path"
+	"strings"
+)
 
 // FormatVersion is the bundle format this build writes, and the only one it
 // knows how to read.
@@ -42,11 +45,13 @@ const (
 	DiskArchiveGzip DiskFormat = "tar.gz"
 )
 
-// VirtualMachinePath is where the named VirtualMachine sits inside a bundle.
+// ObjectPath is where a carried object of the given kind sits inside a
+// bundle. Grouping by kind is what lets a reader find an object by hand.
+//
 // Layout is this package's concern, so nothing outside it assembles a member
 // path of its own.
-func VirtualMachinePath(name string) (member string) {
-	member = path.Join(ObjectsDir, "virtualmachine", name+".yaml")
+func ObjectPath(kind, name string) (member string) {
+	member = path.Join(ObjectsDir, strings.ToLower(kind), name+".yaml")
 	return
 }
 

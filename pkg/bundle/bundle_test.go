@@ -178,6 +178,34 @@ func TestInspectDescribesABundleWithoutContactingACluster(t *testing.T) {
 	g.Expect(report).To(gomega.ContainSubstring(digest(objectBody)))
 }
 
+func TestInspectListsTheCarriedObjectsByKindAndName(t *testing.T) {
+	g := gomega.NewGomegaWithT(t)
+	manifest := indexing(t)
+	manifest.Objects = []Object{
+		testObject(),
+		{
+			Kind:      "NetworkAttachmentDefinition",
+			Namespace: "shared-networks",
+			Name:      "storage-net",
+			Path:      ObjectPath("NetworkAttachmentDefinition", "storage-net"),
+		},
+	}
+	archive := tarball(t,
+		rawMember{path: ManifestPath, data: encodeManifest(t, manifest)},
+		rawMember{path: objectPath, data: objectBody})
+	described := &bytes.Buffer{}
+
+	err := Inspect(bytes.NewReader(archive), described)
+
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	report := described.String()
+	g.Expect(report).To(gomega.ContainSubstring("Carried objects (2)"))
+	g.Expect(report).To(gomega.MatchRegexp(`VirtualMachine\s+db-01\n`))
+	// An object borrowed from another namespace is named with it; one from
+	// the VirtualMachine's own namespace is not.
+	g.Expect(report).To(gomega.MatchRegexp(`NetworkAttachmentDefinition\s+shared-networks/storage-net\n`))
+}
+
 func TestInspectReportsAVersionItCouldNotRead(t *testing.T) {
 	g := gomega.NewGomegaWithT(t)
 	provenance := testProvenance()
@@ -339,7 +367,10 @@ func writeBundle(t *testing.T, provenance Provenance, disks ...stagedDisk) (arch
 		_ = file.Close()
 	}()
 	writer := NewWriter(file)
-	writer.Add(objectPath, objectBody)
+	err = writer.Carry(testObject(), objectBody)
+	if err != nil {
+		t.Fatalf("carry object: %v", err)
+	}
 	for i := range disks {
 		writer.Reserve(disks[i].disk)
 	}
@@ -357,6 +388,17 @@ func writeBundle(t *testing.T, provenance Provenance, disks ...stagedDisk) (arch
 	archive, err = os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read bundle: %v", err)
+	}
+	return
+}
+
+// testObject is the carried object the fixtures put in a bundle.
+func testObject() (object Object) {
+	object = Object{
+		Kind:      "VirtualMachine",
+		Namespace: "support-cases",
+		Name:      "db-01",
+		Path:      objectPath,
 	}
 	return
 }

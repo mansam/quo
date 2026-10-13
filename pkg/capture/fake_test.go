@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"testing"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -41,9 +42,16 @@ const (
 // test wants a cluster to have. Nothing in it touches a network, and disks are
 // served from memory so that no test needs an HTTP server.
 type fakeCluster struct {
-	vm        *unstructured.Unstructured
-	info      cluster.Info
-	export    *fakeExport
+	vm     *unstructured.Unstructured
+	info   cluster.Info
+	export *fakeExport
+	// objects is everything the cluster holds besides the VirtualMachine.
+	// Anything asked for and not held is reported as not found, which is what
+	// a reference to a deleted object looks like.
+	objects map[cluster.ObjectRef]*unstructured.Unstructured
+	// requested records every reference the capture asked for, in order, so a
+	// test can see what the traversal looked for as well as what it found.
+	requested []cluster.ObjectRef
 	vmErr     error
 	infoErr   error
 	exportErr error
@@ -61,6 +69,17 @@ func (r *fakeCluster) GetVirtualMachine(ctx context.Context, namespace, name str
 		return
 	}
 	vm = r.vm.DeepCopy()
+	return
+}
+
+func (r *fakeCluster) GetObject(ctx context.Context, ref cluster.ObjectRef) (object *unstructured.Unstructured, err error) {
+	r.requested = append(r.requested, ref)
+	held, found := r.objects[ref]
+	if !found {
+		err = fmt.Errorf("%s %q: %w", ref.Kind, ref.Name, cluster.ErrNotFound)
+		return
+	}
+	object = held.DeepCopy()
 	return
 }
 
@@ -141,6 +160,61 @@ func (r *fakeExport) observe() {
 	}
 }
 
+// apiVersionByKind is the apiVersion the fake stamps on each kind it serves,
+// so that a carried object reads as the Kubernetes object it stands for.
+var apiVersionByKind = map[string]string{
+	cluster.KindConfigMap:                         "v1",
+	cluster.KindControllerRevision:                "apps/v1",
+	cluster.KindDataVolume:                        "cdi.kubevirt.io/v1beta1",
+	cluster.KindNetworkAttachmentDefinition:       "k8s.cni.cncf.io/v1",
+	cluster.KindPersistentVolumeClaim:             "v1",
+	cluster.KindSecret:                            "v1",
+	cluster.KindServiceAccount:                    "v1",
+	cluster.KindVirtualMachineClusterInstancetype: "instancetype.kubevirt.io/v1beta1",
+	cluster.KindVirtualMachineClusterPreference:   "instancetype.kubevirt.io/v1beta1",
+	cluster.KindVirtualMachineInstancetype:        "instancetype.kubevirt.io/v1beta1",
+	cluster.KindVirtualMachinePreference:          "instancetype.kubevirt.io/v1beta1",
+}
+
+// ref names an object in the VirtualMachine's own namespace.
+func ref(kind, name string) (r cluster.ObjectRef) {
+	r = cluster.ObjectRef{Kind: kind, Namespace: testNamespace, Name: name}
+	return
+}
+
+// refIn names an object in some other namespace.
+func refIn(kind, namespace, name string) (r cluster.ObjectRef) {
+	r = cluster.ObjectRef{Kind: kind, Namespace: namespace, Name: name}
+	return
+}
+
+// clusterRef names a cluster-scoped object, which has no namespace.
+func clusterRef(kind, name string) (r cluster.ObjectRef) {
+	r = cluster.ObjectRef{Kind: kind, Name: name}
+	return
+}
+
+// hold puts an object in the fake cluster, carrying whatever fields beyond
+// its kind and name the test cares about.
+func (r *fakeCluster) hold(object cluster.ObjectRef, fields map[string]any) {
+	metadata := map[string]any{"name": object.Name}
+	if object.Namespace != "" {
+		metadata["namespace"] = object.Namespace
+	}
+	held := map[string]any{
+		"apiVersion": apiVersionByKind[object.Kind],
+		"kind":       object.Kind,
+		"metadata":   metadata,
+	}
+	for key, value := range fields {
+		held[key] = value
+	}
+	if r.objects == nil {
+		r.objects = map[cluster.ObjectRef]*unstructured.Unstructured{}
+	}
+	r.objects[object] = &unstructured.Unstructured{Object: held}
+}
+
 // volume is a volume of the fixture VirtualMachine and the claim behind it.
 type volume struct {
 	name  string
@@ -218,6 +292,29 @@ func attach(t *testing.T, vm *unstructured.Unstructured, volumes []volume) {
 	err := unstructured.SetNestedSlice(vm.Object, attached, "spec", "template", "spec", "volumes")
 	if err != nil {
 		t.Fatalf("attach volumes: %v", err)
+	}
+}
+
+// offeredContent is what the fake export serves for a disk a test gave no
+// content of its own. quo never looks inside a disk.
+var offeredContent = []byte("\x1f\x8b\x08 a disk")
+
+// offer adds a disk to what the fake export serves, so that a VirtualMachine
+// referencing a claim can be captured without the test caring about disks.
+func (r *fakeCluster) offer(claim string) {
+	r.export.offered = append(r.export.offered, cluster.ExportedDisk{
+		Claim:  claim,
+		Format: cluster.FormatGzip,
+	})
+	r.export.content[claim] = offeredContent
+}
+
+// setField sets a field on the fixture VirtualMachine.
+func setField(t *testing.T, vm *unstructured.Unstructured, value any, keys ...string) {
+	t.Helper()
+	err := unstructured.SetNestedField(vm.Object, value, keys...)
+	if err != nil {
+		t.Fatalf("set %s: %v", strings.Join(keys, "."), err)
 	}
 }
 

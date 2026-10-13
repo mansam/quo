@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	k8serr "k8s.io/apimachinery/pkg/api/errors"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -91,6 +92,35 @@ func (r *KubeVirt) GetVirtualMachine(ctx context.Context, namespace, name string
 	if err != nil {
 		vm = nil
 		err = fmt.Errorf("get VirtualMachine %s/%s: %w", namespace, name, err)
+		return
+	}
+	return
+}
+
+// GetObject returns the object the reference names.
+//
+// An object the cluster does not have is reported as ErrNotFound, because a
+// VirtualMachine can refer to something that has since been deleted and that
+// is not a reason to abandon a capture.
+func (r *KubeVirt) GetObject(ctx context.Context, ref ObjectRef) (object *unstructured.Unstructured, err error) {
+	served, known := resourceByKind[ref.Kind]
+	if !known {
+		err = fmt.Errorf("quo does not know how to read a %s", ref.Kind)
+		return
+	}
+	api := r.dynamic.Resource(served.gvr)
+	reader := dynamic.ResourceInterface(api)
+	if !served.clusterScoped {
+		reader = api.Namespace(ref.Namespace)
+	}
+	object, err = reader.Get(ctx, ref.Name, meta.GetOptions{})
+	if err != nil {
+		object = nil
+		if k8serr.IsNotFound(err) {
+			err = fmt.Errorf("%s %q: %w", ref.Kind, ref.Name, ErrNotFound)
+			return
+		}
+		err = fmt.Errorf("get %s %q: %w", ref.Kind, ref.Name, err)
 		return
 	}
 	return

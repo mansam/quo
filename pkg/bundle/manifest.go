@@ -10,8 +10,20 @@ import "time"
 type Manifest struct {
 	FormatVersion string     `json:"formatVersion"`
 	Provenance    Provenance `json:"provenance"`
+	Objects       []Object   `json:"objects,omitempty"`
 	Members       []Member   `json:"members"`
 	Disks         []Disk     `json:"disks,omitempty"`
+}
+
+// Object names one carried object and where it sits in the bundle, so that a
+// reader learns what a bundle holds from the manifest alone rather than by
+// untarring it and inferring kinds from member paths.
+type Object struct {
+	Kind string `json:"kind"`
+	// Namespace is empty for a cluster-scoped object.
+	Namespace string `json:"namespace,omitempty"`
+	Name      string `json:"name"`
+	Path      string `json:"path"`
 }
 
 // Provenance is what a bundle records about where it came from, so that a
