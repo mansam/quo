@@ -101,3 +101,11 @@ server-populated metadata".
 
 Status left at `ready-for-agent`, as tickets 01 and 02 did: the tracker has no
 label meaning "implemented".
+
+The vocabulary in this ticket is superseded. A bundle no longer sorts what it
+collects into carried objects and evidence: it holds one set of resources, and
+the capture record's outcomes are collected, required and skipped. The source
+cluster's expansion of the VirtualMachine is a member of its own rather than a
+resource, recorded under its own kind. See
+`docs/adr/0002-one-set-of-resources-in-a-bundle.md` and the rewritten sections
+of `spec.md`.
