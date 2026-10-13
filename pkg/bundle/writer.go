@@ -29,19 +29,19 @@ var placeholderDigest = "sha256:" + strings.Repeat("0", 64)
 // A bundle is written in three steps: collect the objects and declare the
 // disks, Open, then stage each disk in turn and Close.
 type Writer struct {
-	out        io.WriteSeeker
-	tw         *tar.Writer
-	provenance Provenance
-	pending    []content
-	members    []Member
-	record     CaptureRecord
-	required   Requirements
-	objects    []Object
-	evidence   []Object
-	disks      []Disk
-	indexOf    map[string]int
-	offset     int64
-	reserved   int
+	out          io.WriteSeeker
+	tw           *tar.Writer
+	provenance   Provenance
+	pending      []content
+	members      []Member
+	record       CaptureRecord
+	required     Requirements
+	resources    []Resource
+	expandedSpec string
+	disks        []Disk
+	indexOf      map[string]int
+	offset       int64
+	reserved     int
 }
 
 // content is one member held until the bundle is opened.
@@ -66,40 +66,33 @@ func (r *Writer) Add(path string, data []byte) {
 	r.pending = append(r.pending, content{path: path, data: data})
 }
 
-// Carry collects one carried object: a member of the objects grouping that
-// the manifest also names by kind and name. The caller supplies the kind,
+// Collect collects one resource: a member of the resources grouping that the
+// manifest also names by kind and name. The caller supplies the kind,
 // namespace and name; where the object lands is this package's concern. Like
 // Add, the content is held in memory until the bundle is opened.
 //
 // It reports an object that would land on top of one already collected.
-func (r *Writer) Carry(object Object, data []byte) (err error) {
-	object.Path = ObjectPath(object.Kind, object.Name)
-	err = validateUniquePath(r.objects, object)
+func (r *Writer) Collect(resource Resource, data []byte) (err error) {
+	resource.Path = ResourcePath(resource.Kind, resource.Name)
+	err = validateUniquePath(r.resources, resource)
 	if err != nil {
 		return
 	}
-	r.objects = append(r.objects, object)
-	r.Add(object.Path, data)
+	r.resources = append(r.resources, resource)
+	r.Add(resource.Path, data)
 	return
 }
 
-// AddEvidence collects one evidence object: a member of the evidence
-// grouping, which the manifest names separately from the objects a bundle
-// carries. Nothing will recreate an evidence object on a target, and keeping
-// it out of the objects grouping is what stops a reader treating it as
-// something to apply.
+// AddExpandedSpec collects the source cluster's expansion of the
+// VirtualMachine as a member of its own.
 //
-// Like Carry, the content is held in memory until the bundle is opened, and an
-// object that would land on top of one already collected is reported.
-func (r *Writer) AddEvidence(object Object, data []byte) (err error) {
-	object.Path = EvidencePath(object.Kind, object.Name)
-	err = validateUniquePath(r.evidence, object)
-	if err != nil {
-		return
-	}
-	r.evidence = append(r.evidence, object)
-	r.Add(object.Path, data)
-	return
+// It does not go through Collect. The expansion is not a resource: no object
+// on the cluster has that name, nothing applies it to a target, and it carries
+// the same kind and name as the VirtualMachine the bundle collected, so
+// storing it among the resources would land on top of it.
+func (r *Writer) AddExpandedSpec(data []byte) {
+	r.expandedSpec = ExpandedSpecPath
+	r.Add(ExpandedSpecPath, data)
 }
 
 // validateUniquePath reports an object that would land on top of one already
@@ -107,18 +100,18 @@ func (r *Writer) AddEvidence(object Object, data []byte) (err error) {
 // objects of one kind and name taken from different namespaces collide, and
 // writing both would produce a bundle whose manifest disagrees with its own
 // members.
-func validateUniquePath(collected []Object, object Object) (err error) {
+func validateUniquePath(collected []Resource, resource Resource) (err error) {
 	for i := range collected {
-		if collected[i].Path != object.Path {
+		if collected[i].Path != resource.Path {
 			continue
 		}
 		err = fmt.Errorf(
 			"%s %q and %s %q both belong at %q",
 			collected[i].Kind,
 			path.Join(collected[i].Namespace, collected[i].Name),
-			object.Kind,
-			path.Join(object.Namespace, object.Name),
-			object.Path)
+			resource.Kind,
+			path.Join(resource.Namespace, resource.Name),
+			resource.Path)
 		return
 	}
 	return
@@ -303,8 +296,8 @@ func (r *Writer) encode() (encoded []byte, err error) {
 		Provenance:    r.provenance,
 		Requirements:  r.required,
 		CaptureRecord: r.record,
-		Objects:       r.objects,
-		Evidence:      r.evidence,
+		Resources:     r.resources,
+		ExpandedSpec:  r.expandedSpec,
 		Members:       r.members,
 		Disks:         r.disks,
 	}

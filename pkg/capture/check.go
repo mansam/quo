@@ -17,9 +17,9 @@ import (
 // Check writes to out what a capture of the named VirtualMachine would
 // collect and what it would skip, and stops there.
 //
-// It reads what a capture reads — the VirtualMachine, its closure, and the
-// evidence about the source environment — and gives every object the
-// disposition a capture would give it, under the reasons a capture record
+// It reads what a capture reads — the VirtualMachine, the resources it
+// refers to, and what describes the source cluster — and gives every object
+// the outcome a capture would give it, under the reasons a capture record
 // uses. A permissions problem is then found in seconds rather than at the end
 // of a transfer that took hours.
 //
@@ -79,14 +79,13 @@ type checkedDisk struct {
 // what a capture would collect and collects none of it.
 type discard struct{}
 
-// Carry keeps nothing. NO-OP.
-func (r *discard) Carry(object bundle.Object, data []byte) (err error) {
+// Collect keeps nothing. NO-OP.
+func (r *discard) Collect(resource bundle.Resource, data []byte) (err error) {
 	return
 }
 
-// AddEvidence keeps nothing. NO-OP.
-func (r *discard) AddEvidence(object bundle.Object, data []byte) (err error) {
-	return
+// AddExpandedSpec keeps nothing. NO-OP.
+func (r *discard) AddExpandedSpec(data []byte) {
 }
 
 // buildCheckedDisks returns the disks a capture would transfer, each with the
@@ -202,8 +201,7 @@ func (r *check) describeRefusal(out io.Writer) {
 	_, _ = fmt.Fprintf(out, "  The rest of this check is what it would collect once stopped.\n")
 }
 
-// describeCollected lists every object a capture would collect, with the
-// disposition it would get.
+// describeCollected lists every object a capture would collect.
 func (r *check) describeCollected(out io.Writer) {
 	collected := r.record.Collected()
 	if len(collected) == 0 {
@@ -213,10 +211,9 @@ func (r *check) describeCollected(out io.Writer) {
 	for i := range collected {
 		_, _ = fmt.Fprintf(
 			out,
-			"  %s\t%s\t%s\n",
+			"  %s\t%s\n",
 			collected[i].Kind,
-			r.subject(collected[i]),
-			collected[i].Disposition)
+			r.named(collected[i]))
 	}
 }
 
@@ -235,7 +232,7 @@ func (r *check) describeRequired(out io.Writer) {
 		"\nWould be required from a target (%d), declared and not carried\n",
 		len(required))
 	for i := range required {
-		_, _ = fmt.Fprintf(out, "  %s\t%s\n", required[i].Kind, r.subject(required[i]))
+		_, _ = fmt.Fprintf(out, "  %s\t%s\n", required[i].Kind, r.named(required[i]))
 	}
 }
 
@@ -259,7 +256,7 @@ func (r *check) describeSkipped(out io.Writer) {
 			out,
 			"  %s\t%s\t%s\t%s\n",
 			skipped[i].Kind,
-			r.subject(skipped[i]),
+			r.named(skipped[i]),
 			skipped[i].Reason,
 			skipped[i].Message)
 	}
@@ -297,31 +294,6 @@ func (r *check) describeDisks(out io.Writer) {
 		out,
 		"  Total provisioned disk size:\t%s\tthe scale of the transfer, before compression\n",
 		renderSpace(provisioned, complete))
-}
-
-// subject names the object one entry of the record is about.
-func (r *check) subject(attempt bundle.Attempt) (named string) {
-	named = r.named(attempt)
-	if !r.matchesExpansion(attempt) {
-		return
-	}
-	named += " (as the source cluster expands it)"
-	return
-}
-
-// matchesExpansion reports whether an entry is the form the source cluster
-// expands the VirtualMachine to, which is one object by kind and name with
-// the VirtualMachine a capture carries. A reader shown the same line twice
-// would have no way to tell which of the two was which.
-func (r *check) matchesExpansion(attempt bundle.Attempt) (matched bool) {
-	if attempt.Disposition != bundle.DispositionEvidence {
-		return
-	}
-	if attempt.Kind != cluster.KindVirtualMachine {
-		return
-	}
-	matched = attempt.Name == r.opt.Name
-	return
 }
 
 // named renders the name of the object one entry of the record is about.

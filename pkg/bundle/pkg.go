@@ -3,9 +3,9 @@
 // A bundle is an uncompressed tar. Its first member is always the manifest, so
 // a reader learns the format version, where the bundle came from, and what else
 // the bundle holds before any other member arrives. Remaining members are
-// grouped by what they are for: carried objects under "objects", evidence under
-// "evidence", and disks under "disks", so that a reader is never misled into
-// applying something that was collected only to be read.
+// grouped by what they are: collected resources under "resources", disks under
+// "disks", and the source cluster's expansion of the VirtualMachine in a member
+// of its own.
 //
 // quo compresses nothing itself. Objects are plain YAML so that a bundle opens
 // with ordinary tools, and disk members hold the already-compressed bytes the
@@ -25,56 +25,50 @@ const FormatVersion = "v1"
 const (
 	// ManifestPath is the first member of every bundle.
 	ManifestPath = "manifest.yaml"
-	// ObjectsDir groups the objects a bundle carries.
-	ObjectsDir = "objects"
-	// EvidenceDir groups the evidence a bundle holds, apart from the objects
-	// it carries, so that nothing suggests evidence should be applied to a
-	// target.
-	EvidenceDir = "evidence"
+	// ResourcesDir groups the resources a bundle collected.
+	ResourcesDir = "resources"
 	// DisksDir groups the disks a bundle carries.
 	DisksDir = "disks"
+	// ExpandedSpecPath holds the source cluster's expansion of the
+	// VirtualMachine. It sits outside the resources grouping because no
+	// object on the cluster has that name and nothing applies it to a target.
+	ExpandedSpecPath = "expanded-spec.yaml"
 )
 
 // Kinds the bundle format names for itself, rather than because quo reads
 // an object of that kind from a cluster.
 const (
-	// kindVirtualMachine is the kind of the object a bundle exists to carry.
-	// The format names it because a bundle holds that object twice: as it
-	// stands, among the objects it carries, and as the source cluster expands
-	// it, among the evidence.
-	kindVirtualMachine = "VirtualMachine"
 	// KindContainerDisk is how the capture record names a container image a
 	// volume is served from. No Kubernetes object stands for it: it is a
 	// thing a target has to be able to pull, so it is named by its image
 	// reference.
 	KindContainerDisk = "ContainerDisk"
+	// KindExpandedSpec is how the capture record names the source cluster's
+	// expansion of the VirtualMachine. Recording it under a kind of its own
+	// keeps it apart from the VirtualMachine the bundle collected, which
+	// carries the same kind and name.
+	KindExpandedSpec = "ExpandedSpec"
 )
 
-// Disposition is what became of one object quo tried to capture.
-type Disposition string
+// Outcome is what became of one object quo tried to capture.
+type Outcome string
 
-// Dispositions
+// Outcomes
 const (
-	// DispositionCarried is an object shipped verbatim in the bundle,
-	// because its content is the thing that matters.
-	DispositionCarried Disposition = "carried"
-	// DispositionEvidence is an object captured because it explains the
-	// environment the VirtualMachine came from. It is read by a support
-	// engineer and never applied to a target.
-	DispositionEvidence Disposition = "evidence"
-	// DispositionRequirement is something the bundle declares it needs from
-	// a target but does not carry.
-	DispositionRequirement Disposition = "requirement"
-	// DispositionSkipped is an object quo tried to collect and could not.
-	DispositionSkipped Disposition = "skipped"
+	// OutcomeCollected is an object the bundle holds.
+	OutcomeCollected Outcome = "collected"
+	// OutcomeRequired is something the bundle declares it needs from a target
+	// and does not hold.
+	OutcomeRequired Outcome = "required"
+	// OutcomeSkipped is an object quo tried to collect and could not.
+	OutcomeSkipped Outcome = "skipped"
 )
 
-// dispositions in the order a reader is shown them.
-var dispositions = []Disposition{
-	DispositionCarried,
-	DispositionEvidence,
-	DispositionRequirement,
-	DispositionSkipped,
+// outcomes in the order a reader is shown them.
+var outcomes = []Outcome{
+	OutcomeCollected,
+	OutcomeRequired,
+	OutcomeSkipped,
 }
 
 // SkipReason is why a skipped object was not collected. It is what lets a
@@ -110,25 +104,13 @@ const (
 	DiskArchiveGzip DiskFormat = "tar.gz"
 )
 
-// ObjectPath is where a carried object of the given kind sits inside a
-// bundle. Grouping by kind is what lets a reader find an object by hand.
+// ResourcePath is where a resource of the given kind sits inside a bundle.
+// Grouping by kind is what lets a reader find an object by hand.
 //
 // Layout is this package's concern, so nothing outside it assembles a member
 // path of its own.
-func ObjectPath(kind, name string) (member string) {
-	member = path.Join(ObjectsDir, strings.ToLower(kind), name+".yaml")
-	return
-}
-
-// EvidencePath is where an evidence object of the given kind sits inside a
-// bundle.
-//
-// Evidence sits under a grouping of its own rather than among the carried
-// objects, so that someone applying a bundle's objects by hand cannot reach it
-// by accident. It is also what lets a bundle hold both the VirtualMachine as
-// it stands and the form the source cluster expanded it to.
-func EvidencePath(kind, name string) (member string) {
-	member = path.Join(EvidenceDir, strings.ToLower(kind), name+".yaml")
+func ResourcePath(kind, name string) (member string) {
+	member = path.Join(ResourcesDir, strings.ToLower(kind), name+".yaml")
 	return
 }
 

@@ -78,9 +78,10 @@ const (
 	KindVirtualMachinePreference          = "VirtualMachinePreference"
 )
 
-// Kinds quo reads as evidence about the source environment rather than as part
-// of the closure. All of them sit outside the namespace being captured from,
-// which is where a capture run by a namespace owner runs out of permission.
+// Kinds quo reads because they describe the source cluster rather than
+// because the VirtualMachine refers to them. All of them sit outside the
+// namespace being captured from, which is where a capture run by a namespace
+// owner runs out of permission.
 //
 // KubeVirt is read through GetKubeVirt rather than by reference, because it is
 // a singleton whose namespace and name differ between installations.

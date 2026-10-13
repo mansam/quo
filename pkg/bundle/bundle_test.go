@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"regexp"
 	"testing"
 	"time"
 
@@ -12,20 +13,16 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
-// The carried object the fixtures put in a bundle, and where the same object
-// lands when it is held as evidence instead.
-const (
-	objectPath   = "objects/virtualmachine/db-01.yaml"
-	evidencePath = "evidence/virtualmachine/db-01.yaml"
-)
+// Where the resource the fixtures put in a bundle lands.
+const resourcePath = "resources/virtualmachine/db-01.yaml"
 
 // The claim behind the disk the fixtures stage.
 const diskClaim = "db-01-root"
 
 var objectBody = []byte("apiVersion: kubevirt.io/v1\nkind: VirtualMachine\n")
 
-// The same VirtualMachine as the source cluster expands it, which is evidence
-// rather than something a target would be given.
+// The same VirtualMachine as the source cluster expands it, which is a member
+// of its own rather than a resource.
 var expandedBody = []byte("apiVersion: kubevirt.io/v1\nkind: VirtualMachine\nspec: {}\n")
 
 // Stand-in for the compressed bytes an export server sends.
@@ -40,7 +37,7 @@ func TestReadReturnsTheManifestOfABundleItWrote(t *testing.T) {
 	g.Expect(manifest.FormatVersion).To(gomega.Equal(FormatVersion))
 	g.Expect(manifest.Provenance).To(gomega.Equal(testProvenance()))
 	g.Expect(manifest.Members).To(gomega.HaveLen(1))
-	g.Expect(manifest.Members[0].Path).To(gomega.Equal(objectPath))
+	g.Expect(manifest.Members[0].Path).To(gomega.Equal(resourcePath))
 	g.Expect(manifest.Members[0].Size).To(gomega.BeEquivalentTo(len(objectBody)))
 	g.Expect(manifest.Members[0].Digest).To(gomega.Equal(digest(objectBody)))
 }
@@ -57,7 +54,7 @@ func TestReadRefusesSomethingThatIsNotABundle(t *testing.T) {
 		{
 			name: "a bundle whose first member is not the manifest is refused",
 			archive: tarball(t,
-				rawMember{path: objectPath, data: objectBody},
+				rawMember{path: resourcePath, data: objectBody},
 				rawMember{path: ManifestPath, data: encodeManifest(t, indexing(t))},
 			),
 		},
@@ -107,7 +104,7 @@ func TestReadRefusesAFormatVersionItDoesNotUnderstand(t *testing.T) {
 			manifest.FormatVersion = tt.version
 			archive := tarball(t,
 				rawMember{path: ManifestPath, data: encodeManifest(t, manifest)},
-				rawMember{path: objectPath, data: objectBody},
+				rawMember{path: resourcePath, data: objectBody},
 			)
 
 			read, err := Read(bytes.NewReader(archive))
@@ -124,13 +121,13 @@ func TestReadReportsAMemberThatDoesNotMatchItsDigest(t *testing.T) {
 	manifest := indexing(t)
 	archive := tarball(t,
 		rawMember{path: ManifestPath, data: encodeManifest(t, manifest)},
-		rawMember{path: objectPath, data: []byte("corrupted in transit")},
+		rawMember{path: resourcePath, data: []byte("corrupted in transit")},
 	)
 
 	read, err := Read(bytes.NewReader(archive))
 
 	g.Expect(err).To(gomega.MatchError(&DigestMismatchError{}))
-	g.Expect(err.Error()).To(gomega.ContainSubstring(objectPath))
+	g.Expect(err.Error()).To(gomega.ContainSubstring(resourcePath))
 	g.Expect(read).To(gomega.BeNil())
 }
 
@@ -149,7 +146,7 @@ func TestReadReportsAMemberTheManifestDisagreesAbout(t *testing.T) {
 			name: "a member the bundle carries but the manifest does not index",
 			archive: tarball(t,
 				rawMember{path: ManifestPath, data: encodeManifest(t, indexing(t))},
-				rawMember{path: objectPath, data: objectBody},
+				rawMember{path: resourcePath, data: objectBody},
 				rawMember{path: "objects/configmap/stowaway.yaml", data: []byte("kind: ConfigMap\n")},
 			),
 		},
@@ -182,95 +179,75 @@ func TestInspectDescribesABundleWithoutContactingACluster(t *testing.T) {
 	g.Expect(report).To(gomega.ContainSubstring("2026-10-09T12:00:00Z"))
 	g.Expect(report).To(gomega.ContainSubstring("v1.3.1"))
 	g.Expect(report).To(gomega.ContainSubstring("v1.31.4"))
-	g.Expect(report).To(gomega.ContainSubstring(objectPath))
+	g.Expect(report).To(gomega.ContainSubstring(resourcePath))
 	g.Expect(report).To(gomega.ContainSubstring(digest(objectBody)))
 }
 
-func TestInspectListsTheCarriedObjectsByKindAndName(t *testing.T) {
+func TestInspectListsTheResourcesByKindAndName(t *testing.T) {
 	g := gomega.NewGomegaWithT(t)
 	manifest := indexing(t)
-	manifest.Objects = []Object{
-		testObject(),
+	manifest.Resources = []Resource{
+		testResource(),
 		{
 			Kind:      "NetworkAttachmentDefinition",
 			Namespace: "shared-networks",
 			Name:      "storage-net",
-			Path:      ObjectPath("NetworkAttachmentDefinition", "storage-net"),
+			Path:      ResourcePath("NetworkAttachmentDefinition", "storage-net"),
 		},
 	}
 	archive := tarball(t,
 		rawMember{path: ManifestPath, data: encodeManifest(t, manifest)},
-		rawMember{path: objectPath, data: objectBody})
+		rawMember{path: resourcePath, data: objectBody})
 	described := &bytes.Buffer{}
 
 	err := Inspect(bytes.NewReader(archive), described)
 
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	report := described.String()
-	g.Expect(report).To(gomega.ContainSubstring("Carried objects (2)"))
+	g.Expect(report).To(gomega.ContainSubstring("Resources (2)"))
 	g.Expect(report).To(gomega.MatchRegexp(`VirtualMachine\s+db-01\n`))
 	// An object borrowed from another namespace is named with it; one from
 	// the VirtualMachine's own namespace is not.
 	g.Expect(report).To(gomega.MatchRegexp(`NetworkAttachmentDefinition\s+shared-networks/storage-net\n`))
 }
 
-func TestInspectPresentsEvidenceDistinctlyFromTheObjectsABundleCarries(t *testing.T) {
+func TestInspectNamesTheMemberHoldingTheExpandedSpec(t *testing.T) {
 	g := gomega.NewGomegaWithT(t)
 	manifest := indexing(t)
-	manifest.Objects = []Object{testObject()}
-	manifest.Evidence = []Object{
-		{
-			Kind: "StorageClass",
-			Name: "ocs-storagecluster-ceph-rbd",
-			Path: EvidencePath("StorageClass", "ocs-storagecluster-ceph-rbd"),
-		},
-		{
-			Kind:      "KubeVirt",
-			Namespace: "kubevirt",
-			Name:      "kubevirt",
-			Path:      EvidencePath("KubeVirt", "kubevirt"),
-		},
-		{
-			// The same VirtualMachine the bundle carries, as the source
-			// cluster expands it.
-			Kind:      "VirtualMachine",
-			Namespace: "support-cases",
-			Name:      "db-01",
-			Path:      EvidencePath("VirtualMachine", "db-01"),
-		},
-	}
+	manifest.Resources = []Resource{testResource()}
+	manifest.ExpandedSpec = ExpandedSpecPath
+	manifest.Members = append(manifest.Members, Member{
+		Path:   ExpandedSpecPath,
+		Size:   int64(len(expandedBody)),
+		Digest: digest(expandedBody),
+	})
 	archive := tarball(t,
 		rawMember{path: ManifestPath, data: encodeManifest(t, manifest)},
-		rawMember{path: objectPath, data: objectBody})
+		rawMember{path: resourcePath, data: objectBody},
+		rawMember{path: ExpandedSpecPath, data: expandedBody})
 	described := &bytes.Buffer{}
 
 	err := Inspect(bytes.NewReader(archive), described)
 
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	report := described.String()
-	// A reader deciding what to do with a bundle has to be able to tell at a
-	// glance which objects are the VirtualMachine and which only describe the
-	// cluster it came from.
-	g.Expect(report).To(gomega.ContainSubstring("Carried objects (1)"))
-	g.Expect(report).To(gomega.ContainSubstring("Evidence (3)"))
-	g.Expect(report).To(gomega.ContainSubstring("never applied"))
-	g.Expect(report).To(gomega.MatchRegexp(`StorageClass\s+ocs-storagecluster-ceph-rbd\n`))
-	g.Expect(report).To(gomega.MatchRegexp(`KubeVirt\s+kubevirt/kubevirt\n`))
-	// The bundle holds the VirtualMachine twice, under one kind and one name.
-	// The evidence listing is where a reader is told which one this is.
-	g.Expect(report).To(gomega.MatchRegexp(
-		`VirtualMachine\s+db-01 \(as the source cluster expands it\)\n`))
-	g.Expect(report).To(gomega.MatchRegexp(`VirtualMachine\s+db-01\n`))
+	// The expansion is not a resource, so it is named on its own and the
+	// VirtualMachine is listed once rather than twice under one name.
+	g.Expect(report).To(gomega.ContainSubstring("Resources (1)"))
+	g.Expect(report).To(gomega.ContainSubstring("Expanded spec"))
+	g.Expect(report).To(gomega.ContainSubstring(ExpandedSpecPath))
+	listed := regexp.MustCompile(`VirtualMachine\s+db-01\n`).FindAllString(report, -1)
+	g.Expect(listed).To(gomega.HaveLen(1))
 }
 
-func TestInspectSaysNothingAboutEvidenceWhenABundleHoldsNone(t *testing.T) {
+func TestInspectSaysNothingAboutTheExpandedSpecWhenABundleHoldsNone(t *testing.T) {
 	g := gomega.NewGomegaWithT(t)
 	described := &bytes.Buffer{}
 
 	err := Inspect(bytes.NewReader(validBundle(t)), described)
 
 	g.Expect(err).ToNot(gomega.HaveOccurred())
-	g.Expect(described.String()).ToNot(gomega.ContainSubstring("Evidence"))
+	g.Expect(described.String()).ToNot(gomega.ContainSubstring("Expanded spec"))
 }
 
 func TestInspectPrintsWhatABundleNeedsFromItsLeadingManifestAlone(t *testing.T) {
@@ -291,7 +268,7 @@ func TestInspectPrintsWhatABundleNeedsFromItsLeadingManifestAlone(t *testing.T) 
 	// Nothing was extracted and no disk was waited for: what a target would
 	// have to provide is in the first member.
 	g.Expect(report).To(gomega.ContainSubstring("Members (1), 1 not yet arrived"))
-	g.Expect(report).To(gomega.MatchRegexp(objectPath + `\s+\d+ bytes\s+\(not yet arrived\)\n`))
+	g.Expect(report).To(gomega.MatchRegexp(resourcePath + `\s+\d+ bytes\s+\(not yet arrived\)\n`))
 	g.Expect(report).To(gomega.ContainSubstring("Networks required (2)"))
 	// Every cluster has a pod network; a secondary one names the attachment
 	// the source cluster backed it with.
@@ -322,7 +299,7 @@ func TestInspectDescribesATransferThatStoppedPartWayThroughADisk(t *testing.T) {
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	report := described.String()
 	g.Expect(report).To(gomega.ContainSubstring("Members (2), 1 not yet arrived"))
-	g.Expect(report).To(gomega.MatchRegexp(objectPath + `\s+\d+ bytes\s+sha256:`))
+	g.Expect(report).To(gomega.MatchRegexp(resourcePath + `\s+\d+ bytes\s+sha256:`))
 	g.Expect(report).To(gomega.MatchRegexp(disk.Path + `\s+\d+ bytes\s+\(not yet arrived\)\n`))
 }
 
@@ -374,7 +351,7 @@ func TestWriterRecordsTheRequirementsInTheManifest(t *testing.T) {
 	g.Expect(manifest.Requirements).To(gomega.Equal(testRequirements()))
 }
 
-func TestWriterHoldsEvidenceApartFromTheObjectsABundleCarries(t *testing.T) {
+func TestWriterKeepsTheExpandedSpecOutOfTheResources(t *testing.T) {
 	g := gomega.NewGomegaWithT(t)
 	file, err := os.Create(filepath.Join(t.TempDir(), "bundle"))
 	g.Expect(err).ToNot(gomega.HaveOccurred())
@@ -382,17 +359,16 @@ func TestWriterHoldsEvidenceApartFromTheObjectsABundleCarries(t *testing.T) {
 		_ = file.Close()
 	}()
 	writer := NewWriter(file)
-	err = writer.Carry(testObject(), objectBody)
+	err = writer.Collect(testResource(), objectBody)
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 
-	// One kind and one name, which collide among the carried objects but not
-	// across the two groupings: a bundle holds the VirtualMachine as it
-	// stands and the form the source cluster expands it to.
-	err = writer.AddEvidence(testObject(), expandedBody)
+	// The expansion carries the VirtualMachine's own kind and name, so it
+	// would land on top of it among the resources. It is a member of its own
+	// instead.
+	writer.AddExpandedSpec(expandedBody)
 
-	g.Expect(err).ToNot(gomega.HaveOccurred())
-	g.Expect(writer.Carry(testObject(), objectBody)).To(gomega.HaveOccurred())
-	g.Expect(writer.AddEvidence(testObject(), expandedBody)).To(gomega.HaveOccurred())
+	// A resource collected twice still collides.
+	g.Expect(writer.Collect(testResource(), objectBody)).To(gomega.HaveOccurred())
 	err = writer.Open(testProvenance())
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	err = writer.Close()
@@ -401,8 +377,9 @@ func TestWriterHoldsEvidenceApartFromTheObjectsABundleCarries(t *testing.T) {
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	manifest, err := Read(bytes.NewReader(archive))
 	g.Expect(err).ToNot(gomega.HaveOccurred())
-	g.Expect(manifest.Objects[0].Path).To(gomega.Equal(objectPath))
-	g.Expect(manifest.Evidence[0].Path).To(gomega.Equal(evidencePath))
+	g.Expect(manifest.Resources).To(gomega.HaveLen(1))
+	g.Expect(manifest.Resources[0].Path).To(gomega.Equal(resourcePath))
+	g.Expect(manifest.ExpandedSpec).To(gomega.Equal(ExpandedSpecPath))
 }
 
 func TestInspectPrintsTheCaptureRecordWithTheSkippedObjectsInASectionOfTheirOwn(t *testing.T) {
@@ -410,30 +387,30 @@ func TestInspectPrintsTheCaptureRecordWithTheSkippedObjectsInASectionOfTheirOwn(
 	manifest := indexing(t)
 	manifest.CaptureRecord = []Attempt{
 		{
-			Kind:        "VirtualMachine",
-			Namespace:   "support-cases",
-			Name:        "db-01",
-			Disposition: DispositionCarried,
+			Kind:      "VirtualMachine",
+			Namespace: "support-cases",
+			Name:      "db-01",
+			Outcome:   OutcomeCollected,
 		},
 		{
-			Kind:        "Secret",
-			Namespace:   "support-cases",
-			Name:        "db-01-cloudinit",
-			Disposition: DispositionSkipped,
-			Reason:      SkipForbidden,
-			Message:     `secrets "db-01-cloudinit" is forbidden`,
+			Kind:      "Secret",
+			Namespace: "support-cases",
+			Name:      "db-01-cloudinit",
+			Outcome:   OutcomeSkipped,
+			Reason:    SkipForbidden,
+			Message:   `secrets "db-01-cloudinit" is forbidden`,
 		},
 		{
-			Kind:        "NetworkAttachmentDefinition",
-			Namespace:   "shared-networks",
-			Name:        "storage-net",
-			Disposition: DispositionSkipped,
-			Reason:      SkipNotInstalled,
+			Kind:      "NetworkAttachmentDefinition",
+			Namespace: "shared-networks",
+			Name:      "storage-net",
+			Outcome:   OutcomeSkipped,
+			Reason:    SkipNotInstalled,
 		},
 	}
 	archive := tarball(t,
 		rawMember{path: ManifestPath, data: encodeManifest(t, manifest)},
-		rawMember{path: objectPath, data: objectBody})
+		rawMember{path: resourcePath, data: objectBody})
 	described := &bytes.Buffer{}
 
 	err := Inspect(bytes.NewReader(archive), described)
@@ -441,7 +418,7 @@ func TestInspectPrintsTheCaptureRecordWithTheSkippedObjectsInASectionOfTheirOwn(
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	report := described.String()
 	g.Expect(report).To(gomega.ContainSubstring("Capture record (3)"))
-	g.Expect(report).To(gomega.MatchRegexp(`carried\s+1\n`))
+	g.Expect(report).To(gomega.MatchRegexp(`collected\s+1\n`))
 	g.Expect(report).To(gomega.MatchRegexp(`skipped\s+2\n`))
 	// What a reader has to act on is listed under a heading of its own
 	// rather than counted among everything that was collected.
@@ -450,8 +427,8 @@ func TestInspectPrintsTheCaptureRecordWithTheSkippedObjectsInASectionOfTheirOwn(
 		`Secret\s+db-01-cloudinit\s+forbidden\s+secrets "db-01-cloudinit" is forbidden\n`))
 	g.Expect(report).To(gomega.MatchRegexp(
 		`NetworkAttachmentDefinition\s+shared-networks/storage-net\s+not installed\s*\n`))
-	// A disposition nothing got is not printed.
-	g.Expect(report).ToNot(gomega.ContainSubstring(string(DispositionRequirement)))
+	// An outcome nothing got is not printed.
+	g.Expect(report).ToNot(gomega.ContainSubstring(string(OutcomeRequired)))
 }
 
 func TestInspectReportsAVersionItCouldNotRead(t *testing.T) {
@@ -628,7 +605,7 @@ func writeBundle(t *testing.T, provenance Provenance, disks ...stagedDisk) (arch
 		_ = file.Close()
 	}()
 	writer := NewWriter(file)
-	err = writer.Carry(testObject(), objectBody)
+	err = writer.Collect(testResource(), objectBody)
 	if err != nil {
 		t.Fatalf("carry object: %v", err)
 	}
@@ -653,13 +630,13 @@ func writeBundle(t *testing.T, provenance Provenance, disks ...stagedDisk) (arch
 	return
 }
 
-// testObject is the carried object the fixtures put in a bundle.
-func testObject() (object Object) {
-	object = Object{
+// testResource is the resource the fixtures put in a bundle.
+func testResource() (resource Resource) {
+	resource = Resource{
 		Kind:      "VirtualMachine",
 		Namespace: "support-cases",
 		Name:      "db-01",
-		Path:      objectPath,
+		Path:      resourcePath,
 	}
 	return
 }
@@ -737,7 +714,7 @@ func stage(t *testing.T, writer *Writer, ready stagedDisk) {
 	}
 }
 
-// indexing builds a manifest that correctly indexes the carried object, for
+// indexing builds a manifest that correctly indexes the resource, for
 // tests that then corrupt one part of the bundle.
 func indexing(t *testing.T) (manifest *Manifest) {
 	t.Helper()
@@ -746,7 +723,7 @@ func indexing(t *testing.T) (manifest *Manifest) {
 		Provenance:    testProvenance(),
 		Members: []Member{
 			{
-				Path:   objectPath,
+				Path:   resourcePath,
 				Size:   int64(len(objectBody)),
 				Digest: digest(objectBody),
 			},

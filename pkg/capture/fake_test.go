@@ -29,7 +29,7 @@ const (
 	testChassis = "CHS-00042"
 )
 
-// What the evidence every fixture cluster offers says about the source
+// What every fixture cluster says about the source
 // environment.
 const (
 	testKubeVirtNamespace = "kubevirt"

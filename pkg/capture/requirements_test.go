@@ -155,7 +155,7 @@ func TestExportDeclaresADiskWhoseClaimItCouldNotReadWithWhatItKnows(t *testing.T
 	g.Expect(manifest.Disks).To(gomega.HaveLen(2))
 }
 
-func TestExportDeclaresStorageRequirementsWhateverEvidenceItCouldCollect(t *testing.T) {
+func TestExportDeclaresStorageRequirementsWhateverItCouldCollect(t *testing.T) {
 	g := gomega.NewGomegaWithT(t)
 	c := requiringCluster(t)
 	// What a namespace owner without cluster read sees: the claims in their
@@ -175,7 +175,9 @@ func TestExportDeclaresStorageRequirementsWhateverEvidenceItCouldCollect(t *test
 	// Requirements come off the VirtualMachine and its claims, so a capture
 	// that could collect nothing about the source cluster's storage still
 	// says what a target would need.
-	g.Expect(gathered(manifest)).To(gomega.Equal(sourceEvidence()))
+	g.Expect(collected(manifest)).To(gomega.Equal(append(
+		append(fromVirtualMachine(), ref(cluster.KindPersistentVolumeClaim, dataClaim)),
+		sourceCluster()...)))
 	g.Expect(manifest.Requirements.Storage).To(gomega.HaveLen(2))
 	g.Expect(manifest.Requirements.Storage[0].StorageClass).To(gomega.Equal(testStorageClass))
 	g.Expect(manifest.Requirements.Storage[1].StorageClass).To(gomega.Equal(testFilesystemClass))
@@ -224,7 +226,7 @@ func TestExportDeclaresContainerDiskImagesAndNeverRepackagesThem(t *testing.T) {
 		g.Expect(member).ToNot(gomega.ContainSubstring(testContainerImage))
 	}
 	// The Secret the image is pulled with is a real object and is carried.
-	g.Expect(carried(manifest)).To(gomega.ContainElement(ref(cluster.KindSecret, testSecret)))
+	g.Expect(collected(manifest)).To(gomega.ContainElement(ref(cluster.KindSecret, testSecret)))
 }
 
 func TestExportCreatesNoExportForAVirtualMachineServedOnlyFromAContainerImage(t *testing.T) {
@@ -244,7 +246,7 @@ func TestExportCreatesNoExportForAVirtualMachineServedOnlyFromAContainerImage(t 
 	g.Expect(manifest.Requirements.ContainerDisks).To(gomega.HaveLen(1))
 }
 
-func TestExportRecordsEveryRequirementWithTheRequirementDisposition(t *testing.T) {
+func TestExportRecordsEveryRequirementWithTheRequiredOutcome(t *testing.T) {
 	g := gomega.NewGomegaWithT(t)
 	c := requiringCluster(t)
 	attachNetwork(t, c.vm, "shared-networks/"+testNetwork)
@@ -348,7 +350,7 @@ func claimed(t *testing.T, c *fakeCluster, name, class, size, mode string) {
 func required(manifest *bundle.Manifest) (refs []cluster.ObjectRef) {
 	for i := range manifest.CaptureRecord {
 		attempt := manifest.CaptureRecord[i]
-		if attempt.Disposition != bundle.DispositionRequirement {
+		if attempt.Outcome != bundle.OutcomeRequired {
 			continue
 		}
 		refs = append(refs, cluster.ObjectRef{

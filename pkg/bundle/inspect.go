@@ -43,8 +43,8 @@ func describe(out io.Writer, manifest *Manifest, absent []string) (err error) {
 	_, _ = fmt.Fprintf(tw, "  Captured at:\t%s\n", provenance.CapturedAt.UTC().Format(time.RFC3339))
 	_, _ = fmt.Fprintf(tw, "  KubeVirt version:\t%s\n", orUnknown(provenance.KubeVirtVersion))
 	_, _ = fmt.Fprintf(tw, "  Kubernetes version:\t%s\n", orUnknown(provenance.KubernetesVersion))
-	describeObjects(tw, manifest)
-	describeEvidence(tw, manifest)
+	describeResources(tw, manifest)
+	describeExpandedSpec(tw, manifest)
 	describeRequirements(tw, manifest.Requirements)
 	describeDisks(tw, manifest)
 	describeRecord(tw, manifest)
@@ -83,59 +83,32 @@ func describeMembers(out io.Writer, manifest *Manifest, absent []string) {
 	}
 }
 
-// describeObjects writes the objects a bundle carries, by kind and name, in
+// describeResources writes the resources a bundle holds, by kind and name, in
 // the order they were discovered.
-func describeObjects(out io.Writer, manifest *Manifest) {
-	if len(manifest.Objects) == 0 {
+func describeResources(out io.Writer, manifest *Manifest) {
+	if len(manifest.Resources) == 0 {
 		return
 	}
-	_, _ = fmt.Fprintf(out, "\nCarried objects (%d)\n", len(manifest.Objects))
-	for i := range manifest.Objects {
-		object := manifest.Objects[i]
+	_, _ = fmt.Fprintf(out, "\nResources (%d)\n", len(manifest.Resources))
+	for i := range manifest.Resources {
+		resource := manifest.Resources[i]
 		_, _ = fmt.Fprintf(
 			out,
 			"  %s\t%s\n",
-			object.Kind,
-			qualified(object.Namespace, object.Name, manifest.Provenance.Namespace))
+			resource.Kind,
+			qualified(resource.Namespace, resource.Name, manifest.Provenance.Namespace))
 	}
 }
 
-// describeEvidence writes the evidence a bundle holds, under a heading of its
-// own saying what evidence is for.
-//
-// A reader deciding what to do with a bundle has to be able to tell at a
-// glance which objects describe the source cluster and which are the
-// VirtualMachine itself, so the two are never listed together.
-func describeEvidence(out io.Writer, manifest *Manifest) {
-	if len(manifest.Evidence) == 0 {
+// describeExpandedSpec names the member holding the source cluster's
+// expansion of the VirtualMachine. A bundle whose capture could not read it
+// produces no output here.
+func describeExpandedSpec(out io.Writer, manifest *Manifest) {
+	if manifest.ExpandedSpec == "" {
 		return
 	}
-	_, _ = fmt.Fprintf(
-		out,
-		"\nEvidence (%d), describes the source cluster and is never applied\n",
-		len(manifest.Evidence))
-	for i := range manifest.Evidence {
-		object := manifest.Evidence[i]
-		_, _ = fmt.Fprintf(
-			out,
-			"  %s\t%s\n",
-			object.Kind,
-			evidenceName(object, manifest.Provenance))
-	}
-}
-
-// evidenceName renders an evidence object's name, saying so when the object is
-// the source cluster's expansion of the VirtualMachine the bundle carries.
-//
-// The two are one object by kind and name, so a reader shown the same line in
-// both sections would have no way to tell which was which.
-func evidenceName(object Object, provenance Provenance) (rendered string) {
-	rendered = qualified(object.Namespace, object.Name, provenance.Namespace)
-	if object.Kind != kindVirtualMachine || object.Name != provenance.VirtualMachine {
-		return
-	}
-	rendered += " (as the source cluster expands it)"
-	return
+	_, _ = fmt.Fprintf(out, "\nExpanded spec\n")
+	_, _ = fmt.Fprintf(out, "  %s\n", manifest.ExpandedSpec)
 }
 
 // describeRequirements writes what a bundle needs a target cluster to
@@ -251,7 +224,7 @@ func describeDisks(out io.Writer, manifest *Manifest) {
 }
 
 // describeRecord writes the capture record: how many objects got each
-// disposition, and then every skipped object in a section of its own.
+// outcome, and then every skipped object in a section of its own.
 //
 // Skipped objects are what a reader has to act on, so they are listed rather
 // than counted and sit under their own heading instead of among the dozens of
@@ -260,16 +233,16 @@ func describeRecord(out io.Writer, manifest *Manifest) {
 	if len(manifest.CaptureRecord) == 0 {
 		return
 	}
-	countOf := map[Disposition]int{}
+	countOf := map[Outcome]int{}
 	for i := range manifest.CaptureRecord {
-		countOf[manifest.CaptureRecord[i].Disposition]++
+		countOf[manifest.CaptureRecord[i].Outcome]++
 	}
 	_, _ = fmt.Fprintf(out, "\nCapture record (%d)\n", len(manifest.CaptureRecord))
-	for _, disposition := range dispositions {
-		if countOf[disposition] == 0 {
+	for _, outcome := range outcomes {
+		if countOf[outcome] == 0 {
 			continue
 		}
-		_, _ = fmt.Fprintf(out, "  %s\t%d\n", disposition, countOf[disposition])
+		_, _ = fmt.Fprintf(out, "  %s\t%d\n", outcome, countOf[outcome])
 	}
 	skipped := manifest.CaptureRecord.Skipped()
 	if len(skipped) == 0 {

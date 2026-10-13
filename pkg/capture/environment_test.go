@@ -27,7 +27,7 @@ func TestExportCapturesTheStorageBehindEveryPersistentVolumeClaim(t *testing.T) 
 		kind string
 		// object is the cluster-scoped name the claim led quo to.
 		object string
-		// held is what the evidence has to carry: the reason the object is
+		// held is what the collected object has to carry: the reason it is
 		// worth capturing at all.
 		held string
 	}{
@@ -57,7 +57,7 @@ func TestExportCapturesTheStorageBehindEveryPersistentVolumeClaim(t *testing.T) 
 
 			_, content := captureWithDisks(t, provisionedCluster(t), testOptions())
 
-			member := bundle.EvidencePath(tt.kind, tt.object)
+			member := bundle.ResourcePath(tt.kind, tt.object)
 			g.Expect(content).To(gomega.HaveKey(member))
 			object := decodeMember(t, content, member)
 			g.Expect(object["kind"]).To(gomega.Equal(tt.kind))
@@ -65,10 +65,7 @@ func TestExportCapturesTheStorageBehindEveryPersistentVolumeClaim(t *testing.T) 
 			// actually is, so it travels rather than being summarised.
 			g.Expect(string(content[member])).To(gomega.ContainSubstring(tt.held))
 			manifest := capturedManifest(t, content)
-			// It is evidence about the source cluster, not something a target
-			// would be given.
-			g.Expect(gathered(manifest)).To(gomega.ContainElement(clusterRef(tt.kind, tt.object)))
-			g.Expect(carried(manifest)).ToNot(gomega.ContainElement(clusterRef(tt.kind, tt.object)))
+			g.Expect(collected(manifest)).To(gomega.ContainElement(clusterRef(tt.kind, tt.object)))
 		})
 	}
 }
@@ -85,7 +82,7 @@ func TestExportCapturesKubeVirtsOwnConfigurationIncludingItsFeatureGates(t *test
 	developer := nested(t, kv, "spec", "configuration", "developerConfiguration")
 	g.Expect(developer["featureGates"]).To(gomega.ConsistOf(testFeatureGate))
 	manifest := capturedManifest(t, content)
-	g.Expect(gathered(manifest)).To(gomega.ContainElement(
+	g.Expect(collected(manifest)).To(gomega.ContainElement(
 		refIn(cluster.KindKubeVirt, testKubeVirtNamespace, testKubeVirtName)))
 }
 
@@ -111,22 +108,19 @@ func TestExportCapturesTheExpandedFormWithoutUsingItToRewriteTheVirtualMachine(t
 	g.Expect(held).ToNot(gomega.HaveKey("cpu"))
 }
 
-func TestExportHoldsEvidenceApartFromTheObjectsItCarries(t *testing.T) {
+func TestExportHoldsTheExpandedSpecOutsideTheResources(t *testing.T) {
 	g := gomega.NewGomegaWithT(t)
 
 	order, content := captureWithDisks(t, provisionedCluster(t), testOptions())
 
 	manifest := capturedManifest(t, content)
-	g.Expect(manifest.Objects).ToNot(gomega.BeEmpty())
-	for i := range manifest.Objects {
-		g.Expect(manifest.Objects[i].Path).To(gomega.HavePrefix(bundle.ObjectsDir + "/"))
+	g.Expect(manifest.Resources).ToNot(gomega.BeEmpty())
+	for i := range manifest.Resources {
+		g.Expect(manifest.Resources[i].Path).To(gomega.HavePrefix(bundle.ResourcesDir + "/"))
 	}
-	g.Expect(manifest.Evidence).ToNot(gomega.BeEmpty())
-	for i := range manifest.Evidence {
-		g.Expect(manifest.Evidence[i].Path).To(gomega.HavePrefix(bundle.EvidenceDir + "/"))
-	}
-	// Carrying the VirtualMachine and its expanded form under one name is
-	// only possible because the two groupings are separate.
+	// The expansion carries the VirtualMachine's own kind and name, so a
+	// member of its own is what lets a bundle hold both.
+	g.Expect(manifest.ExpandedSpec).To(gomega.Equal(bundle.ExpandedSpecPath))
 	g.Expect(order).To(gomega.ContainElement(testVMMember))
 	g.Expect(order).To(gomega.ContainElement(testExpandedMember))
 	g.Expect(content[testVMMember]).ToNot(gomega.Equal(content[testExpandedMember]))
@@ -147,20 +141,20 @@ func TestExportRecordsCDIAsNotInstalledRatherThanTreatingItAsAnError(t *testing.
 	// gone wrong with the capture.
 	g.Expect(manifest.CaptureRecord.Skipped()).To(gomega.Equal([]bundle.Attempt{
 		{
-			Kind:        cluster.KindStorageProfile,
-			Name:        testStorageClass,
-			Disposition: bundle.DispositionSkipped,
-			Reason:      bundle.SkipNotInstalled,
-			Message:     fmt.Sprintf("%s: %s", cluster.KindStorageProfile, cluster.ErrNotInstalled),
+			Kind:    cluster.KindStorageProfile,
+			Name:    testStorageClass,
+			Outcome: bundle.OutcomeSkipped,
+			Reason:  bundle.SkipNotInstalled,
+			Message: fmt.Sprintf("%s: %s", cluster.KindStorageProfile, cluster.ErrNotInstalled),
 		},
 	}))
-	// Everything else about the source environment was still collected.
-	g.Expect(gathered(manifest)).To(gomega.Equal(append(
-		[]cluster.ObjectRef{
+	// Everything else about the source cluster was still collected.
+	g.Expect(collected(manifest)).To(gomega.Equal(append(
+		append(
+			fromVirtualMachine(),
 			clusterRef(cluster.KindStorageClass, testStorageClass),
-			clusterRef(cluster.KindPersistentVolume, testRootPV),
-		},
-		sourceEvidence()...)))
+			clusterRef(cluster.KindPersistentVolume, testRootPV)),
+		sourceCluster()...)))
 	g.Expect(manifest.Disks).To(gomega.HaveLen(1))
 }
 
@@ -183,7 +177,7 @@ func TestExportRecordsEveryForbiddenClusterScopedReadAndCapturesAnyway(t *testin
 	_, content := captureWithDisks(t, c, testOptions())
 
 	manifest := capturedManifest(t, content)
-	// Failing a capture that may have taken hours over evidence nobody is
+	// Failing a capture that may have taken hours over an object nobody is
 	// entitled to would be unacceptable, and omitting it in silence would be
 	// worse: the reader could not tell it from a cluster that had none.
 	for _, attempt := range manifest.CaptureRecord.Skipped() {
@@ -192,11 +186,11 @@ func TestExportRecordsEveryForbiddenClusterScopedReadAndCapturesAnyway(t *testin
 	g.Expect(skipped(manifest)).To(gomega.Equal(append(
 		forbidden,
 		cluster.ObjectRef{Kind: cluster.KindKubeVirt},
-		ref(cluster.KindVirtualMachine, testName))))
-	g.Expect(manifest.Evidence).To(gomega.BeEmpty())
-	// The bundle is still worth having: the VirtualMachine, its closure and
-	// its disks all arrived.
-	g.Expect(carried(manifest)).To(gomega.Equal([]cluster.ObjectRef{
+		ref(bundle.KindExpandedSpec, testName))))
+	g.Expect(manifest.ExpandedSpec).To(gomega.BeEmpty())
+	// The bundle is still worth having: the VirtualMachine, the resources it
+	// refers to and its disks all arrived.
+	g.Expect(collected(manifest)).To(gomega.Equal([]cluster.ObjectRef{
 		ref(cluster.KindVirtualMachine, testName),
 		ref(cluster.KindPersistentVolumeClaim, rootClaim),
 	}))
@@ -220,14 +214,15 @@ func TestExportCapturesAStorageClassTwoClaimsShareOnce(t *testing.T) {
 	_, content := captureWithDisks(t, c, testOptions())
 
 	manifest := capturedManifest(t, content)
-	g.Expect(gathered(manifest)).To(gomega.Equal(append(
-		[]cluster.ObjectRef{
+	g.Expect(collected(manifest)).To(gomega.Equal(append(
+		append(
+			fromVirtualMachine(),
+			ref(cluster.KindPersistentVolumeClaim, dataClaim),
 			clusterRef(cluster.KindStorageClass, testStorageClass),
 			clusterRef(cluster.KindStorageProfile, testStorageClass),
 			clusterRef(cluster.KindPersistentVolume, testRootPV),
-			clusterRef(cluster.KindPersistentVolume, testDataPV),
-		},
-		sourceEvidence()...)))
+			clusterRef(cluster.KindPersistentVolume, testDataPV)),
+		sourceCluster()...)))
 	// Read from the cluster once, so recorded once.
 	g.Expect(c.requested).To(gomega.Equal([]cluster.ObjectRef{
 		ref(cluster.KindPersistentVolumeClaim, rootClaim),
@@ -239,7 +234,7 @@ func TestExportCapturesAStorageClassTwoClaimsShareOnce(t *testing.T) {
 	}))
 }
 
-func TestExportSeeksNoStorageEvidenceAClaimDoesNotName(t *testing.T) {
+func TestExportSeeksNoStorageAClaimDoesNotName(t *testing.T) {
 	tests := []struct {
 		name string
 		// spec is the claim's spec as the cluster holds it.
@@ -283,7 +278,15 @@ func TestExportSeeksNoStorageEvidenceAClaimDoesNotName(t *testing.T) {
 			_, content := captureWithDisks(t, c, testOptions())
 
 			manifest := capturedManifest(t, content)
-			g.Expect(gathered(manifest)).To(gomega.Equal(append(tt.want, sourceEvidence()...)))
+			// A claim quo could not read is skipped, so it is not among the
+			// resources the bundle holds.
+			head := fromVirtualMachine()
+			if tt.unreadable {
+				head = head[:1]
+			}
+			g.Expect(collected(manifest)).To(gomega.Equal(append(
+				append(head, tt.want...),
+				sourceCluster()...)))
 		})
 	}
 }
@@ -339,25 +342,23 @@ func provision(t *testing.T, c *fakeCluster, name string, spec map[string]any) {
 	c.hold(ref(cluster.KindPersistentVolumeClaim, name), held)
 }
 
-// sourceEvidence is what every fixture cluster says about itself, collected
-// after whatever the claims named.
-func sourceEvidence() (refs []cluster.ObjectRef) {
+// sourceCluster is what every fixture cluster says about itself, collected
+// after whatever the claims named. The expansion follows it and is not a
+// resource, so it does not appear here.
+func sourceCluster() (refs []cluster.ObjectRef) {
 	refs = []cluster.ObjectRef{
 		refIn(cluster.KindKubeVirt, testKubeVirtNamespace, testKubeVirtName),
-		ref(cluster.KindVirtualMachine, testName),
 	}
 	return
 }
 
-// gathered returns the evidence a manifest says the bundle holds.
-func gathered(manifest *bundle.Manifest) (refs []cluster.ObjectRef) {
-	for i := range manifest.Evidence {
-		object := manifest.Evidence[i]
-		refs = append(refs, cluster.ObjectRef{
-			Kind:      object.Kind,
-			Namespace: object.Namespace,
-			Name:      object.Name,
-		})
+// fromVirtualMachine is what every provisioned fixture collects before
+// anything describing the source cluster: the VirtualMachine and the claim
+// behind its disk.
+func fromVirtualMachine() (refs []cluster.ObjectRef) {
+	refs = []cluster.ObjectRef{
+		ref(cluster.KindVirtualMachine, testName),
+		ref(cluster.KindPersistentVolumeClaim, rootClaim),
 	}
 	return
 }

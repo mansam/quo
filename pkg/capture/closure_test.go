@@ -325,10 +325,11 @@ func TestExportCapturesEveryObjectTheVirtualMachineReferences(t *testing.T) {
 			_, content := captureWithDisks(t, c, testOptions())
 
 			manifest := capturedManifest(t, content)
-			g.Expect(carried(manifest)).To(gomega.Equal(
-				append([]cluster.ObjectRef{ref(cluster.KindVirtualMachine, testName)}, tt.want...)))
+			g.Expect(collected(manifest)).To(gomega.Equal(append(
+				append([]cluster.ObjectRef{ref(cluster.KindVirtualMachine, testName)}, tt.want...),
+				sourceCluster()...)))
 			for _, want := range tt.want {
-				g.Expect(content).To(gomega.HaveKey(bundle.ObjectPath(want.Kind, want.Name)))
+				g.Expect(content).To(gomega.HaveKey(bundle.ResourcePath(want.Kind, want.Name)))
 			}
 		})
 	}
@@ -352,11 +353,13 @@ func TestExportCapturesTheControllerRevisionOfAnInstancetypeThatHasBeenDeleted(t
 	// The ControllerRevision is now the only complete record of what the
 	// VirtualMachine was created with, so the capture must not fail over the
 	// instancetype being gone.
-	g.Expect(carried(manifest)).To(gomega.Equal([]cluster.ObjectRef{
-		ref(cluster.KindVirtualMachine, testName),
-		ref(cluster.KindControllerRevision, testRevision),
-	}))
-	g.Expect(content).To(gomega.HaveKey(bundle.ObjectPath(cluster.KindControllerRevision, testRevision)))
+	g.Expect(collected(manifest)).To(gomega.Equal(append(
+		[]cluster.ObjectRef{
+			ref(cluster.KindVirtualMachine, testName),
+			ref(cluster.KindControllerRevision, testRevision),
+		},
+		sourceCluster()...)))
+	g.Expect(content).To(gomega.HaveKey(bundle.ResourcePath(cluster.KindControllerRevision, testRevision)))
 }
 
 func TestExportCarriesAnObjectReferencedFromMoreThanOnePlaceOnce(t *testing.T) {
@@ -388,16 +391,18 @@ func TestExportCarriesAnObjectReferencedFromMoreThanOnePlaceOnce(t *testing.T) {
 	order, content := captureWithDisks(t, c, testOptions())
 
 	manifest := capturedManifest(t, content)
-	g.Expect(carried(manifest)).To(gomega.Equal([]cluster.ObjectRef{
-		ref(cluster.KindVirtualMachine, testName),
-		ref(cluster.KindSecret, testSecret),
-	}))
+	g.Expect(collected(manifest)).To(gomega.Equal(append(
+		[]cluster.ObjectRef{
+			ref(cluster.KindVirtualMachine, testName),
+			ref(cluster.KindSecret, testSecret),
+		},
+		sourceCluster()...)))
 	// Read once from the cluster and written once into the bundle.
 	g.Expect(c.requested).To(gomega.Equal([]cluster.ObjectRef{ref(cluster.KindSecret, testSecret)}))
-	g.Expect(order).To(gomega.Equal(withEvidence([]string{
+	g.Expect(order).To(gomega.Equal(withSourceCluster([]string{
 		bundle.ManifestPath,
 		testVMMember,
-		bundle.ObjectPath(cluster.KindSecret, testSecret),
+		bundle.ResourcePath(cluster.KindSecret, testSecret),
 	})))
 }
 
@@ -435,12 +440,12 @@ func TestExportCarriesOnlyTheVirtualMachineWhenItsClosureIsEmpty(t *testing.T) {
 	order, content := captureWithDisks(t, c, testOptions())
 
 	manifest := capturedManifest(t, content)
-	g.Expect(carried(manifest)).To(gomega.Equal([]cluster.ObjectRef{
-		ref(cluster.KindVirtualMachine, testName),
-	}))
-	// Evidence about the source cluster is collected whether or not the
+	g.Expect(collected(manifest)).To(gomega.Equal(append(
+		[]cluster.ObjectRef{ref(cluster.KindVirtualMachine, testName)},
+		sourceCluster()...)))
+	// What describes the source cluster is collected whether or not the
 	// VirtualMachine refers to anything.
-	g.Expect(order).To(gomega.Equal(withEvidence([]string{bundle.ManifestPath, testVMMember})))
+	g.Expect(order).To(gomega.Equal(withSourceCluster([]string{bundle.ManifestPath, testVMMember})))
 	g.Expect(c.requested).To(gomega.BeEmpty())
 }
 
@@ -527,7 +532,7 @@ func TestExportCarriesSecretsInFull(t *testing.T) {
 
 			_, content := captureWithDisks(t, c, testOptions())
 
-			object := decodeMember(t, content, bundle.ObjectPath(cluster.KindSecret, tt.secret))
+			object := decodeMember(t, content, bundle.ResourcePath(cluster.KindSecret, tt.secret))
 			data := nested(t, object, "data")
 			g.Expect(data[tt.key]).To(gomega.Equal(tt.value))
 		})
@@ -540,10 +545,10 @@ func TestExportCarriesObjectsAsKubernetesYAMLThatCanBeAppliedByHand(t *testing.T
 
 	order, content := captureWithDisks(t, c, testOptions())
 
-	member := bundle.ObjectPath(cluster.KindConfigMap, testConfigMap)
+	member := bundle.ResourcePath(cluster.KindConfigMap, testConfigMap)
 	g.Expect(order).To(gomega.ContainElement(member))
 	// Everything carried sits under the objects grouping, named by its kind.
-	g.Expect(member).To(gomega.HavePrefix(bundle.ObjectsDir + "/"))
+	g.Expect(member).To(gomega.HavePrefix(bundle.ResourcesDir + "/"))
 	object := decodeMember(t, content, member)
 	g.Expect(object["apiVersion"]).To(gomega.Equal("v1"))
 	g.Expect(object["kind"]).To(gomega.Equal(cluster.KindConfigMap))
@@ -648,10 +653,10 @@ func attachNetwork(t *testing.T, vm *unstructured.Unstructured, name string) {
 	}, "spec", "template", "spec", "networks")
 }
 
-// carried returns the objects a manifest says the bundle carries.
-func carried(manifest *bundle.Manifest) (refs []cluster.ObjectRef) {
-	for i := range manifest.Objects {
-		object := manifest.Objects[i]
+// collected returns the resources a manifest says the bundle holds.
+func collected(manifest *bundle.Manifest) (refs []cluster.ObjectRef) {
+	for i := range manifest.Resources {
+		object := manifest.Resources[i]
 		refs = append(refs, cluster.ObjectRef{
 			Kind:      object.Kind,
 			Namespace: object.Namespace,

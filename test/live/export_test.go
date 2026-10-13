@@ -115,14 +115,14 @@ func TestCapturingARealVirtualMachineRecordsWhereItCameFrom(t *testing.T) {
 	g.Expect(manifest.Provenance.KubeVirtVersion).ToNot(gomega.BeEmpty())
 }
 
-func TestCapturingARealVirtualMachineCarriesItsClosure(t *testing.T) {
+func TestCapturingARealVirtualMachineCollectsEverythingItRefersTo(t *testing.T) {
 	g := gomega.NewGomegaWithT(t)
 	s := live(t)
 
 	_, manifest := s.captured(t)
 
-	carried := describeObjects(manifest.Objects)
-	g.Expect(carried).To(gomega.ContainElements(
+	held := describeObjects(manifest.Resources)
+	g.Expect(held).To(gomega.ContainElements(
 		describe(s.fixture.ref(cluster.KindVirtualMachine, partVM)),
 		describe(s.fixture.ref(cluster.KindConfigMap, partConfig)),
 		describe(s.fixture.ref(cluster.KindSecret, partCloudInit)),
@@ -136,25 +136,26 @@ func TestCapturingARealVirtualMachineCarriesItsClosure(t *testing.T) {
 	// KubeVirt pins the instancetype to a ControllerRevision of its own
 	// naming, which the fixture waits for before anything reads the
 	// VirtualMachine.
-	g.Expect(carried).To(gomega.ContainElement(
+	g.Expect(held).To(gomega.ContainElement(
 		gomega.HavePrefix(cluster.KindControllerRevision + " " + s.fixture.namespace + "/")))
 }
 
-func TestCapturingARealVirtualMachineHoldsEvidenceAboutTheSourceCluster(t *testing.T) {
+func TestCapturingARealVirtualMachineCollectsWhatDescribesTheSourceCluster(t *testing.T) {
 	g := gomega.NewGomegaWithT(t)
 	s := live(t)
 
 	_, manifest := s.captured(t)
 
-	kinds := kindsOf(manifest.Evidence)
+	kinds := kindsOf(manifest.Resources)
 	// KubeVirt's own configuration, which is read by listing a singleton
 	// whose namespace and name differ between installations.
 	g.Expect(kinds).To(gomega.ContainElement(cluster.KindKubeVirt))
-	// The expand-spec subresource, which is the one subresource a capture
-	// reads and is served by virt-api rather than by the API server.
-	g.Expect(kinds).To(gomega.ContainElement(cluster.KindVirtualMachine))
 	// The storage behind the claim, which is cluster-scoped.
 	g.Expect(kinds).To(gomega.ContainElement(cluster.KindStorageClass))
+	// The expand-spec subresource, which is the one subresource a capture
+	// reads and is served by virt-api rather than by the API server. It is a
+	// member of its own rather than a resource.
+	g.Expect(manifest.ExpandedSpec).To(gomega.Equal(bundle.ExpandedSpecPath))
 }
 
 func TestCapturingARealVirtualMachineCarriesItsDisk(t *testing.T) {
@@ -193,7 +194,7 @@ func TestCapturingARealVirtualMachineLeavesItsIdentityAlone(t *testing.T) {
 
 	s.captured(t)
 
-	carried := s.read(t, bundle.ObjectPath(cluster.KindVirtualMachine, s.fixture.named(partVM)))
+	carried := s.read(t, bundle.ResourcePath(cluster.KindVirtualMachine, s.fixture.named(partVM)))
 	uuid, _, err := unstructured.NestedString(
 		carried.Object, "spec", "template", "spec", "domain", "firmware", "uuid")
 	g.Expect(err).ToNot(gomega.HaveOccurred())
@@ -250,7 +251,7 @@ func (r *suite) member(t *testing.T, path string) (content []byte) {
 
 // describeObjects names every object a bundle holds, the way the difference report names
 // one, so that a failure reads the same whichever test produced it.
-func describeObjects(objects []bundle.Object) (names []string) {
+func describeObjects(objects []bundle.Resource) (names []string) {
 	for i := range objects {
 		names = append(names, describe(cluster.ObjectRef{
 			Kind:      objects[i].Kind,
@@ -262,7 +263,7 @@ func describeObjects(objects []bundle.Object) (names []string) {
 }
 
 // kindsOf is the kinds of the objects a bundle holds.
-func kindsOf(objects []bundle.Object) (kinds []string) {
+func kindsOf(objects []bundle.Resource) (kinds []string) {
 	for i := range objects {
 		kinds = append(kinds, objects[i].Kind)
 	}

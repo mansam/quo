@@ -19,18 +19,16 @@ import (
 // what became of each one.
 //
 // It refuses a VirtualMachine that is not stopped, before writing anything.
-// The VirtualMachine is carried exactly as the cluster returned it: quo
+// The VirtualMachine is collected exactly as the cluster returned it: quo
 // normalises nothing, so MAC addresses, firmware UUID, serial and chassis
 // values travel as they are.
 //
-// Alongside the closure, the bundle holds evidence about the cluster the
-// VirtualMachine came from: the storage behind each of its claims, KubeVirt's
-// own configuration, and the form the source cluster expands it to. Evidence
-// is held apart from the objects the bundle carries, because nothing will
-// recreate it on a target.
+// Alongside the resources the VirtualMachine refers to, the bundle holds what
+// describes the cluster it came from: the storage behind each of its claims,
+// KubeVirt's own configuration, and the form the source cluster expands it to.
 //
 // The manifest also declares what a target cluster would have to provide and
-// the bundle does not carry: the networks the VirtualMachine expects, what
+// the bundle does not hold: the networks the VirtualMachine expects, what
 // each of its disks needs from storage, and the container images it is served
 // from. Nothing in this phase consumes those records. They are written at
 // capture because the information is free while connected to the source
