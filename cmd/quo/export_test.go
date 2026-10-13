@@ -37,7 +37,7 @@ func TestExportSaysOnCompletionWhatItCouldNotCollect(t *testing.T) {
 
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	said := reported.String()
-	g.Expect(said).To(gomega.ContainSubstring("2 of the 3 objects"))
+	g.Expect(said).To(gomega.ContainSubstring("Skipped 2 of 3 objects"))
 	g.Expect(said).To(gomega.ContainSubstring("Secret db-01-cloudinit: forbidden"))
 	g.Expect(said).To(gomega.ContainSubstring("KubeVirt: forbidden"))
 }

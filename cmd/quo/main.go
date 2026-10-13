@@ -57,5 +57,8 @@ Usage:
 
 A bundle contains plaintext Secrets from the source cluster. Treat it with the
 same care as the cluster it was captured from.
+
+quo check creates no VirtualMachineExport and transfers no disk data, so
+permission to create one is the one thing it does not test.
 `)
 }

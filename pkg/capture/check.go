@@ -166,12 +166,6 @@ func (r *check) describe(out io.Writer) (err error) {
 	r.describeRequired(tw)
 	r.describeSkipped(tw)
 	r.describeDisks(tw)
-	// Permission to create an export is the one thing a check cannot settle,
-	// because settling it would mean creating one.
-	_, _ = fmt.Fprintf(
-		tw,
-		"\nNo disk data was transferred and no VirtualMachineExport was created,\n"+
-			"so permission to create one is the one thing this check did not test.\n")
 	err = tw.Flush()
 	if err != nil {
 		err = fmt.Errorf("write check: %w", err)
@@ -183,9 +177,14 @@ func (r *check) describe(out io.Writer) (err error) {
 // describeRefusal says whether a capture would go ahead. A VirtualMachine that
 // is not stopped is the one finding no permission fix will clear, so it is
 // said at the top rather than left to be discovered at the bottom.
+//
+// The rest of the check is written either way: it says what a capture would
+// collect once the VirtualMachine has been stopped. What it cannot show is a
+// volume hotplugged into the running VirtualMachine, which a stopped one does
+// not have.
 func (r *check) describeRefusal(out io.Writer) {
 	if r.status == StatusStopped {
-		_, _ = fmt.Fprintf(out, "  A capture would go ahead.\n")
+		_, _ = fmt.Fprintf(out, "  Capture:\twould run\n")
 		return
 	}
 	refused := &NotStoppedError{
@@ -193,12 +192,7 @@ func (r *check) describeRefusal(out io.Writer) {
 		Name:      r.opt.Name,
 		Status:    r.status,
 	}
-	_, _ = fmt.Fprintf(out, "  A capture would refuse it: %s\n", refused)
-	// The rest of the check is worth reading anyway: it says what a capture
-	// would collect once the VirtualMachine has been stopped. What it cannot
-	// show is a volume hotplugged into the running VirtualMachine, which a
-	// stopped one does not have.
-	_, _ = fmt.Fprintf(out, "  The rest of this check is what it would collect once stopped.\n")
+	_, _ = fmt.Fprintf(out, "  Capture:\trefused: %s\n", refused)
 }
 
 // describeCollected lists every object a capture would collect.
@@ -227,10 +221,7 @@ func (r *check) describeRequired(out io.Writer) {
 	if len(required) == 0 {
 		return
 	}
-	_, _ = fmt.Fprintf(
-		out,
-		"\nWould be required from a target (%d), declared and not carried\n",
-		len(required))
+	_, _ = fmt.Fprintf(out, "\nWould be required from a target (%d)\n", len(required))
 	for i := range required {
 		_, _ = fmt.Fprintf(out, "  %s\t%s\n", required[i].Kind, r.named(required[i]))
 	}
@@ -239,18 +230,12 @@ func (r *check) describeRequired(out io.Writer) {
 // describeSkipped lists everything a capture would not collect, with the
 // reason a capture record would give for it.
 //
-// A check that found nothing to skip says so, because the engineer running it
-// is asking exactly that question and an empty section would leave them
-// wondering whether quo had looked.
+// The heading is written even when nothing would be skipped, because the
+// engineer running a check is asking exactly that question and no section at
+// all would leave them wondering whether quo had looked.
 func (r *check) describeSkipped(out io.Writer) {
 	skipped := r.record.Skipped()
-	if len(skipped) == 0 {
-		_, _ = fmt.Fprintf(
-			out,
-			"\nNothing would be skipped: every object a capture needs could be read.\n")
-		return
-	}
-	_, _ = fmt.Fprintf(out, "\nWould be skipped (%d), absent from the bundle\n", len(skipped))
+	_, _ = fmt.Fprintf(out, "\nWould be skipped (%d)\n", len(skipped))
 	for i := range skipped {
 		_, _ = fmt.Fprintf(
 			out,
@@ -270,13 +255,10 @@ func (r *check) describeSkipped(out io.Writer) {
 // used volume costs a fraction of this, and the figures are an upper bound
 // rather than a prediction.
 func (r *check) describeDisks(out io.Writer) {
+	_, _ = fmt.Fprintf(out, "\nDisks (%d)\n", len(r.disks))
 	if len(r.disks) == 0 {
-		_, _ = fmt.Fprintf(
-			out,
-			"\nNo disks: no volume of the VirtualMachine is backed by a PersistentVolumeClaim.\n")
 		return
 	}
-	_, _ = fmt.Fprintf(out, "\nDisks (%d), provisioned sizes, transferred compressed\n", len(r.disks))
 	for i := range r.disks {
 		_, _ = fmt.Fprintf(
 			out,
@@ -288,11 +270,11 @@ func (r *check) describeDisks(out io.Writer) {
 	scratch, provisioned, complete := diskSpace(r.disks)
 	_, _ = fmt.Fprintf(
 		out,
-		"\n  Local scratch space needed:\t%s\tthe largest single disk, staged one at a time\n",
+		"\n  Scratch space needed:\t%s\n",
 		renderSpace(scratch, complete))
 	_, _ = fmt.Fprintf(
 		out,
-		"  Total provisioned disk size:\t%s\tthe scale of the transfer, before compression\n",
+		"  Total disk size:\t%s\n",
 		renderSpace(provisioned, complete))
 }
 

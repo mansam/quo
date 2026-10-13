@@ -58,11 +58,7 @@ func printSkipped(out io.Writer, record bundle.CaptureRecord) (err error) {
 	if len(skipped) == 0 {
 		return
 	}
-	_, err = fmt.Fprintf(
-		out,
-		"\n%d of the %d objects quo tried to collect were skipped:\n",
-		len(skipped),
-		len(record))
+	_, err = fmt.Fprintf(out, "\nSkipped %d of %d objects:\n", len(skipped), len(record))
 	if err != nil {
 		return
 	}
@@ -72,7 +68,6 @@ func printSkipped(out io.Writer, record bundle.CaptureRecord) (err error) {
 			return
 		}
 	}
-	_, err = fmt.Fprintf(out, "The bundle's capture record says what became of each one.\n")
 	return
 }
 

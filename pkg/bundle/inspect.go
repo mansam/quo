@@ -133,8 +133,7 @@ func describeNetworks(out io.Writer, networks []NetworkRequirement) {
 	}
 	_, _ = fmt.Fprintf(
 		out,
-		"\nNetworks required (%d), provided by the target and not carried\n",
-		len(networks))
+		"\nNetworks required (%d)\n", len(networks))
 	for i := range networks {
 		network := networks[i]
 		if network.Type != NetworkMultus {
@@ -159,8 +158,7 @@ func describeStorage(out io.Writer, storage []StorageRequirement) {
 	}
 	_, _ = fmt.Fprintf(
 		out,
-		"\nStorage required (%d), provided by the target and not carried\n",
-		len(storage))
+		"\nStorage required (%d)\n", len(storage))
 	for i := range storage {
 		required := storage[i]
 		_, _ = fmt.Fprintf(
@@ -181,8 +179,7 @@ func describeContainerDisks(out io.Writer, disks []ContainerDiskRequirement) {
 	}
 	_, _ = fmt.Fprintf(
 		out,
-		"\nContainer disk images required (%d), never repackaged into a bundle\n",
-		len(disks))
+		"\nContainer disk images required (%d)\n", len(disks))
 	for i := range disks {
 		_, _ = fmt.Fprintf(out, "  %s\t%s\n", disks[i].Volume, disks[i].Image)
 	}
@@ -248,7 +245,7 @@ func describeRecord(out io.Writer, manifest *Manifest) {
 	if len(skipped) == 0 {
 		return
 	}
-	_, _ = fmt.Fprintf(out, "\nSkipped (%d), absent from this bundle\n", len(skipped))
+	_, _ = fmt.Fprintf(out, "\nSkipped (%d)\n", len(skipped))
 	for i := range skipped {
 		_, _ = fmt.Fprintf(
 			out,
