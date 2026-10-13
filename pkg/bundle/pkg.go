@@ -31,6 +31,52 @@ const (
 	DisksDir = "disks"
 )
 
+// Disposition is what became of one object quo tried to capture.
+type Disposition string
+
+// Dispositions
+const (
+	// DispositionCarried is an object shipped verbatim in the bundle,
+	// because its content is the thing that matters.
+	DispositionCarried Disposition = "carried"
+	// DispositionEvidence is an object captured because it explains the
+	// environment the VirtualMachine came from. It is read by a support
+	// engineer and never applied to a target.
+	DispositionEvidence Disposition = "evidence"
+	// DispositionRequirement is something the bundle declares it needs from
+	// a target but does not carry.
+	DispositionRequirement Disposition = "requirement"
+	// DispositionSkipped is an object quo tried to collect and could not.
+	DispositionSkipped Disposition = "skipped"
+)
+
+// dispositions in the order a reader is shown them.
+var dispositions = []Disposition{
+	DispositionCarried,
+	DispositionEvidence,
+	DispositionRequirement,
+	DispositionSkipped,
+}
+
+// SkipReason is why a skipped object was not collected. It is what lets a
+// reader tell an object that was never there from one quo was not allowed to
+// look at.
+type SkipReason string
+
+// Skip reasons
+const (
+	// SkipForbidden is an object the person capturing the bundle was not
+	// allowed to read.
+	SkipForbidden SkipReason = "forbidden"
+	// SkipNotFound is an object the cluster does not have.
+	SkipNotFound SkipReason = "not found"
+	// SkipNotInstalled is an object of a kind the cluster does not serve at
+	// all, because the optional component providing it is absent.
+	SkipNotInstalled SkipReason = "not installed"
+	// SkipUnreadable is any other failure to read an object.
+	SkipUnreadable SkipReason = "unreadable"
+)
+
 // DiskFormat names the form a disk is stored in. quo compresses nothing
 // itself, so this records what the export server sent.
 type DiskFormat string

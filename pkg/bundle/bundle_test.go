@@ -206,6 +206,55 @@ func TestInspectListsTheCarriedObjectsByKindAndName(t *testing.T) {
 	g.Expect(report).To(gomega.MatchRegexp(`NetworkAttachmentDefinition\s+shared-networks/storage-net\n`))
 }
 
+func TestInspectPrintsTheCaptureRecordWithTheSkippedObjectsInASectionOfTheirOwn(t *testing.T) {
+	g := gomega.NewGomegaWithT(t)
+	manifest := indexing(t)
+	manifest.CaptureRecord = []Attempt{
+		{
+			Kind:        "VirtualMachine",
+			Namespace:   "support-cases",
+			Name:        "db-01",
+			Disposition: DispositionCarried,
+		},
+		{
+			Kind:        "Secret",
+			Namespace:   "support-cases",
+			Name:        "db-01-cloudinit",
+			Disposition: DispositionSkipped,
+			Reason:      SkipForbidden,
+			Message:     `secrets "db-01-cloudinit" is forbidden`,
+		},
+		{
+			Kind:        "NetworkAttachmentDefinition",
+			Namespace:   "shared-networks",
+			Name:        "storage-net",
+			Disposition: DispositionSkipped,
+			Reason:      SkipNotInstalled,
+		},
+	}
+	archive := tarball(t,
+		rawMember{path: ManifestPath, data: encodeManifest(t, manifest)},
+		rawMember{path: objectPath, data: objectBody})
+	described := &bytes.Buffer{}
+
+	err := Inspect(bytes.NewReader(archive), described)
+
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	report := described.String()
+	g.Expect(report).To(gomega.ContainSubstring("Capture record (3)"))
+	g.Expect(report).To(gomega.MatchRegexp(`carried\s+1\n`))
+	g.Expect(report).To(gomega.MatchRegexp(`skipped\s+2\n`))
+	// What a reader has to act on is listed under a heading of its own
+	// rather than counted among everything that was collected.
+	g.Expect(report).To(gomega.ContainSubstring("Skipped (2)"))
+	g.Expect(report).To(gomega.MatchRegexp(
+		`Secret\s+db-01-cloudinit\s+forbidden\s+secrets "db-01-cloudinit" is forbidden\n`))
+	g.Expect(report).To(gomega.MatchRegexp(
+		`NetworkAttachmentDefinition\s+shared-networks/storage-net\s+not installed\s*\n`))
+	// A disposition nothing got is not printed.
+	g.Expect(report).ToNot(gomega.ContainSubstring(string(DispositionRequirement)))
+}
+
 func TestInspectReportsAVersionItCouldNotRead(t *testing.T) {
 	g := gomega.NewGomegaWithT(t)
 	provenance := testProvenance()

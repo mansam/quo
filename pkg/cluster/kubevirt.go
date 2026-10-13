@@ -99,9 +99,9 @@ func (r *KubeVirt) GetVirtualMachine(ctx context.Context, namespace, name string
 
 // GetObject returns the object the reference names.
 //
-// An object the cluster does not have is reported as ErrNotFound, because a
-// VirtualMachine can refer to something that has since been deleted and that
-// is not a reason to abandon a capture.
+// A read that failed is reported as one of the capture's own signals, because
+// none of them is a reason to abandon a capture and each is recorded
+// differently in the capture record.
 func (r *KubeVirt) GetObject(ctx context.Context, ref ObjectRef) (object *unstructured.Unstructured, err error) {
 	served, known := resourceByKind[ref.Kind]
 	if !known {
@@ -116,11 +116,7 @@ func (r *KubeVirt) GetObject(ctx context.Context, ref ObjectRef) (object *unstru
 	object, err = reader.Get(ctx, ref.Name, meta.GetOptions{})
 	if err != nil {
 		object = nil
-		if k8serr.IsNotFound(err) {
-			err = fmt.Errorf("%s %q: %w", ref.Kind, ref.Name, ErrNotFound)
-			return
-		}
-		err = fmt.Errorf("get %s %q: %w", ref.Kind, ref.Name, err)
+		err = r.mapReadError(ref, served.gvr, err)
 		return
 	}
 	return
@@ -154,6 +150,48 @@ func (r *KubeVirt) ExportDisks(ctx context.Context, namespace, name string) (exp
 		return
 	}
 	export = created
+	return
+}
+
+// mapReadError maps a failure to read an object onto the signal a capture acts
+// on and records.
+//
+// A kind no resource serves reads back from the API as the object simply not
+// being there, so a not-found is confirmed against discovery before it is
+// reported as one. The two are not interchangeable to a reader: an object
+// that was deleted is part of the VirtualMachine's history, while a component
+// that was never installed says something about the cluster.
+func (r *KubeVirt) mapReadError(ref ObjectRef, gvr schema.GroupVersionResource, err error) (mapped error) {
+	switch {
+	case k8serr.IsForbidden(err):
+		mapped = fmt.Errorf("%s %q: %w", ref.Kind, ref.Name, ErrForbidden)
+	case k8serr.IsNotFound(err):
+		mapped = fmt.Errorf("%s %q: %w", ref.Kind, ref.Name, ErrNotFound)
+		if !r.serves(gvr) {
+			mapped = fmt.Errorf("%s: %w", ref.Kind, ErrNotInstalled)
+		}
+	default:
+		mapped = fmt.Errorf("get %s %q: %w", ref.Kind, ref.Name, err)
+	}
+	return
+}
+
+// serves reports whether the cluster has the resource at all. Discovery that
+// cannot be read is taken as the resource being served, so that an answer quo
+// does not have is never reported as a component being absent.
+func (r *KubeVirt) serves(gvr schema.GroupVersionResource) (served bool) {
+	list, err := r.discovery.ServerResourcesForGroupVersion(gvr.GroupVersion().String())
+	if err != nil {
+		served = !k8serr.IsNotFound(err)
+		return
+	}
+	for i := range list.APIResources {
+		if list.APIResources[i].Name != gvr.Resource {
+			continue
+		}
+		served = true
+		return
+	}
 	return
 }
 

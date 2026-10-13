@@ -12,18 +12,29 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
-// ErrNotFound reports an object the cluster does not have. A VirtualMachine
-// can refer to something that has since been deleted, which is not a reason to
-// abandon a capture, so the caller is given a signal it can act on rather than
-// an error from the Kubernetes client.
-var ErrNotFound = errors.New("object not found")
+// Why an object could not be read. None of these is a reason to abandon a
+// capture, so the caller is given a signal it can act on and record rather
+// than an error from the Kubernetes client.
+var (
+	// ErrNotFound reports an object the cluster does not have. A
+	// VirtualMachine can refer to something that has since been deleted.
+	ErrNotFound = errors.New("object not found")
+	// ErrForbidden reports an object the caller is not allowed to read.
+	// Capturing as a namespace owner without cluster read is expected.
+	ErrForbidden = errors.New("not allowed to read object")
+	// ErrNotInstalled reports a kind the cluster serves no resource for,
+	// because the optional component providing it is absent. CDI and Multus
+	// are both optional, and neither being installed is an error.
+	ErrNotInstalled = errors.New("kind is not installed on the cluster")
+)
 
 // Cluster is everything quo needs from outside its own process.
 type Cluster interface {
 	// GetVirtualMachine returns the named VirtualMachine.
 	GetVirtualMachine(ctx context.Context, namespace, name string) (vm *unstructured.Unstructured, err error)
-	// GetObject returns the object the reference names. It reports ErrNotFound
-	// when the cluster does not have it.
+	// GetObject returns the object the reference names. A read that failed is
+	// reported as ErrNotFound, ErrForbidden or ErrNotInstalled where that is
+	// what happened, so a capture can record why it skipped the object.
 	GetObject(ctx context.Context, ref ObjectRef) (object *unstructured.Unstructured, err error)
 	// GetInfo returns what a bundle records about the cluster it came from.
 	GetInfo(ctx context.Context) (info Info, err error)

@@ -49,6 +49,10 @@ type fakeCluster struct {
 	// Anything asked for and not held is reported as not found, which is what
 	// a reference to a deleted object looks like.
 	objects map[cluster.ObjectRef]*unstructured.Unstructured
+	// errByRef is what the cluster reports in place of an object, so a test
+	// can make one object forbidden or its kind absent while the rest of the
+	// closure reads normally.
+	errByRef map[cluster.ObjectRef]error
 	// requested records every reference the capture asked for, in order, so a
 	// test can see what the traversal looked for as well as what it found.
 	requested []cluster.ObjectRef
@@ -74,6 +78,18 @@ func (r *fakeCluster) GetVirtualMachine(ctx context.Context, namespace, name str
 
 func (r *fakeCluster) GetObject(ctx context.Context, ref cluster.ObjectRef) (object *unstructured.Unstructured, err error) {
 	r.requested = append(r.requested, ref)
+	err = ctx.Err()
+	if err != nil {
+		// What a real client does once the capture has been cancelled or has
+		// run out of time.
+		err = fmt.Errorf("get %s %q: %w", ref.Kind, ref.Name, err)
+		return
+	}
+	refused, found := r.errByRef[ref]
+	if found {
+		err = refused
+		return
+	}
 	held, found := r.objects[ref]
 	if !found {
 		err = fmt.Errorf("%s %q: %w", ref.Kind, ref.Name, cluster.ErrNotFound)
@@ -213,6 +229,15 @@ func (r *fakeCluster) hold(object cluster.ObjectRef, fields map[string]any) {
 		r.objects = map[cluster.ObjectRef]*unstructured.Unstructured{}
 	}
 	r.objects[object] = &unstructured.Unstructured{Object: held}
+}
+
+// refuse makes the cluster report err in place of an object, the way a real
+// cluster reports a read the caller is not allowed to make.
+func (r *fakeCluster) refuse(object cluster.ObjectRef, err error) {
+	if r.errByRef == nil {
+		r.errByRef = map[cluster.ObjectRef]error{}
+	}
+	r.errByRef[object] = err
 }
 
 // volume is a volume of the fixture VirtualMachine and the claim behind it.
