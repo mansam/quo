@@ -14,8 +14,8 @@ import (
 //
 // It reads nothing from the cluster. Everything it needs is on the
 // VirtualMachine itself and on the PersistentVolumeClaims the closure already
-// collected, so the requirements are recorded whether or not the evidence
-// about the source cluster's storage could be read. A namespace owner
+// collected, so the requirements are recorded whether or not what describes
+// the source cluster's storage could be read. A namespace owner
 // forbidden the StorageClass still produces a bundle that says what its disks
 // need.
 func buildRequirements(
@@ -116,7 +116,7 @@ func buildDiskStorage(
 
 // buildContainerDisks names the container images the VirtualMachine's volumes
 // are served from. quo does not repackage container images, so each one is
-// declared as a requirement and never carried.
+// declared as a requirement and never held in a bundle.
 func buildContainerDisks(vm *unstructured.Unstructured) (required []bundle.ContainerDiskRequirement) {
 	volumes, _, _ := unstructured.NestedSlice(vm.Object, "spec", "template", "spec", "volumes")
 	for i := range volumes {
@@ -140,7 +140,7 @@ func buildContainerDisks(vm *unstructured.Unstructured) (required []bundle.Conta
 // requirement.
 //
 // An entry here is not a second account of an object the bundle holds. A
-// StorageClass is recorded as evidence because quo read it and again as a
+// StorageClass is recorded as collected because quo read it and again as a
 // requirement because a target has to have one, and both of those are still
 // true when the read was forbidden.
 //

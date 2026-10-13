@@ -24,20 +24,23 @@ const (
 	testRootSpace   = "32.0 GiB"
 )
 
-func TestCheckSaysWhatACaptureWouldCollectWithTheDispositionEachObjectWouldGet(t *testing.T) {
+func TestCheckNamesEveryObjectACaptureWouldCollect(t *testing.T) {
 	g := gomega.NewGomegaWithT(t)
 
 	checked, err := runCheck(t, checkableCluster(t), testOptions())
 
 	g.Expect(err).ToNot(gomega.HaveOccurred())
-	g.Expect(checked).To(gomega.MatchRegexp(`VirtualMachine\s+db-01\s+carried`))
-	g.Expect(checked).To(gomega.MatchRegexp(`PersistentVolumeClaim\s+db-01-root\s+carried`))
-	g.Expect(checked).To(gomega.MatchRegexp(`PersistentVolumeClaim\s+db-01-data\s+carried`))
-	g.Expect(checked).To(gomega.MatchRegexp(`StorageClass\s+` + testStorageClass + `\s+evidence`))
-	g.Expect(checked).To(gomega.MatchRegexp(`StorageProfile\s+` + testStorageClass + `\s+evidence`))
+	g.Expect(checked).To(gomega.MatchRegexp(`VirtualMachine\s+db-01\n`))
+	g.Expect(checked).To(gomega.MatchRegexp(`PersistentVolumeClaim\s+db-01-root\n`))
+	g.Expect(checked).To(gomega.MatchRegexp(`PersistentVolumeClaim\s+db-01-data\n`))
+	g.Expect(checked).To(gomega.MatchRegexp(`StorageClass\s+` + testStorageClass + `\n`))
+	g.Expect(checked).To(gomega.MatchRegexp(`StorageProfile\s+` + testStorageClass + `\n`))
 	// KubeVirt's configuration lives in a namespace of its own, which is how
 	// a reader spots an object from outside the one being captured from.
-	g.Expect(checked).To(gomega.MatchRegexp(`KubeVirt\s+kubevirt/kubevirt\s+evidence`))
+	g.Expect(checked).To(gomega.MatchRegexp(`KubeVirt\s+kubevirt/kubevirt\n`))
+	// The expansion is recorded under a kind of its own, so it does not read
+	// as the VirtualMachine a second time.
+	g.Expect(checked).To(gomega.MatchRegexp(`ExpandedSpec\s+db-01\n`))
 	g.Expect(checked).To(gomega.ContainSubstring("Nothing would be skipped"))
 }
 
@@ -47,9 +50,9 @@ func TestCheckKeepsWhatATargetWouldHaveToProvideApartFromWhatWouldBeCollected(t 
 	checked, err := runCheck(t, checkableCluster(t), testOptions())
 
 	g.Expect(err).ToNot(gomega.HaveOccurred())
-	// A StorageClass is evidence because quo read it and a requirement
+	// A StorageClass is collected because quo read it and a requirement
 	// because a target has to have one. Both are true at once, and a
-	// requirement is the one thing a bundle deliberately does not carry.
+	// requirement is the one thing a bundle deliberately does not hold.
 	g.Expect(checked).To(gomega.MatchRegexp(
 		`Would be required from a target \(1\), declared and not carried\n` +
 			`\s+StorageClass\s+` + testStorageClass + `\n`))
@@ -170,7 +173,7 @@ func TestCheckSaysAVirtualMachineThatIsRunningWouldBeRefused(t *testing.T) {
 	// VirtualMachine and capturing holds no further surprises, and says that
 	// is what the rest of it describes.
 	g.Expect(checked).To(gomega.ContainSubstring("would collect once stopped"))
-	g.Expect(checked).To(gomega.MatchRegexp(`VirtualMachine\s+db-01\s+carried`))
+	g.Expect(checked).To(gomega.MatchRegexp(`VirtualMachine\s+db-01\n`))
 }
 
 func TestCheckSaysAStoppedVirtualMachineWouldBeCaptured(t *testing.T) {

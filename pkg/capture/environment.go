@@ -5,41 +5,42 @@ import (
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
+	"github.com/mansam/kvo/pkg/bundle"
 	"github.com/mansam/kvo/pkg/cluster"
 )
 
-// evidence collects the objects that explain the environment a VirtualMachine
-// came from, in the order they were discovered and without duplicates.
+// environment collects what describes the cluster a VirtualMachine came from,
+// in the order it was discovered and without duplicates.
 //
-// None of them is an object a target will recreate. Platform configuration is
+// None of it is something a target will recreate. Platform configuration is
 // frequently where the problem actually is — a CSI parameter, a volume binding
 // mode, a feature gate — and a support engineer who has to go back to the
 // source cluster for it has lost a day.
-type evidence struct {
+type environment struct {
 	c    cluster.Cluster
 	co   *collector
 	seen map[cluster.ObjectRef]bool
 }
 
-// captureEvidence collects what the bundle records about the source
-// environment: the storage behind each PersistentVolumeClaim, KubeVirt's own
+// captureEnvironment collects what the bundle records about the source
+// cluster: the storage behind each PersistentVolumeClaim, KubeVirt's own
 // configuration, and the form the source cluster expands the VirtualMachine
 // to.
 //
 // Almost all of it is cluster-scoped, which is exactly where a capture run by
 // a namespace owner runs out of permission, so a read that failed is recorded
 // and the capture goes on. A capture that has been cancelled or has run out of
-// time ends there instead, for the same reason the closure traversal does: a
+// time ends there instead, for the same reason the reference traversal does: a
 // record saying each object was unreadable would describe something that did
 // not happen.
-func captureEvidence(
+func captureEnvironment(
 	ctx context.Context,
 	c cluster.Cluster,
 	co *collector,
 	vm *unstructured.Unstructured,
 	claims []*unstructured.Unstructured) (err error) {
 	//
-	r := &evidence{
+	r := &environment{
 		c:    c,
 		co:   co,
 		seen: map[cluster.ObjectRef]bool{},
@@ -66,7 +67,7 @@ func captureEvidence(
 //
 // A StorageProfile carries the name of the StorageClass it describes, so the
 // two are read under one name.
-func (r *evidence) addStorage(ctx context.Context, claim *unstructured.Unstructured) (err error) {
+func (r *environment) addStorage(ctx context.Context, claim *unstructured.Unstructured) (err error) {
 	class := nestedString(claim.Object, "spec", "storageClassName")
 	err = r.add(ctx, cluster.ObjectRef{Kind: cluster.KindStorageClass, Name: class})
 	if err != nil {
@@ -89,7 +90,7 @@ func (r *evidence) addStorage(ctx context.Context, claim *unstructured.Unstructu
 // installations, so quo does not know what to call it until it has read it:
 // the reference names the kind alone, and collect fills the rest in from the
 // object that arrives.
-func (r *evidence) addKubeVirt(ctx context.Context) (err error) {
+func (r *environment) addKubeVirt(ctx context.Context) (err error) {
 	err = r.collect(
 		ctx,
 		cluster.ObjectRef{Kind: cluster.KindKubeVirt},
@@ -103,39 +104,43 @@ func (r *evidence) addKubeVirt(ctx context.Context) (err error) {
 // addExpandedForm collects the form the source cluster resolves the
 // VirtualMachine to.
 //
-// quo does not use it to rewrite the VirtualMachine. Every input to the
-// expansion — the instancetype objects, the ControllerRevisions, KubeVirt's
-// configuration — is already in the bundle, so the expanded form is
-// derivable. It is captured because expansion is version-dependent, and a
-// difference between what the source cluster resolved and what a target
-// resolves is a plausible cause of the problem being investigated.
+// quo does not use it to rewrite the VirtualMachine. It is captured because
+// KubeVirt applies the source cluster's own defaults while expanding — the
+// machine type, the architecture, the CPU topology — and those come from a
+// KubeVirt configuration a namespace owner is often not allowed to read. The
+// subresource is namespaced, so for that capture this is the only record of
+// them.
 //
-// It is recorded under the VirtualMachine's own kind and name, because that is
-// what it is. The evidence grouping is what keeps it apart from the
-// VirtualMachine the bundle carries.
-func (r *evidence) addExpandedForm(ctx context.Context, vm *unstructured.Unstructured) (err error) {
+// It is stored as a member of its own rather than among the resources,
+// because nothing on the cluster has that name and nothing applies it to a
+// target. The read is best effort for the same reason the rest of this file
+// is: a capture is worth having without it.
+func (r *environment) addExpandedForm(ctx context.Context, vm *unstructured.Unstructured) (err error) {
 	ref := cluster.ObjectRef{
-		Kind:      cluster.KindVirtualMachine,
+		Kind:      bundle.KindExpandedSpec,
 		Namespace: vm.GetNamespace(),
 		Name:      vm.GetName(),
 	}
-	err = r.collect(
-		ctx,
-		ref,
-		func() (expanded *unstructured.Unstructured, readErr error) {
-			expanded, readErr = r.c.ExpandSpec(ctx, ref.Namespace, ref.Name)
+	expanded, err := r.c.ExpandSpec(ctx, ref.Namespace, ref.Name)
+	if err != nil {
+		if ctx.Err() != nil {
 			return
-		})
+		}
+		r.co.skip(ref, err)
+		err = nil
+		return
+	}
+	err = r.co.addExpandedSpec(ref, expanded)
 	return
 }
 
-// add reads the object a reference names and collects it as evidence.
+// add reads the object a reference names and collects it.
 //
 // An empty name is a reference the cluster does not make — a claim provisioned
 // without a storage class names none, and an unbound claim names no volume —
 // and an object already collected is left alone, so a StorageClass two claims
 // share is captured once.
-func (r *evidence) add(ctx context.Context, ref cluster.ObjectRef) (err error) {
+func (r *environment) add(ctx context.Context, ref cluster.ObjectRef) (err error) {
 	if ref.Name == "" {
 		return
 	}
@@ -153,17 +158,17 @@ func (r *evidence) add(ctx context.Context, ref cluster.ObjectRef) (err error) {
 	return
 }
 
-// collect puts into the bundle as evidence whatever read returns, recorded
-// against ref. A reference quo could not name in advance is named from the
-// object once it has arrived.
+// collect puts whatever read returns into the bundle, recorded against ref. A
+// reference quo could not name in advance is named from the object once it has
+// arrived.
 //
-// This is the one place the best-effort rule lives. A read that failed is
-// recorded and the capture goes on, because failing a capture that may have
-// taken hours over one object the person running it was never entitled to see
-// would be unacceptable, and omitting it in silence would be worse. A capture
-// that has been cancelled or has run out of time ends there instead: quo
-// stopped asking, which is not the same as the cluster refusing.
-func (r *evidence) collect(
+// A read that failed is recorded and the capture goes on, because failing a
+// capture that may have taken hours over one object the person running it was
+// never entitled to see would be unacceptable, and omitting it in silence
+// would be worse. A capture that has been cancelled or has run out of time
+// ends there instead: quo stopped asking, which is not the same as the cluster
+// refusing.
+func (r *environment) collect(
 	ctx context.Context,
 	ref cluster.ObjectRef,
 	read func() (object *unstructured.Unstructured, readErr error)) (err error) {
@@ -181,6 +186,6 @@ func (r *evidence) collect(
 		ref.Namespace = object.GetNamespace()
 		ref.Name = object.GetName()
 	}
-	err = r.co.addEvidence(ref, object)
+	err = r.co.add(ref, object)
 	return
 }

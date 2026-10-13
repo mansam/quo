@@ -21,12 +21,12 @@ import (
 )
 
 // testVMMember is where the fixture VirtualMachine lands in a bundle.
-const testVMMember = "objects/virtualmachine/db-01.yaml"
+const testVMMember = "resources/virtualmachine/db-01.yaml"
 
-// Where the evidence every fixture cluster offers lands in a bundle.
+// Where what every fixture cluster says about itself lands in a bundle.
 const (
-	testKubeVirtMember = "evidence/kubevirt/kubevirt.yaml"
-	testExpandedMember = "evidence/virtualmachine/db-01.yaml"
+	testKubeVirtMember = "resources/kubevirt/kubevirt.yaml"
+	testExpandedMember = "expanded-spec.yaml"
 )
 
 // The claims behind the fixture VirtualMachine's disks, and where each lands
@@ -75,7 +75,7 @@ func TestExportCarriesTheVirtualMachineUnderTheObjectsGrouping(t *testing.T) {
 
 	order, content := captureBundle(t)
 
-	g.Expect(order).To(gomega.Equal(withEvidence([]string{
+	g.Expect(order).To(gomega.Equal(withSourceCluster([]string{
 		bundle.ManifestPath,
 		testVMMember,
 	})))
@@ -248,7 +248,7 @@ func TestExportKeysDiskMembersByClaimRatherThanByVolumeName(t *testing.T) {
 
 	order, content := captureWithDisks(t, clusterWithTwoDisks(t), testOptions())
 
-	g.Expect(order).To(gomega.Equal(withEvidence(
+	g.Expect(order).To(gomega.Equal(withSourceCluster(
 		[]string{bundle.ManifestPath, testVMMember},
 		rootMember,
 		dataMember)))
@@ -277,7 +277,7 @@ func TestExportDownloadsAClaimTwoVolumesShareOnlyOnce(t *testing.T) {
 
 	g.Expect(c.export.opened).To(gomega.Equal([]string{rootClaim, dataClaim}))
 	// One member per claim rather than one per volume.
-	g.Expect(order).To(gomega.Equal(withEvidence(
+	g.Expect(order).To(gomega.Equal(withSourceCluster(
 		[]string{bundle.ManifestPath, testVMMember},
 		rootMember,
 		dataMember)))
@@ -726,12 +726,12 @@ func nested(t *testing.T, object map[string]any, keys ...string) (found map[stri
 	return
 }
 
-// withEvidence returns the members a bundle holds when the given objects were
-// carried and the given disks staged. Evidence sits between the two, which is
-// where a capture writes it: after the closure has been read and before any
-// disk arrives.
-func withEvidence(carried []string, disks ...string) (order []string) {
-	order = append(order, carried...)
+// withSourceCluster returns the members a bundle holds when the given
+// resources were collected and the given disks staged. What describes the
+// source cluster sits between the two, which is where a capture writes it:
+// after the referenced resources have been read and before any disk arrives.
+func withSourceCluster(resources []string, disks ...string) (order []string) {
+	order = append(order, resources...)
 	order = append(order, testKubeVirtMember, testExpandedMember)
 	order = append(order, disks...)
 	return

@@ -13,22 +13,22 @@ func TestExportSaysOnCompletionWhatItCouldNotCollect(t *testing.T) {
 	g := gomega.NewGomegaWithT(t)
 	record := bundle.CaptureRecord{
 		{
-			Kind:        "VirtualMachine",
-			Name:        "db-01",
-			Disposition: bundle.DispositionCarried,
+			Kind:    "VirtualMachine",
+			Name:    "db-01",
+			Outcome: bundle.OutcomeCollected,
 		},
 		{
-			Kind:        "Secret",
-			Name:        "db-01-cloudinit",
-			Disposition: bundle.DispositionSkipped,
-			Reason:      bundle.SkipForbidden,
+			Kind:    "Secret",
+			Name:    "db-01-cloudinit",
+			Outcome: bundle.OutcomeSkipped,
+			Reason:  bundle.SkipForbidden,
 		},
 		{
 			// KubeVirt's configuration is a singleton whose name quo only
 			// learns by reading it.
-			Kind:        "KubeVirt",
-			Disposition: bundle.DispositionSkipped,
-			Reason:      bundle.SkipForbidden,
+			Kind:    "KubeVirt",
+			Outcome: bundle.OutcomeSkipped,
+			Reason:  bundle.SkipForbidden,
 		},
 	}
 	reported := &bytes.Buffer{}
@@ -46,9 +46,9 @@ func TestExportSaysNothingAboutSkippedObjectsWhenItCollectedEverything(t *testin
 	g := gomega.NewGomegaWithT(t)
 	record := bundle.CaptureRecord{
 		{
-			Kind:        "VirtualMachine",
-			Name:        "db-01",
-			Disposition: bundle.DispositionCarried,
+			Kind:    "VirtualMachine",
+			Name:    "db-01",
+			Outcome: bundle.OutcomeCollected,
 		},
 	}
 	reported := &bytes.Buffer{}

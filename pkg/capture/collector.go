@@ -23,16 +23,17 @@ type collector struct {
 // a bundle; a check puts them nowhere, because it reports what a capture
 // would collect and keeps none of it.
 type sink interface {
-	// Carry takes an object the bundle ships verbatim.
-	Carry(object bundle.Object, data []byte) (err error)
-	// AddEvidence takes an object captured to explain the source environment.
-	AddEvidence(object bundle.Object, data []byte) (err error)
+	// Collect takes one resource the bundle holds.
+	Collect(resource bundle.Resource, data []byte) (err error)
+	// AddExpandedSpec takes the source cluster's expansion of the
+	// VirtualMachine, which is a member of the bundle but not a resource.
+	AddExpandedSpec(data []byte)
 }
 
 // collect reads everything a capture collects: the VirtualMachine, the
-// closure it depends on, and the evidence about the environment it came from.
-// It returns what a target would have to provide, which is derived from the
-// closure and recorded as it is derived.
+// resources it depends on, and what describes the source cluster. It returns
+// what a target would have to provide, which is derived from the referenced
+// resources and recorded as it is derived.
 //
 // A capture and a check both go through here, so that the two cannot drift
 // into accounting for different objects. What they do differ in is where the
@@ -42,15 +43,15 @@ func (r *collector) collect(
 	c cluster.Cluster,
 	vm *unstructured.Unstructured) (required bundle.Requirements, err error) {
 	//
-	err = carryVirtualMachine(r, vm)
+	err = collectVirtualMachine(r, vm)
 	if err != nil {
 		return
 	}
-	claims, err := carryClosure(ctx, c, r, vm)
+	claims, err := collectReferenced(ctx, c, r, vm)
 	if err != nil {
 		return
 	}
-	err = captureEvidence(ctx, c, r, vm, claims)
+	err = captureEnvironment(ctx, c, r, vm, claims)
 	if err != nil {
 		return
 	}
@@ -59,34 +60,37 @@ func (r *collector) collect(
 	return
 }
 
-// carry puts one object into the bundle as Kubernetes YAML, exactly as the
-// cluster returned it, and records it as carried.
-func (r *collector) carry(ref cluster.ObjectRef, object *unstructured.Unstructured) (err error) {
+// add puts one object into the bundle as Kubernetes YAML, exactly as the
+// cluster returned it, and records it as collected.
+func (r *collector) add(ref cluster.ObjectRef, object *unstructured.Unstructured) (err error) {
 	encoded, err := encode(ref, object)
 	if err != nil {
 		return
 	}
-	err = r.sink.Carry(bundleObject(ref), encoded)
+	err = r.sink.Collect(bundleResource(ref), encoded)
 	if err != nil {
 		return
 	}
-	r.attempt(ref, bundle.DispositionCarried)
+	r.attempt(ref, bundle.OutcomeCollected)
 	return
 }
 
-// addEvidence puts one object into the bundle as evidence: held apart from the
-// carried objects, because it was captured to explain the environment the
-// VirtualMachine came from and nothing will recreate it on a target.
-func (r *collector) addEvidence(ref cluster.ObjectRef, object *unstructured.Unstructured) (err error) {
-	encoded, err := encode(ref, object)
+// addExpandedSpec puts the source cluster's expansion of the VirtualMachine
+// into the bundle as a member of its own.
+//
+// It is recorded under its own kind rather than the VirtualMachine's, because
+// the expansion carries the same kind and name as the VirtualMachine the
+// bundle collected and the two would otherwise be one entry repeated.
+func (r *collector) addExpandedSpec(
+	ref cluster.ObjectRef,
+	expanded *unstructured.Unstructured) (err error) {
+	//
+	encoded, err := encode(ref, expanded)
 	if err != nil {
 		return
 	}
-	err = r.sink.AddEvidence(bundleObject(ref), encoded)
-	if err != nil {
-		return
-	}
-	r.attempt(ref, bundle.DispositionEvidence)
+	r.sink.AddExpandedSpec(encoded)
+	r.attempt(ref, bundle.OutcomeCollected)
 	return
 }
 
@@ -96,17 +100,17 @@ func (r *collector) addEvidence(ref cluster.ObjectRef, object *unstructured.Unst
 // where a detail such as the missing permission appears.
 func (r *collector) skip(ref cluster.ObjectRef, failed error) {
 	r.record = append(r.record, bundle.Attempt{
-		Kind:        ref.Kind,
-		Namespace:   ref.Namespace,
-		Name:        ref.Name,
-		Disposition: bundle.DispositionSkipped,
-		Reason:      skipReason(failed),
-		Message:     failed.Error(),
+		Kind:      ref.Kind,
+		Namespace: ref.Namespace,
+		Name:      ref.Name,
+		Outcome:   bundle.OutcomeSkipped,
+		Reason:    skipReason(failed),
+		Message:   failed.Error(),
 	})
 }
 
 // require records everything the bundle declares it needs from a target but
-// does not carry: a network, a storage class, a container disk image. Two
+// does not hold: a network, a storage class, a container disk image. Two
 // requirements naming one object are recorded once.
 func (r *collector) require(required bundle.Requirements) {
 	objects := requiredObjects(required)
@@ -116,17 +120,17 @@ func (r *collector) require(required bundle.Requirements) {
 			continue
 		}
 		seen[ref] = true
-		r.attempt(ref, bundle.DispositionRequirement)
+		r.attempt(ref, bundle.OutcomeRequired)
 	}
 }
 
 // attempt records an object and what became of it.
-func (r *collector) attempt(ref cluster.ObjectRef, disposition bundle.Disposition) {
+func (r *collector) attempt(ref cluster.ObjectRef, outcome bundle.Outcome) {
 	r.record = append(r.record, bundle.Attempt{
-		Kind:        ref.Kind,
-		Namespace:   ref.Namespace,
-		Name:        ref.Name,
-		Disposition: disposition,
+		Kind:      ref.Kind,
+		Namespace: ref.Namespace,
+		Name:      ref.Name,
+		Outcome:   outcome,
 	})
 }
 
@@ -140,9 +144,9 @@ func encode(ref cluster.ObjectRef, object *unstructured.Unstructured) (encoded [
 	return
 }
 
-// bundleObject is how a bundle names the object a reference points at.
-func bundleObject(ref cluster.ObjectRef) (object bundle.Object) {
-	object = bundle.Object{
+// bundleResource is how a bundle names the object a reference points at.
+func bundleResource(ref cluster.ObjectRef) (resource bundle.Resource) {
+	resource = bundle.Resource{
 		Kind:      ref.Kind,
 		Namespace: ref.Namespace,
 		Name:      ref.Name,

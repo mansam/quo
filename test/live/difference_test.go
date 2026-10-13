@@ -13,30 +13,35 @@ import (
 	"github.com/mansam/kvo/pkg/cluster"
 )
 
-// Dispositions that mean quo's traversal found the object.
+// Outcomes that mean quo's traversal found the object.
 //
 // A skipped object was found and then could not be read. Leaving it out
 // would report quo as having missed something it looked for and was refused,
 // which is a different problem with a different fix.
-var traversal = map[bundle.Disposition]bool{
-	bundle.DispositionCarried: true,
-	bundle.DispositionSkipped: true,
+var traversal = map[bundle.Outcome]bool{
+	bundle.OutcomeCollected: true,
+	bundle.OutcomeSkipped:   true,
 }
 
-// Kinds quo reads only as evidence about the source environment, never as
-// part of the closure. They are quo's own idea and KubeVirt's graph has no
-// opinion about them.
+// Kinds quo reads for reasons of its own rather than because the
+// VirtualMachine refers to them. KubeVirt's graph has no opinion about any of
+// them, so comparing them would report a disagreement that is not one.
 //
 // This is a list of what to leave out rather than a list of what to compare,
 // so that a kind neither side knows about today still shows up tomorrow.
 // Comparing against a list of known kinds would filter the new kind off both
 // sides and report agreement, which is the one answer this suite must never
 // give wrongly.
-var evidenceKinds = map[string]bool{
+//
+// Since the capture record stopped marking these apart from the objects the
+// traversal reached, this list is the only thing separating them, and a kind
+// added to the environment reads has to be added here too.
+var untraversedKinds = map[string]bool{
 	cluster.KindKubeVirt:         true,
 	cluster.KindPersistentVolume: true,
 	cluster.KindStorageClass:     true,
 	cluster.KindStorageProfile:   true,
+	bundle.KindExpandedSpec:      true,
 }
 
 // difference is what one traversal found and the other did not.
@@ -52,18 +57,15 @@ type difference struct {
 // record of what a capture attempted.
 //
 // Requirements take no part: a network or a container disk image is
-// something a target has to provide rather than an object quo read. Neither
-// does evidence, except that the form the source cluster expands the
-// VirtualMachine to is recorded under the VirtualMachine's own kind and
-// name, so it arrives as a duplicate of the carried one rather than as
-// something new.
+// something a target has to provide rather than an object quo read. Nor do
+// the kinds quo reads for reasons of its own.
 func traversed(record bundle.CaptureRecord) (refs []cluster.ObjectRef) {
 	seen := map[cluster.ObjectRef]bool{}
 	for i := range record {
-		if !traversal[record[i].Disposition] {
+		if !traversal[record[i].Outcome] {
 			continue
 		}
-		if evidenceKinds[record[i].Kind] {
+		if untraversedKinds[record[i].Kind] {
 			continue
 		}
 		ref := cluster.ObjectRef{
@@ -164,12 +166,12 @@ func describe(ref cluster.ObjectRef) (described string) {
 
 // The objects the comparison tests reason about.
 var (
-	carriedClaim = cluster.ObjectRef{
+	collectedClaim = cluster.ObjectRef{
 		Kind:      cluster.KindPersistentVolumeClaim,
 		Namespace: "support-cases",
 		Name:      "db-01-root",
 	}
-	carriedSecret = cluster.ObjectRef{
+	collectedSecret = cluster.ObjectRef{
 		Kind:      cluster.KindSecret,
 		Namespace: "support-cases",
 		Name:      "db-01-cloudinit",
@@ -190,20 +192,20 @@ func TestComparisonReportsWhatEachTraversalFoundAndTheOtherDidNot(t *testing.T) 
 	}{
 		{
 			name:  "two traversals that agree",
-			quo:   []cluster.ObjectRef{carriedClaim, carriedSecret},
-			graph: []cluster.ObjectRef{carriedSecret, carriedClaim},
+			quo:   []cluster.ObjectRef{collectedClaim, collectedSecret},
+			graph: []cluster.ObjectRef{collectedSecret, collectedClaim},
 		},
 		{
 			name:   "a member of the closure KubeVirt's graph names and quo did not find",
-			quo:    []cluster.ObjectRef{carriedClaim},
-			graph:  []cluster.ObjectRef{carriedClaim, carriedSecret},
-			missed: []cluster.ObjectRef{carriedSecret},
+			quo:    []cluster.ObjectRef{collectedClaim},
+			graph:  []cluster.ObjectRef{collectedClaim, collectedSecret},
+			missed: []cluster.ObjectRef{collectedSecret},
 		},
 		{
 			name:  "a reference quo follows and KubeVirt's graph does not",
-			quo:   []cluster.ObjectRef{carriedClaim, carriedSecret},
-			graph: []cluster.ObjectRef{carriedClaim},
-			extra: []cluster.ObjectRef{carriedSecret},
+			quo:   []cluster.ObjectRef{collectedClaim, collectedSecret},
+			graph: []cluster.ObjectRef{collectedClaim},
+			extra: []cluster.ObjectRef{collectedSecret},
 		},
 		{
 			// One name can mean a namespaced object or a cluster-scoped one,
@@ -216,8 +218,8 @@ func TestComparisonReportsWhatEachTraversalFoundAndTheOtherDidNot(t *testing.T) 
 		},
 		{
 			name:   "a graph quo has nothing to compare against",
-			graph:  []cluster.ObjectRef{carriedClaim},
-			missed: []cluster.ObjectRef{carriedClaim},
+			graph:  []cluster.ObjectRef{collectedClaim},
+			missed: []cluster.ObjectRef{collectedClaim},
 		},
 		{
 			name: "two empty traversals",
@@ -241,8 +243,8 @@ func TestTheDifferenceReportNamesTheObjectsOnEachSide(t *testing.T) {
 	g := gomega.NewGomegaWithT(t)
 
 	d := compare(
-		[]cluster.ObjectRef{carriedClaim, clusterInstancetype},
-		[]cluster.ObjectRef{carriedClaim, carriedSecret})
+		[]cluster.ObjectRef{collectedClaim, clusterInstancetype},
+		[]cluster.ObjectRef{collectedClaim, collectedSecret})
 
 	report := d.report("support-cases", "db-01")
 
@@ -259,8 +261,8 @@ func TestTheDifferenceReportLeavesOutASideWithNothingOnIt(t *testing.T) {
 	g := gomega.NewGomegaWithT(t)
 
 	d := compare(
-		[]cluster.ObjectRef{carriedClaim},
-		[]cluster.ObjectRef{carriedClaim, carriedSecret})
+		[]cluster.ObjectRef{collectedClaim},
+		[]cluster.ObjectRef{collectedClaim, collectedSecret})
 
 	report := d.report("support-cases", "db-01")
 
@@ -268,73 +270,73 @@ func TestTheDifferenceReportLeavesOutASideWithNothingOnIt(t *testing.T) {
 	g.Expect(report).ToNot(gomega.ContainSubstring("not by the subresource"))
 }
 
-func TestTheTraversalIsReadFromWhatACaptureCarriedAndWhatItCouldNotRead(t *testing.T) {
+func TestTheTraversalIsReadFromWhatACaptureCollectedAndWhatItCouldNotRead(t *testing.T) {
 	tests := []struct {
 		name   string
 		record bundle.CaptureRecord
 		want   []cluster.ObjectRef
 	}{
 		{
-			name: "an object the capture carried",
+			name: "an object the capture collected",
 			record: bundle.CaptureRecord{
-				attempt(carriedClaim, bundle.DispositionCarried),
+				attempt(collectedClaim, bundle.OutcomeCollected),
 			},
-			want: []cluster.ObjectRef{carriedClaim},
+			want: []cluster.ObjectRef{collectedClaim},
 		},
 		{
 			// The traversal found it. That the capture was then refused the
 			// read is a different problem with a different fix.
 			name: "an object the capture found and was not allowed to read",
 			record: bundle.CaptureRecord{
-				attempt(carriedSecret, bundle.DispositionSkipped),
+				attempt(collectedSecret, bundle.OutcomeSkipped),
 			},
-			want: []cluster.ObjectRef{carriedSecret},
+			want: []cluster.ObjectRef{collectedSecret},
 		},
 		{
-			name: "evidence about the source environment, which is quo's own idea",
+			name: "what quo reads about the source cluster, which is its own idea",
 			record: bundle.CaptureRecord{
-				attempt(carriedClaim, bundle.DispositionCarried),
+				attempt(collectedClaim, bundle.OutcomeCollected),
 				attempt(
 					cluster.ObjectRef{Kind: cluster.KindStorageClass, Name: "fast"},
-					bundle.DispositionEvidence),
+					bundle.OutcomeCollected),
 				attempt(
 					cluster.ObjectRef{Kind: cluster.KindStorageProfile, Name: "fast"},
-					bundle.DispositionSkipped),
+					bundle.OutcomeSkipped),
 				attempt(
 					cluster.ObjectRef{Kind: cluster.KindPersistentVolume, Name: "pv-01"},
-					bundle.DispositionSkipped),
-				attempt(cluster.ObjectRef{Kind: cluster.KindKubeVirt}, bundle.DispositionSkipped),
+					bundle.OutcomeSkipped),
+				attempt(cluster.ObjectRef{Kind: cluster.KindKubeVirt}, bundle.OutcomeSkipped),
 			},
-			want: []cluster.ObjectRef{carriedClaim},
+			want: []cluster.ObjectRef{collectedClaim},
 		},
 		{
 			name: "something the bundle declares it needs and does not carry",
 			record: bundle.CaptureRecord{
-				attempt(carriedClaim, bundle.DispositionCarried),
+				attempt(collectedClaim, bundle.OutcomeCollected),
 				attempt(
 					cluster.ObjectRef{Kind: bundle.KindContainerDisk, Name: "quay.io/example/disk:latest"},
-					bundle.DispositionRequirement),
+					bundle.OutcomeRequired),
 			},
-			want: []cluster.ObjectRef{carriedClaim},
+			want: []cluster.ObjectRef{collectedClaim},
 		},
 		{
-			// The expanded form is held as evidence under the
-			// VirtualMachine's own kind and name, so it would otherwise
-			// arrive twice.
-			name: "the VirtualMachine, carried and expanded",
+			// The expansion is recorded under a kind of its own. KubeVirt's
+			// graph names nothing of that kind, so counting it would report a
+			// disagreement that is not one.
+			name: "the VirtualMachine and the source cluster's expansion of it",
 			record: bundle.CaptureRecord{
-				attempt(virtualMachineRef, bundle.DispositionCarried),
-				attempt(virtualMachineRef, bundle.DispositionEvidence),
+				attempt(virtualMachineRef, bundle.OutcomeCollected),
+				attempt(expandedSpecRef, bundle.OutcomeCollected),
 			},
 			want: []cluster.ObjectRef{virtualMachineRef},
 		},
 		{
 			name: "an object reached from more than one place",
 			record: bundle.CaptureRecord{
-				attempt(carriedSecret, bundle.DispositionCarried),
-				attempt(carriedSecret, bundle.DispositionCarried),
+				attempt(collectedSecret, bundle.OutcomeCollected),
+				attempt(collectedSecret, bundle.OutcomeCollected),
 			},
-			want: []cluster.ObjectRef{carriedSecret},
+			want: []cluster.ObjectRef{collectedSecret},
 		},
 		{
 			name:   "a capture that attempted nothing",
@@ -351,21 +353,29 @@ func TestTheTraversalIsReadFromWhatACaptureCarriedAndWhatItCouldNotRead(t *testi
 	}
 }
 
-// virtualMachineRef is the VirtualMachine a capture carries, which it also
-// holds as evidence in the form the source cluster expands it to.
-var virtualMachineRef = cluster.ObjectRef{
-	Kind:      cluster.KindVirtualMachine,
-	Namespace: "support-cases",
-	Name:      "db-01",
-}
+// virtualMachineRef is the VirtualMachine a capture collects, and
+// expandedSpecRef is the source cluster's expansion of it, which the capture
+// record names under a kind of its own.
+var (
+	virtualMachineRef = cluster.ObjectRef{
+		Kind:      cluster.KindVirtualMachine,
+		Namespace: "support-cases",
+		Name:      "db-01",
+	}
+	expandedSpecRef = cluster.ObjectRef{
+		Kind:      bundle.KindExpandedSpec,
+		Namespace: "support-cases",
+		Name:      "db-01",
+	}
+)
 
 // attempt is one entry of a capture record.
-func attempt(ref cluster.ObjectRef, disposition bundle.Disposition) (a bundle.Attempt) {
+func attempt(ref cluster.ObjectRef, outcome bundle.Outcome) (a bundle.Attempt) {
 	a = bundle.Attempt{
-		Kind:        ref.Kind,
-		Namespace:   ref.Namespace,
-		Name:        ref.Name,
-		Disposition: disposition,
+		Kind:      ref.Kind,
+		Namespace: ref.Namespace,
+		Name:      ref.Name,
+		Outcome:   outcome,
 	}
 	return
 }

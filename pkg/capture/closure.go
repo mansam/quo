@@ -64,11 +64,11 @@ func buildClosure(vm *unstructured.Unstructured) (refs []cluster.ObjectRef) {
 	return
 }
 
-// carryVirtualMachine collects the VirtualMachine itself, which the capture
+// collectVirtualMachine collects the VirtualMachine itself, which the capture
 // already has in hand and so does not read a second time as part of its own
 // closure.
-func carryVirtualMachine(co *collector, vm *unstructured.Unstructured) (err error) {
-	err = co.carry(
+func collectVirtualMachine(co *collector, vm *unstructured.Unstructured) (err error) {
+	err = co.add(
 		cluster.ObjectRef{
 			Kind:      cluster.KindVirtualMachine,
 			Namespace: vm.GetNamespace(),
@@ -78,15 +78,15 @@ func carryVirtualMachine(co *collector, vm *unstructured.Unstructured) (err erro
 	return
 }
 
-// carryClosure reads the objects the VirtualMachine depends on, collects what
-// it can read into the bundle as carried objects, and records what became of
-// every one of them.
+// collectReferenced reads the objects the VirtualMachine depends on, collects
+// what it can read into the bundle, and records what became of every one of
+// them.
 //
 // It returns the PersistentVolumeClaims it read, because they are what the
-// evidence about the source cluster's storage hangs off: a claim names the
+// reads about the source cluster's storage hang off: a claim names the
 // StorageClass it was provisioned from and the PersistentVolume it is bound
-// to. A claim quo could not read contributes nothing, which is why the
-// evidence follows the claims that arrived rather than the ones referenced.
+// to. A claim quo could not read contributes nothing, which is why those
+// reads follow the claims that arrived rather than the ones referenced.
 //
 // Collection is best effort. The person capturing a bundle is frequently a
 // namespace owner without cluster read, and failing an hours-long capture
@@ -99,7 +99,7 @@ func carryVirtualMachine(co *collector, vm *unstructured.Unstructured) (err erro
 // effort and ends there. Recording the rest of the closure as unreadable
 // would produce a bundle saying each object could not be read when what
 // happened is that quo stopped asking.
-func carryClosure(
+func collectReferenced(
 	ctx context.Context,
 	c cluster.Cluster,
 	co *collector,
@@ -117,7 +117,7 @@ func carryClosure(
 			err = nil
 			continue
 		}
-		err = co.carry(ref, object)
+		err = co.add(ref, object)
 		if err != nil {
 			claims = nil
 			return
@@ -219,7 +219,7 @@ func (r *closure) addVolumes(vm *unstructured.Unstructured) {
 //
 // A container disk names no object to carry: quo does not repackage container
 // images, and the image is recorded as a requirement instead. The Secret the
-// image is pulled with is a real object and is carried.
+// image is pulled with is a real object and is collected.
 func (r *closure) addVolume(volume map[string]any) {
 	r.add(cluster.KindPersistentVolumeClaim, nestedString(volume, "persistentVolumeClaim", "claimName"))
 	r.add(cluster.KindPersistentVolumeClaim, nestedString(volume, "ephemeral", "persistentVolumeClaim", "claimName"))

@@ -12,10 +12,12 @@ type Manifest struct {
 	Provenance    Provenance    `json:"provenance"`
 	Requirements  Requirements  `json:"requirements,omitzero"`
 	CaptureRecord CaptureRecord `json:"captureRecord,omitempty"`
-	Objects       []Object      `json:"objects,omitempty"`
-	Evidence      []Object      `json:"evidence,omitempty"`
-	Members       []Member      `json:"members"`
-	Disks         []Disk        `json:"disks,omitempty"`
+	Resources     []Resource    `json:"resources,omitempty"`
+	// ExpandedSpec is the member holding the source cluster's expansion of
+	// the VirtualMachine, empty when quo could not read it.
+	ExpandedSpec string   `json:"expandedSpec,omitempty"`
+	Members      []Member `json:"members"`
+	Disks        []Disk   `json:"disks,omitempty"`
 }
 
 // Requirements is what a bundle declares a target cluster would have to
@@ -90,7 +92,7 @@ type StorageRequirement struct {
 // volumes is served from.
 //
 // quo does not repackage container images, so the image is declared and never
-// carried: a target has to be able to pull it.
+// held in a bundle: a target has to be able to pull it.
 type ContainerDiskRequirement struct {
 	// Volume is the VirtualMachine's name for the volume served from the
 	// image.
@@ -108,29 +110,28 @@ type ContainerDiskRequirement struct {
 // would leave a reader unable to tell an object that never existed from one
 // quo was not allowed to read.
 //
-// One object can appear twice under different dispositions, because the two
-// entries answer different questions. A StorageClass is read as evidence and
-// is also something a target has to provide, and the second entry still holds
-// when the first says the read was forbidden.
+// One object can appear twice under different outcomes, because the two
+// entries answer different questions. A StorageClass is collected and is also
+// something a target has to provide, and the second entry still holds when the
+// first says the read was forbidden.
 type CaptureRecord []Attempt
 
-// Collected returns the objects the capture put in the bundle, whether it
-// carried them or holds them as evidence.
+// Collected returns the objects the capture put in the bundle.
 func (r CaptureRecord) Collected() (collected []Attempt) {
 	for i := range r {
-		switch r[i].Disposition {
-		case DispositionCarried, DispositionEvidence:
-			collected = append(collected, r[i])
+		if r[i].Outcome != OutcomeCollected {
+			continue
 		}
+		collected = append(collected, r[i])
 	}
 	return
 }
 
 // Required returns the objects the bundle declares it needs from a target and
-// does not carry.
+// does not hold.
 func (r CaptureRecord) Required() (required []Attempt) {
 	for i := range r {
-		if r[i].Disposition != DispositionRequirement {
+		if r[i].Outcome != OutcomeRequired {
 			continue
 		}
 		required = append(required, r[i])
@@ -141,7 +142,7 @@ func (r CaptureRecord) Required() (required []Attempt) {
 // Skipped returns the objects the capture could not collect.
 func (r CaptureRecord) Skipped() (skipped []Attempt) {
 	for i := range r {
-		if r[i].Disposition != DispositionSkipped {
+		if r[i].Outcome != OutcomeSkipped {
 			continue
 		}
 		skipped = append(skipped, r[i])
@@ -154,9 +155,9 @@ func (r CaptureRecord) Skipped() (skipped []Attempt) {
 type Attempt struct {
 	Kind string `json:"kind"`
 	// Namespace is empty for a cluster-scoped object.
-	Namespace   string      `json:"namespace,omitempty"`
-	Name        string      `json:"name"`
-	Disposition Disposition `json:"disposition"`
+	Namespace string  `json:"namespace,omitempty"`
+	Name      string  `json:"name"`
+	Outcome   Outcome `json:"outcome"`
 	// Reason is set only on a skipped object.
 	Reason SkipReason `json:"reason,omitempty"`
 	// Message is what the cluster said when the read failed, which is where
@@ -164,12 +165,10 @@ type Attempt struct {
 	Message string `json:"message,omitempty"`
 }
 
-// Object names one object a bundle holds and where it sits, so that a reader
-// learns what a bundle holds from the manifest alone rather than by untarring
-// it and inferring kinds from member paths. The manifest lists carried objects
-// and evidence separately, so which of the two an entry is follows from the
-// list it appears in.
-type Object struct {
+// Resource names one object a bundle holds and where it sits, so that a
+// reader learns what a bundle holds from the manifest alone rather than by
+// untarring it and inferring kinds from member paths.
+type Resource struct {
 	Kind string `json:"kind"`
 	// Namespace is empty for a cluster-scoped object.
 	Namespace string `json:"namespace,omitempty"`
