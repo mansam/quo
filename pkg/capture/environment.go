@@ -12,10 +12,10 @@ import (
 // environment collects what describes the cluster a VirtualMachine came from,
 // in the order it was discovered and without duplicates.
 //
-// None of it is something a target will recreate. Platform configuration is
-// frequently where the problem actually is — a CSI parameter, a volume binding
-// mode, a feature gate — and a support engineer who has to go back to the
-// source cluster for it has lost a day.
+// Platform configuration is frequently where the problem actually is: a CSI
+// parameter, a volume binding mode, a feature gate. Collecting it with the
+// VirtualMachine saves a support engineer from having to ask the source
+// cluster for it afterwards, which can take a day.
 type environment struct {
 	c    cluster.Cluster
 	co   *collector
@@ -114,7 +114,7 @@ func (r *environment) addKubeVirt(ctx context.Context) (err error) {
 // It is stored as a member of its own rather than among the resources,
 // because nothing on the cluster has that name and nothing applies it to a
 // target. The read is best effort for the same reason the rest of this file
-// is: a capture is worth having without it.
+// is: a capture without it is still useful.
 func (r *environment) addExpandedForm(ctx context.Context, vm *unstructured.Unstructured) (err error) {
 	ref := cluster.ObjectRef{
 		Kind:      bundle.KindExpandedSpec,
@@ -162,12 +162,15 @@ func (r *environment) add(ctx context.Context, ref cluster.ObjectRef) (err error
 // reference quo could not name in advance is named from the object once it has
 // arrived.
 //
-// A read that failed is recorded and the capture goes on, because failing a
-// capture that may have taken hours over one object the person running it was
-// never entitled to see would be unacceptable, and omitting it in silence
-// would be worse. A capture that has been cancelled or has run out of time
-// ends there instead: quo stopped asking, which is not the same as the cluster
-// refusing.
+// A read that failed is recorded and the capture goes on. The person running
+// a capture is frequently not entitled to read these objects, and a capture
+// that may have taken hours should not fail over one of them; leaving it out
+// without saying so would be worse, because the reader could not tell it from
+// an object that was never there.
+//
+// A capture that has been cancelled or has run out of time ends instead of
+// recording. The remaining objects were never asked for, so recording them as
+// unreadable would describe something that did not happen.
 func (r *environment) collect(
 	ctx context.Context,
 	ref cluster.ObjectRef,
