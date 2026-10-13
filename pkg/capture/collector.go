@@ -65,7 +65,22 @@ func (r *collector) skip(ref cluster.ObjectRef, failed error) {
 	})
 }
 
-// attempt records an object that arrived, with what became of it.
+// require records everything the bundle declares it needs from a target but
+// does not carry: a network, a storage class, a container disk image. Two
+// requirements naming one object are recorded once.
+func (r *collector) require(required bundle.Requirements) {
+	objects := requiredObjects(required)
+	seen := make(map[cluster.ObjectRef]bool, len(objects))
+	for _, ref := range objects {
+		if seen[ref] {
+			continue
+		}
+		seen[ref] = true
+		r.attempt(ref, bundle.DispositionRequirement)
+	}
+}
+
+// attempt records an object and what became of it.
 func (r *collector) attempt(ref cluster.ObjectRef, disposition bundle.Disposition) {
 	r.record = append(r.record, bundle.Attempt{
 		Kind:        ref.Kind,

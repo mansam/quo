@@ -35,11 +35,20 @@ const (
 	DisksDir = "disks"
 )
 
-// kindVirtualMachine is the kind of the object a bundle exists to carry. The
-// format names it because a bundle holds that object twice: as it stands,
-// among the objects it carries, and as the source cluster expands it, among
-// the evidence.
-const kindVirtualMachine = "VirtualMachine"
+// Kinds the bundle format names for itself, rather than because quo reads
+// an object of that kind from a cluster.
+const (
+	// kindVirtualMachine is the kind of the object a bundle exists to carry.
+	// The format names it because a bundle holds that object twice: as it
+	// stands, among the objects it carries, and as the source cluster expands
+	// it, among the evidence.
+	kindVirtualMachine = "VirtualMachine"
+	// KindContainerDisk is how the capture record names a container image a
+	// volume is served from. No Kubernetes object stands for it: it is a
+	// thing a target has to be able to pull, so it is named by its image
+	// reference.
+	KindContainerDisk = "ContainerDisk"
+)
 
 // Disposition is what became of one object quo tried to capture.
 type Disposition string

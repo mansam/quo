@@ -17,14 +17,38 @@ import (
 // through the digest and discarded, so reading a bundle costs no more memory
 // than its largest member's header.
 func Read(in io.Reader) (manifest *Manifest, err error) {
+	manifest, absent, err := readArrived(in)
+	if err != nil {
+		return
+	}
+	if len(absent) == 0 {
+		return
+	}
+	manifest = nil
+	err = &FormatError{
+		Reason: fmt.Sprintf("member %q is indexed by the manifest but absent", absent[0]),
+	}
+	return
+}
+
+// readArrived reads the manifest at the front of a bundle, verifies the
+// members that are there against it, and returns the indexed members that are
+// not.
+//
+// A bundle that ends early is not an error here. The manifest is the first
+// member so that a reader can learn what a bundle holds and what it would
+// need from a target off the head of a transfer, and a transfer still in
+// flight ends part-way through the file by definition.
+func readArrived(in io.Reader) (manifest *Manifest, absent []string, err error) {
 	tr := tar.NewReader(in)
 	manifest, err = readManifest(tr)
 	if err != nil {
 		return
 	}
-	err = verifyMembers(tr, manifest)
+	absent, err = verifyArrived(tr, manifest)
 	if err != nil {
 		manifest = nil
+		absent = nil
 		return
 	}
 	return
@@ -68,8 +92,14 @@ func readManifest(tr *tar.Reader) (manifest *Manifest, err error) {
 	return
 }
 
-// verifyMembers checks every remaining member against the manifest index.
-func verifyMembers(tr *tar.Reader, manifest *Manifest) (err error) {
+// verifyArrived checks every member that is there against the manifest index
+// and returns the indexed members that are not.
+//
+// A bundle that stops part-way is read as far as it goes, whether it stops
+// between members or inside one. What follows the cut has not arrived rather
+// than failed, and telling a reader that is more use than refusing to say
+// anything about the part they have.
+func verifyArrived(tr *tar.Reader, manifest *Manifest) (absent []string, err error) {
 	indexed := make(map[string]Member, len(manifest.Members))
 	for i := range manifest.Members {
 		indexed[manifest.Members[i].Path] = manifest.Members[i]
@@ -77,7 +107,7 @@ func verifyMembers(tr *tar.Reader, manifest *Manifest) (err error) {
 	seen := make(map[string]bool, len(manifest.Members))
 	for {
 		header, nextErr := tr.Next()
-		if errors.Is(nextErr, io.EOF) {
+		if cutShort(nextErr) {
 			break
 		}
 		if nextErr != nil {
@@ -92,19 +122,28 @@ func verifyMembers(tr *tar.Reader, manifest *Manifest) (err error) {
 			return
 		}
 		err = verifyMember(tr, member)
+		if cutShort(err) {
+			err = nil
+			break
+		}
 		if err != nil {
 			return
 		}
 		seen[header.Name] = true
 	}
 	for i := range manifest.Members {
-		if !seen[manifest.Members[i].Path] {
-			err = &FormatError{
-				Reason: fmt.Sprintf("member %q is indexed by the manifest but absent", manifest.Members[i].Path),
-			}
-			return
+		if seen[manifest.Members[i].Path] {
+			continue
 		}
+		absent = append(absent, manifest.Members[i].Path)
 	}
+	return
+}
+
+// cutShort reports a read that ran off the end of a bundle, which is what a
+// transfer still in flight looks like rather than a bundle that is wrong.
+func cutShort(err error) (short bool) {
+	short = errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF)
 	return
 }
 

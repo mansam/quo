@@ -29,6 +29,13 @@ import (
 // is held apart from the objects the bundle carries, because nothing will
 // recreate it on a target.
 //
+// The manifest also declares what a target cluster would have to provide and
+// the bundle does not carry: the networks the VirtualMachine expects, what
+// each of its disks needs from storage, and the container images it is served
+// from. Nothing in this phase consumes those records. They are written at
+// capture because the information is free while connected to the source
+// cluster and expensive to reconstruct afterwards.
+//
 // Reading a referenced object is best effort and a failure to read one is
 // recorded rather than fatal. What remains fatal is a failure that would
 // leave a bundle not worth having: the VirtualMachine itself being
@@ -76,9 +83,13 @@ func Export(
 	if err != nil {
 		return
 	}
-	// The record is complete once the closure has been read, and the manifest
-	// has to hold it before the bundle is opened: the room reserved for the
-	// manifest is sized from what it holds.
+	required := buildRequirements(vm, claims)
+	co.require(required)
+	writer.Require(required)
+	// The record is complete once the closure has been read and the
+	// requirements derived from it, and the manifest has to hold both before
+	// the bundle is opened: the room reserved for the manifest is sized from
+	// what it holds.
 	record = co.record
 	writer.Record(record)
 	provenance := bundle.Provenance{
