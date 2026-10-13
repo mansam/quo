@@ -1,6 +1,7 @@
 package capture
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
@@ -11,12 +12,51 @@ import (
 	"github.com/mansam/kvo/pkg/cluster"
 )
 
-// collector puts objects into a bundle and builds the capture record as it
-// goes, so that an object quo asked for is accounted for whether or not it
-// arrived.
+// collector puts objects somewhere and builds the capture record as it goes,
+// so that an object quo asked for is accounted for whether or not it arrived.
 type collector struct {
-	writer *bundle.Writer
+	sink   sink
 	record bundle.CaptureRecord
+}
+
+// sink is where a collector puts the objects it reads. A capture puts them in
+// a bundle; a check puts them nowhere, because it reports what a capture
+// would collect and keeps none of it.
+type sink interface {
+	// Carry takes an object the bundle ships verbatim.
+	Carry(object bundle.Object, data []byte) (err error)
+	// AddEvidence takes an object captured to explain the source environment.
+	AddEvidence(object bundle.Object, data []byte) (err error)
+}
+
+// collect reads everything a capture collects: the VirtualMachine, the
+// closure it depends on, and the evidence about the environment it came from.
+// It returns what a target would have to provide, which is derived from the
+// closure and recorded as it is derived.
+//
+// A capture and a check both go through here, so that the two cannot drift
+// into accounting for different objects. What they do differ in is where the
+// objects go, which is the collector's sink.
+func (r *collector) collect(
+	ctx context.Context,
+	c cluster.Cluster,
+	vm *unstructured.Unstructured) (required bundle.Requirements, err error) {
+	//
+	err = carryVirtualMachine(r, vm)
+	if err != nil {
+		return
+	}
+	claims, err := carryClosure(ctx, c, r, vm)
+	if err != nil {
+		return
+	}
+	err = captureEvidence(ctx, c, r, vm, claims)
+	if err != nil {
+		return
+	}
+	required = buildRequirements(vm, claims)
+	r.require(required)
+	return
 }
 
 // carry puts one object into the bundle as Kubernetes YAML, exactly as the
@@ -26,7 +66,7 @@ func (r *collector) carry(ref cluster.ObjectRef, object *unstructured.Unstructur
 	if err != nil {
 		return
 	}
-	err = r.writer.Carry(bundleObject(ref), encoded)
+	err = r.sink.Carry(bundleObject(ref), encoded)
 	if err != nil {
 		return
 	}
@@ -42,7 +82,7 @@ func (r *collector) addEvidence(ref cluster.ObjectRef, object *unstructured.Unst
 	if err != nil {
 		return
 	}
-	err = r.writer.AddEvidence(bundleObject(ref), encoded)
+	err = r.sink.AddEvidence(bundleObject(ref), encoded)
 	if err != nil {
 		return
 	}

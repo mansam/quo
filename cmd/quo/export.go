@@ -109,26 +109,9 @@ func newReporter(out io.Writer) (report func(p capture.Progress)) {
 			p.Disks,
 			p.Claim,
 			strings.Join(p.Volumes, ", "),
-			formatSize(p.Transferred),
+			capture.FormatSize(p.Transferred),
 			ending)
 	}
-	return
-}
-
-// formatSize renders a byte count for a person.
-func formatSize(count int64) (rendered string) {
-	const unit = 1024
-	if count < unit {
-		rendered = fmt.Sprintf("%d B", count)
-		return
-	}
-	divisor := int64(unit)
-	at := 0
-	for remaining := count / unit; remaining >= unit; remaining /= unit {
-		divisor *= unit
-		at++
-	}
-	rendered = fmt.Sprintf("%.1f %ciB", float64(count)/float64(divisor), "KMGTPE"[at])
 	return
 }
 
@@ -174,12 +157,8 @@ func onlyVirtualMachine(positional []string) (name string, err error) {
 // validateExport checks the command line names a VirtualMachine and somewhere
 // to put it.
 func validateExport(opt capture.Options, output string) (err error) {
-	if opt.Namespace == "" {
-		err = errors.New("a namespace is required: -n <namespace>")
-		return
-	}
-	if opt.Name == "" {
-		err = errors.New("a VirtualMachine name is required")
+	err = validateVirtualMachine(opt)
+	if err != nil {
 		return
 	}
 	if output == "" {

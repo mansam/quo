@@ -1,5 +1,6 @@
 // Command quo captures a stopped KubeVirt VirtualMachine as a diagnostic
-// bundle, and inspects bundles it has captured.
+// bundle, says what a capture would collect before one is run, and inspects
+// bundles it has captured.
 package main
 
 import (
@@ -33,6 +34,8 @@ func run(args []string) (err error) {
 	switch args[0] {
 	case "export":
 		err = runExport(args[1:])
+	case "check":
+		err = runCheck(args[1:])
 	case "inspect":
 		err = runInspect(args[1:])
 	case "-h", "--help", "help":
@@ -49,6 +52,7 @@ func usage(out *os.File) {
 
 Usage:
   quo export -n <namespace> <name> -o <path>   capture a VirtualMachine
+  quo check -n <namespace> <name>              say what a capture would collect
   quo inspect <path>                           describe a bundle
 
 A bundle contains plaintext Secrets from the source cluster. Treat it with the

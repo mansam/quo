@@ -114,6 +114,30 @@ type ContainerDiskRequirement struct {
 // when the first says the read was forbidden.
 type CaptureRecord []Attempt
 
+// Collected returns the objects the capture put in the bundle, whether it
+// carried them or holds them as evidence.
+func (r CaptureRecord) Collected() (collected []Attempt) {
+	for i := range r {
+		switch r[i].Disposition {
+		case DispositionCarried, DispositionEvidence:
+			collected = append(collected, r[i])
+		}
+	}
+	return
+}
+
+// Required returns the objects the bundle declares it needs from a target and
+// does not carry.
+func (r CaptureRecord) Required() (required []Attempt) {
+	for i := range r {
+		if r[i].Disposition != DispositionRequirement {
+			continue
+		}
+		required = append(required, r[i])
+	}
+	return
+}
+
 // Skipped returns the objects the capture could not collect.
 func (r CaptureRecord) Skipped() (skipped []Attempt) {
 	for i := range r {
