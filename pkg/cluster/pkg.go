@@ -6,15 +6,25 @@ package cluster
 
 import (
 	"context"
+	"errors"
 	"io"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
+// ErrNotFound reports an object the cluster does not have. A VirtualMachine
+// can refer to something that has since been deleted, which is not a reason to
+// abandon a capture, so the caller is given a signal it can act on rather than
+// an error from the Kubernetes client.
+var ErrNotFound = errors.New("object not found")
+
 // Cluster is everything quo needs from outside its own process.
 type Cluster interface {
 	// GetVirtualMachine returns the named VirtualMachine.
 	GetVirtualMachine(ctx context.Context, namespace, name string) (vm *unstructured.Unstructured, err error)
+	// GetObject returns the object the reference names. It reports ErrNotFound
+	// when the cluster does not have it.
+	GetObject(ctx context.Context, ref ObjectRef) (object *unstructured.Unstructured, err error)
 	// GetInfo returns what a bundle records about the cluster it came from.
 	GetInfo(ctx context.Context) (info Info, err error)
 	// ExportDisks creates a VirtualMachineExport for the named VirtualMachine
@@ -22,6 +32,33 @@ type Cluster interface {
 	// removes the export from the cluster.
 	ExportDisks(ctx context.Context, namespace, name string) (export DiskExport, err error)
 }
+
+// ObjectRef names one object quo reads from a cluster. A cluster-scoped
+// object carries no namespace.
+type ObjectRef struct {
+	Kind      string
+	Namespace string
+	Name      string
+}
+
+// Kinds quo reads while working out a VirtualMachine's closure. KubeVirt's
+// own object graph is the specification for the list: a VirtualMachineInstance
+// and a virt-launcher Pod appear in it but are absent here, because a stopped
+// VirtualMachine has neither.
+const (
+	KindConfigMap                         = "ConfigMap"
+	KindControllerRevision                = "ControllerRevision"
+	KindDataVolume                        = "DataVolume"
+	KindNetworkAttachmentDefinition       = "NetworkAttachmentDefinition"
+	KindPersistentVolumeClaim             = "PersistentVolumeClaim"
+	KindSecret                            = "Secret"
+	KindServiceAccount                    = "ServiceAccount"
+	KindVirtualMachine                    = "VirtualMachine"
+	KindVirtualMachineClusterInstancetype = "VirtualMachineClusterInstancetype"
+	KindVirtualMachineClusterPreference   = "VirtualMachineClusterPreference"
+	KindVirtualMachineInstancetype        = "VirtualMachineInstancetype"
+	KindVirtualMachinePreference          = "VirtualMachinePreference"
+)
 
 // DiskExport is a VirtualMachineExport that has become ready: the disks of one
 // VirtualMachine, each addressed by the PersistentVolumeClaim behind it.

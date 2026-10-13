@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"path"
 	"strings"
 
 	"sigs.k8s.io/yaml"
@@ -33,6 +34,7 @@ type Writer struct {
 	provenance Provenance
 	pending    []content
 	members    []Member
+	objects    []Object
 	disks      []Disk
 	indexOf    map[string]int
 	offset     int64
@@ -59,6 +61,35 @@ func NewWriter(out io.WriteSeeker) (w *Writer) {
 // Stage instead.
 func (r *Writer) Add(path string, data []byte) {
 	r.pending = append(r.pending, content{path: path, data: data})
+}
+
+// Carry collects one carried object: a member of the objects grouping that
+// the manifest also names by kind and name. The caller supplies the kind,
+// namespace and name; where the object lands is this package's concern. Like
+// Add, the content is held in memory until the bundle is opened.
+//
+// It reports an object that would land on top of one already collected. A
+// member path holds a kind and a name but not a namespace, so two objects of
+// one kind and name taken from different namespaces collide, and writing both
+// would produce a bundle whose manifest disagrees with its own members.
+func (r *Writer) Carry(object Object, data []byte) (err error) {
+	object.Path = ObjectPath(object.Kind, object.Name)
+	for i := range r.objects {
+		if r.objects[i].Path != object.Path {
+			continue
+		}
+		err = fmt.Errorf(
+			"%s %q and %s %q both belong at %q",
+			r.objects[i].Kind,
+			path.Join(r.objects[i].Namespace, r.objects[i].Name),
+			object.Kind,
+			path.Join(object.Namespace, object.Name),
+			object.Path)
+		return
+	}
+	r.objects = append(r.objects, object)
+	r.Add(object.Path, data)
+	return
 }
 
 // Reserve declares a disk that will be staged into the bundle later, so that
@@ -223,6 +254,7 @@ func (r *Writer) encode() (encoded []byte, err error) {
 	manifest := &Manifest{
 		FormatVersion: FormatVersion,
 		Provenance:    r.provenance,
+		Objects:       r.objects,
 		Members:       r.members,
 		Disks:         r.disks,
 	}

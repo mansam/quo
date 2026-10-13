@@ -34,6 +34,7 @@ func describe(out io.Writer, manifest *Manifest) (err error) {
 	_, _ = fmt.Fprintf(tw, "  Captured at:\t%s\n", provenance.CapturedAt.UTC().Format(time.RFC3339))
 	_, _ = fmt.Fprintf(tw, "  KubeVirt version:\t%s\n", orUnknown(provenance.KubeVirtVersion))
 	_, _ = fmt.Fprintf(tw, "  Kubernetes version:\t%s\n", orUnknown(provenance.KubernetesVersion))
+	describeObjects(tw, manifest)
 	describeDisks(tw, manifest)
 	_, _ = fmt.Fprintf(tw, "\nMembers (%d), digests verified\n", len(manifest.Members))
 	for i := range manifest.Members {
@@ -45,6 +46,35 @@ func describe(out io.Writer, manifest *Manifest) (err error) {
 		err = fmt.Errorf("write description: %w", err)
 		return
 	}
+	return
+}
+
+// describeObjects writes the objects a bundle carries, by kind and name, in
+// the order they were discovered.
+func describeObjects(out io.Writer, manifest *Manifest) {
+	if len(manifest.Objects) == 0 {
+		return
+	}
+	_, _ = fmt.Fprintf(out, "\nCarried objects (%d)\n", len(manifest.Objects))
+	for i := range manifest.Objects {
+		object := manifest.Objects[i]
+		_, _ = fmt.Fprintf(
+			out,
+			"  %s\t%s\n",
+			object.Kind,
+			qualified(object, manifest.Provenance.Namespace))
+	}
+}
+
+// qualified renders a carried object's name. A namespace is shown only when it
+// is not the one the VirtualMachine was captured from, which is how a reader
+// spots an object borrowed from elsewhere in the cluster.
+func qualified(object Object, namespace string) (rendered string) {
+	rendered = object.Name
+	if object.Namespace == "" || object.Namespace == namespace {
+		return
+	}
+	rendered = object.Namespace + "/" + object.Name
 	return
 }
 
