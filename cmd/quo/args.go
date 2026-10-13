@@ -1,6 +1,25 @@
 package main
 
-import "flag"
+import (
+	"errors"
+	"flag"
+
+	"github.com/mansam/kvo/pkg/capture"
+)
+
+// validateVirtualMachine checks a command line names a VirtualMachine. Every
+// command that acts on one needs both halves of its name.
+func validateVirtualMachine(opt capture.Options) (err error) {
+	if opt.Namespace == "" {
+		err = errors.New("a namespace is required: -n <namespace>")
+		return
+	}
+	if opt.Name == "" {
+		err = errors.New("a VirtualMachine name is required")
+		return
+	}
+	return
+}
 
 // parseFlags parses flags that appear before or after positional arguments
 // and returns the positional ones.

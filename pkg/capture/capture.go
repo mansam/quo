@@ -70,21 +70,11 @@ func Export(
 		return
 	}
 	writer := bundle.NewWriter(out)
-	co := &collector{writer: writer}
-	err = carryVirtualMachine(co, vm)
+	co := &collector{sink: writer}
+	required, err := co.collect(ctx, c, vm)
 	if err != nil {
 		return
 	}
-	claims, err := carryClosure(ctx, c, co, vm)
-	if err != nil {
-		return
-	}
-	err = captureEvidence(ctx, c, co, vm, claims)
-	if err != nil {
-		return
-	}
-	required := buildRequirements(vm, claims)
-	co.require(required)
 	writer.Require(required)
 	// The record is complete once the closure has been read and the
 	// requirements derived from it, and the manifest has to hold both before
