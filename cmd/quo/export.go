@@ -67,17 +67,25 @@ func printSkipped(out io.Writer, record bundle.CaptureRecord) (err error) {
 		return
 	}
 	for i := range skipped {
-		_, err = fmt.Fprintf(
-			out,
-			"  %s %s: %s\n",
-			skipped[i].Kind,
-			skipped[i].Name,
-			skipped[i].Reason)
+		_, err = fmt.Fprintf(out, "  %s: %s\n", subject(skipped[i]), skipped[i].Reason)
 		if err != nil {
 			return
 		}
 	}
 	_, err = fmt.Fprintf(out, "The bundle's capture record says what became of each one.\n")
+	return
+}
+
+// subject names the object one entry of the capture record is about. An entry
+// carrying no name is named by its kind alone: KubeVirt's configuration is a
+// singleton whose name quo only learns by reading it, so a read that failed
+// has nothing else to go on.
+func subject(attempt bundle.Attempt) (named string) {
+	named = attempt.Kind
+	if attempt.Name == "" {
+		return
+	}
+	named = attempt.Kind + " " + attempt.Name
 	return
 }
 

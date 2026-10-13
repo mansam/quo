@@ -27,9 +27,19 @@ const (
 	ManifestPath = "manifest.yaml"
 	// ObjectsDir groups the objects a bundle carries.
 	ObjectsDir = "objects"
+	// EvidenceDir groups the evidence a bundle holds, apart from the objects
+	// it carries, so that nothing suggests evidence should be applied to a
+	// target.
+	EvidenceDir = "evidence"
 	// DisksDir groups the disks a bundle carries.
 	DisksDir = "disks"
 )
+
+// kindVirtualMachine is the kind of the object a bundle exists to carry. The
+// format names it because a bundle holds that object twice: as it stands,
+// among the objects it carries, and as the source cluster expands it, among
+// the evidence.
+const kindVirtualMachine = "VirtualMachine"
 
 // Disposition is what became of one object quo tried to capture.
 type Disposition string
@@ -98,6 +108,18 @@ const (
 // path of its own.
 func ObjectPath(kind, name string) (member string) {
 	member = path.Join(ObjectsDir, strings.ToLower(kind), name+".yaml")
+	return
+}
+
+// EvidencePath is where an evidence object of the given kind sits inside a
+// bundle.
+//
+// Evidence sits under a grouping of its own rather than among the carried
+// objects, so that someone applying a bundle's objects by hand cannot reach it
+// by accident. It is also what lets a bundle hold both the VirtualMachine as
+// it stands and the form the source cluster expanded it to.
+func EvidencePath(kind, name string) (member string) {
+	member = path.Join(EvidenceDir, strings.ToLower(kind), name+".yaml")
 	return
 }
 

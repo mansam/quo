@@ -22,27 +22,31 @@ type collector struct {
 // carry puts one object into the bundle as Kubernetes YAML, exactly as the
 // cluster returned it, and records it as carried.
 func (r *collector) carry(ref cluster.ObjectRef, object *unstructured.Unstructured) (err error) {
-	encoded, err := yaml.Marshal(object.Object)
-	if err != nil {
-		err = fmt.Errorf("marshal %s %q: %w", ref.Kind, ref.Name, err)
-		return
-	}
-	err = r.writer.Carry(
-		bundle.Object{
-			Kind:      ref.Kind,
-			Namespace: ref.Namespace,
-			Name:      ref.Name,
-		},
-		encoded)
+	encoded, err := encode(ref, object)
 	if err != nil {
 		return
 	}
-	r.record = append(r.record, bundle.Attempt{
-		Kind:        ref.Kind,
-		Namespace:   ref.Namespace,
-		Name:        ref.Name,
-		Disposition: bundle.DispositionCarried,
-	})
+	err = r.writer.Carry(bundleObject(ref), encoded)
+	if err != nil {
+		return
+	}
+	r.attempt(ref, bundle.DispositionCarried)
+	return
+}
+
+// addEvidence puts one object into the bundle as evidence: held apart from the
+// carried objects, because it was captured to explain the environment the
+// VirtualMachine came from and nothing will recreate it on a target.
+func (r *collector) addEvidence(ref cluster.ObjectRef, object *unstructured.Unstructured) (err error) {
+	encoded, err := encode(ref, object)
+	if err != nil {
+		return
+	}
+	err = r.writer.AddEvidence(bundleObject(ref), encoded)
+	if err != nil {
+		return
+	}
+	r.attempt(ref, bundle.DispositionEvidence)
 	return
 }
 
@@ -59,6 +63,36 @@ func (r *collector) skip(ref cluster.ObjectRef, failed error) {
 		Reason:      skipReason(failed),
 		Message:     failed.Error(),
 	})
+}
+
+// attempt records an object that arrived, with what became of it.
+func (r *collector) attempt(ref cluster.ObjectRef, disposition bundle.Disposition) {
+	r.record = append(r.record, bundle.Attempt{
+		Kind:        ref.Kind,
+		Namespace:   ref.Namespace,
+		Name:        ref.Name,
+		Disposition: disposition,
+	})
+}
+
+// encode renders one object as the Kubernetes YAML a bundle holds it as.
+func encode(ref cluster.ObjectRef, object *unstructured.Unstructured) (encoded []byte, err error) {
+	encoded, err = yaml.Marshal(object.Object)
+	if err != nil {
+		err = fmt.Errorf("marshal %s %q: %w", ref.Kind, ref.Name, err)
+		return
+	}
+	return
+}
+
+// bundleObject is how a bundle names the object a reference points at.
+func bundleObject(ref cluster.ObjectRef) (object bundle.Object) {
+	object = bundle.Object{
+		Kind:      ref.Kind,
+		Namespace: ref.Namespace,
+		Name:      ref.Name,
+	}
+	return
 }
 
 // skipReason maps a failure to read an object onto the reason the capture

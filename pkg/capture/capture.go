@@ -23,6 +23,12 @@ import (
 // normalises nothing, so MAC addresses, firmware UUID, serial and chassis
 // values travel as they are.
 //
+// Alongside the closure, the bundle holds evidence about the cluster the
+// VirtualMachine came from: the storage behind each of its claims, KubeVirt's
+// own configuration, and the form the source cluster expands it to. Evidence
+// is held apart from the objects the bundle carries, because nothing will
+// recreate it on a target.
+//
 // Reading a referenced object is best effort and a failure to read one is
 // recorded rather than fatal. What remains fatal is a failure that would
 // leave a bundle not worth having: the VirtualMachine itself being
@@ -62,7 +68,11 @@ func Export(
 	if err != nil {
 		return
 	}
-	err = carryClosure(ctx, c, co, vm)
+	claims, err := carryClosure(ctx, c, co, vm)
+	if err != nil {
+		return
+	}
+	err = captureEvidence(ctx, c, co, vm, claims)
 	if err != nil {
 		return
 	}
@@ -79,8 +89,8 @@ func Export(
 		KubeVirtVersion:   info.KubeVirtVersion,
 		KubernetesVersion: info.KubernetesVersion,
 	}
-	claims := claimedVolumes(vm)
-	if len(claims) == 0 {
+	backing := claimedVolumes(vm)
+	if len(backing) == 0 {
 		err = writeBundle(ctx, writer, provenance, nil)
 		return
 	}
@@ -98,7 +108,7 @@ func Export(
 		// already been written by the time this runs.
 		_ = export.Close()
 	}()
-	transfers, err := planTransfers(claims, export, opt)
+	transfers, err := planTransfers(backing, export, opt)
 	if err != nil {
 		return
 	}

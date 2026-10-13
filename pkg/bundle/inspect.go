@@ -35,6 +35,7 @@ func describe(out io.Writer, manifest *Manifest) (err error) {
 	_, _ = fmt.Fprintf(tw, "  KubeVirt version:\t%s\n", orUnknown(provenance.KubeVirtVersion))
 	_, _ = fmt.Fprintf(tw, "  Kubernetes version:\t%s\n", orUnknown(provenance.KubernetesVersion))
 	describeObjects(tw, manifest)
+	describeEvidence(tw, manifest)
 	describeDisks(tw, manifest)
 	describeRecord(tw, manifest)
 	_, _ = fmt.Fprintf(tw, "\nMembers (%d), digests verified\n", len(manifest.Members))
@@ -65,6 +66,44 @@ func describeObjects(out io.Writer, manifest *Manifest) {
 			object.Kind,
 			qualified(object.Namespace, object.Name, manifest.Provenance.Namespace))
 	}
+}
+
+// describeEvidence writes the evidence a bundle holds, under a heading of its
+// own saying what evidence is for.
+//
+// A reader deciding what to do with a bundle has to be able to tell at a
+// glance which objects describe the source cluster and which are the
+// VirtualMachine itself, so the two are never listed together.
+func describeEvidence(out io.Writer, manifest *Manifest) {
+	if len(manifest.Evidence) == 0 {
+		return
+	}
+	_, _ = fmt.Fprintf(
+		out,
+		"\nEvidence (%d), describes the source cluster and is never applied\n",
+		len(manifest.Evidence))
+	for i := range manifest.Evidence {
+		object := manifest.Evidence[i]
+		_, _ = fmt.Fprintf(
+			out,
+			"  %s\t%s\n",
+			object.Kind,
+			evidenceName(object, manifest.Provenance))
+	}
+}
+
+// evidenceName renders an evidence object's name, saying so when the object is
+// the source cluster's expansion of the VirtualMachine the bundle carries.
+//
+// The two are one object by kind and name, so a reader shown the same line in
+// both sections would have no way to tell which was which.
+func evidenceName(object Object, provenance Provenance) (rendered string) {
+	rendered = qualified(object.Namespace, object.Name, provenance.Namespace)
+	if object.Kind != kindVirtualMachine || object.Name != provenance.VirtualMachine {
+		return
+	}
+	rendered += " (as the source cluster expands it)"
+	return
 }
 
 // qualified renders an object's name. Its namespace is shown only when it is

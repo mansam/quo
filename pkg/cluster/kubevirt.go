@@ -27,6 +27,24 @@ var (
 		Version:  "v1",
 		Resource: "kubevirts",
 	}
+	// expandSpecResource serves the subresource that resolves a
+	// VirtualMachine's instancetype and preference into its spec.
+	expandSpecResource = schema.GroupVersionResource{
+		Group:    "subresources.kubevirt.io",
+		Version:  "v1",
+		Resource: "virtualmachines",
+	}
+)
+
+const (
+	// expandSpec is the subresource returning a VirtualMachine's resolved
+	// form.
+	expandSpec = "expand-spec"
+	// expandSpecName is how discovery lists that subresource. A subresource is
+	// named for the resource it hangs off as well as for itself, and the
+	// subresource group lists no bare virtualmachines resource at all, so
+	// looking for one would report expand-spec as absent from every cluster.
+	expandSpecName = "virtualmachines/" + expandSpec
 )
 
 // KubeVirt is the Cluster backed by a real cluster. It is a thin adapter over
@@ -116,7 +134,53 @@ func (r *KubeVirt) GetObject(ctx context.Context, ref ObjectRef) (object *unstru
 	object, err = reader.Get(ctx, ref.Name, meta.GetOptions{})
 	if err != nil {
 		object = nil
-		err = r.mapReadError(ref, served.gvr, err)
+		err = r.mapReadError(ref, served.gvr.GroupVersion(), served.gvr.Resource, err)
+		return
+	}
+	return
+}
+
+// GetKubeVirt returns KubeVirt's own configuration.
+//
+// KubeVirt is a singleton whose namespace and name differ between
+// installations, so it is listed rather than read by name. A read that failed
+// is reported as one of the capture's own signals, because the resource is
+// cluster-scoped and commonly forbidden to the person capturing a bundle.
+func (r *KubeVirt) GetKubeVirt(ctx context.Context) (kv *unstructured.Unstructured, err error) {
+	list, err := r.dynamic.
+		Resource(kubeVirtResource).
+		Namespace(meta.NamespaceAll).
+		List(ctx, meta.ListOptions{})
+	if err != nil {
+		err = r.mapListError(err)
+		return
+	}
+	if len(list.Items) == 0 {
+		err = fmt.Errorf("%s: %w", KindKubeVirt, ErrNotFound)
+		return
+	}
+	kv = &list.Items[0]
+	return
+}
+
+// ExpandSpec returns the form this cluster resolves the named VirtualMachine
+// to.
+//
+// The subresource is served by virt-api rather than by the API server itself,
+// so it is read through its own resource rather than as a field of the
+// VirtualMachine.
+func (r *KubeVirt) ExpandSpec(
+	ctx context.Context,
+	namespace, name string) (expanded *unstructured.Unstructured, err error) {
+	//
+	ref := ObjectRef{Kind: KindVirtualMachine, Namespace: namespace, Name: name}
+	expanded, err = r.dynamic.
+		Resource(expandSpecResource).
+		Namespace(namespace).
+		Get(ctx, name, meta.GetOptions{}, expandSpec)
+	if err != nil {
+		expanded = nil
+		err = r.mapReadError(ref, expandSpecResource.GroupVersion(), expandSpecName, err)
 		return
 	}
 	return
@@ -161,13 +225,20 @@ func (r *KubeVirt) ExportDisks(ctx context.Context, namespace, name string) (exp
 // reported as one. The two are not interchangeable to a reader: an object
 // that was deleted is part of the VirtualMachine's history, while a component
 // that was never installed says something about the cluster.
-func (r *KubeVirt) mapReadError(ref ObjectRef, gvr schema.GroupVersionResource, err error) (mapped error) {
+// The name is the one discovery lists for the resource, which the caller
+// supplies because a subresource is not named for itself alone.
+func (r *KubeVirt) mapReadError(
+	ref ObjectRef,
+	gv schema.GroupVersion,
+	name string,
+	err error) (mapped error) {
+	//
 	switch {
 	case k8serr.IsForbidden(err):
 		mapped = fmt.Errorf("%s %q: %w", ref.Kind, ref.Name, ErrForbidden)
 	case k8serr.IsNotFound(err):
 		mapped = fmt.Errorf("%s %q: %w", ref.Kind, ref.Name, ErrNotFound)
-		if !r.serves(gvr) {
+		if !r.serves(gv, name) {
 			mapped = fmt.Errorf("%s: %w", ref.Kind, ErrNotInstalled)
 		}
 	default:
@@ -176,17 +247,39 @@ func (r *KubeVirt) mapReadError(ref ObjectRef, gvr schema.GroupVersionResource, 
 	return
 }
 
-// serves reports whether the cluster has the resource at all. Discovery that
-// cannot be read is taken as the resource being served, so that an answer quo
-// does not have is never reported as a component being absent.
-func (r *KubeVirt) serves(gvr schema.GroupVersionResource) (served bool) {
-	list, err := r.discovery.ServerResourcesForGroupVersion(gvr.GroupVersion().String())
+// mapListError maps a failure to list the KubeVirt singleton onto the signal a
+// capture acts on and records. A list names no object, so neither does the
+// error it produces.
+//
+// A not-found needs no confirming against discovery the way a read does: a
+// list of a resource the cluster serves returns an empty list rather than a
+// not-found, so a not-found here already means the resource is not served.
+func (r *KubeVirt) mapListError(err error) (mapped error) {
+	switch {
+	case k8serr.IsForbidden(err):
+		mapped = fmt.Errorf("%s: %w", KindKubeVirt, ErrForbidden)
+	case k8serr.IsNotFound(err):
+		mapped = fmt.Errorf("%s: %w", KindKubeVirt, ErrNotInstalled)
+	default:
+		mapped = fmt.Errorf("list %s: %w", KindKubeVirt, err)
+	}
+	return
+}
+
+// serves reports whether the cluster has the named resource at all. The name
+// is the one discovery lists, which for a subresource includes the resource it
+// hangs off.
+//
+// Discovery that cannot be read is taken as the resource being served, so that
+// an answer quo does not have is never reported as a component being absent.
+func (r *KubeVirt) serves(gv schema.GroupVersion, name string) (served bool) {
+	list, err := r.discovery.ServerResourcesForGroupVersion(gv.String())
 	if err != nil {
 		served = !k8serr.IsNotFound(err)
 		return
 	}
 	for i := range list.APIResources {
-		if list.APIResources[i].Name != gvr.Resource {
+		if list.APIResources[i].Name != name {
 			continue
 		}
 		served = true
@@ -210,16 +303,10 @@ func (r *KubeVirt) kubernetesVersion() (version string) {
 // it cannot be read. The KubeVirt resource is cluster-scoped and commonly
 // forbidden to the person capturing a bundle.
 func (r *KubeVirt) kubeVirtVersion(ctx context.Context) (version string) {
-	list, err := r.dynamic.
-		Resource(kubeVirtResource).
-		Namespace(meta.NamespaceAll).
-		List(ctx, meta.ListOptions{})
-	if err != nil || len(list.Items) == 0 {
+	kv, err := r.GetKubeVirt(ctx)
+	if err != nil {
 		return
 	}
-	version, _, _ = unstructured.NestedString(
-		list.Items[0].Object,
-		"status",
-		"observedKubeVirtVersion")
+	version, _, _ = unstructured.NestedString(kv.Object, "status", "observedKubeVirtVersion")
 	return
 }
