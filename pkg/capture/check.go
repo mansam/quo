@@ -68,8 +68,7 @@ type checkedDisk struct {
 	volumes []string
 	// recorded is the provisioned size of the claim behind the disk, as the
 	// claim gives it, and size is that size in bytes. known is false for a
-	// claim quo could not read, whose size is the one thing here quo cannot
-	// stand behind.
+	// claim quo could not read, whose size is therefore unknown.
 	recorded string
 	size     int64
 	known    bool
@@ -174,9 +173,9 @@ func (r *check) describe(out io.Writer) (err error) {
 	return
 }
 
-// describeRefusal says whether a capture would go ahead. A VirtualMachine that
-// is not stopped is the one finding no permission fix will clear, so it is
-// said at the top rather than left to be discovered at the bottom.
+// describeRefusal says whether a capture would go ahead. Fixing permissions
+// will not clear a VirtualMachine that is not stopped, so it is written at
+// the top rather than left to the bottom with the rest of the findings.
 //
 // The rest of the check is written either way: it says what a capture would
 // collect once the VirtualMachine has been stopped. What it cannot show is a
@@ -284,7 +283,7 @@ func (r *check) describeDisks(out io.Writer) {
 // is how a reader spots an object from elsewhere in the cluster. An entry
 // carrying no name is one quo never learned the name of: KubeVirt's
 // configuration is a singleton whose name only reading it supplies, so a read
-// that failed has nothing else to go on.
+// that failed leaves the name empty.
 func (r *check) named(attempt bundle.Attempt) (named string) {
 	named = attempt.Name
 	if named == "" {

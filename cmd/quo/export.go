@@ -74,7 +74,7 @@ func printSkipped(out io.Writer, record bundle.CaptureRecord) (err error) {
 // subject names the object one entry of the capture record is about. An entry
 // carrying no name is named by its kind alone: KubeVirt's configuration is a
 // singleton whose name quo only learns by reading it, so a read that failed
-// has nothing else to go on.
+// leaves the name empty.
 func subject(attempt bundle.Attempt) (named string) {
 	named = attempt.Kind
 	if attempt.Name == "" {

@@ -89,16 +89,15 @@ func collectVirtualMachine(co *collector, vm *unstructured.Unstructured) (err er
 // reads follow the claims that arrived rather than the ones referenced.
 //
 // Collection is best effort. The person capturing a bundle is frequently a
-// namespace owner without cluster read, and failing an hours-long capture
-// over one object they were not allowed to look at would be unacceptable. An
-// object that was not read is recorded as skipped rather than passed over in
-// silence, because a reader who found it simply absent could not tell it from
-// an object that never existed.
+// namespace owner without cluster read, and a capture that may have taken
+// hours should not fail over one object they were not allowed to read. An
+// object that was not read is recorded as skipped rather than left out,
+// because a reader who found it simply absent could not tell it from an
+// object that never existed.
 //
-// A capture that has been cancelled or has run out of time is not best
-// effort and ends there. Recording the rest of the closure as unreadable
-// would produce a bundle saying each object could not be read when what
-// happened is that quo stopped asking.
+// A capture that has been cancelled or has run out of time ends instead of
+// recording. The remaining objects were never asked for, so recording them as
+// unreadable would describe something that did not happen.
 func collectReferenced(
 	ctx context.Context,
 	c cluster.Cluster,

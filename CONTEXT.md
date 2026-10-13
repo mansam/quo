@@ -18,8 +18,8 @@ _Avoid_: appliance, image, export, backup, snapshot, archive, package
 **Fidelity**:
 The governing constraint on quo. A bundle must reproduce the captured VM
 closely enough that a problem present in the original is present in the
-deployment, so quo changes nothing it is not forced to change. Where
-faithfulness and convenience conflict, faithfulness wins.
+deployment, so quo changes nothing it is not forced to change. When being
+faithful to the original and being convenient conflict, quo is faithful.
 _Avoid_: accuracy, exactness, parity
 
 **Related resources**:

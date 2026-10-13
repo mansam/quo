@@ -18,9 +18,9 @@ type checkArgs struct {
 // runCheck says what a capture would collect and what it would skip, without
 // transferring anything.
 //
-// A check that found objects a capture would skip has done the job it exists
-// for, so it succeeds. The exit status says whether quo could report, not
-// whether it liked what it found.
+// Finding objects a capture would skip is what a check is for, so a check
+// that finds some still succeeds. A non-zero exit means the check could not
+// report at all.
 func runCheck(args []string) (err error) {
 	parsed, err := parseCheckArgs(args)
 	if err != nil {

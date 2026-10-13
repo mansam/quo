@@ -35,8 +35,8 @@ import (
 // cluster and expensive to reconstruct afterwards.
 //
 // Reading a referenced object is best effort and a failure to read one is
-// recorded rather than fatal. What remains fatal is a failure that would
-// leave a bundle not worth having: the VirtualMachine itself being
+// recorded rather than fatal. Three failures are still fatal, because each
+// one leaves a bundle nobody could use: the VirtualMachine itself being
 // unreadable, a destination that cannot be written, or a disk that cannot be
 // collected.
 //
