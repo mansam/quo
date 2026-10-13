@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/mansam/kvo/pkg/bundle"
+	"github.com/mansam/quo/pkg/bundle"
 )
 
 // runInspect describes a bundle without contacting a cluster.

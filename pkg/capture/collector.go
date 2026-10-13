@@ -8,8 +8,8 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/yaml"
 
-	"github.com/mansam/kvo/pkg/bundle"
-	"github.com/mansam/kvo/pkg/cluster"
+	"github.com/mansam/quo/pkg/bundle"
+	"github.com/mansam/quo/pkg/cluster"
 )
 
 // collector puts objects somewhere and builds the capture record as it goes,

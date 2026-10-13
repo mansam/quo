@@ -9,7 +9,7 @@ import (
 
 	"github.com/onsi/gomega"
 
-	"github.com/mansam/kvo/pkg/cluster"
+	"github.com/mansam/quo/pkg/cluster"
 )
 
 // The provisioned sizes of the two disks the fixture VirtualMachine has, as

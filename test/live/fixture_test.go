@@ -15,8 +15,8 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
-	"github.com/mansam/kvo/pkg/capture"
-	"github.com/mansam/kvo/pkg/cluster"
+	"github.com/mansam/quo/pkg/capture"
+	"github.com/mansam/quo/pkg/cluster"
 )
 
 // Resources the fixture creates.

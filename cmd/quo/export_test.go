@@ -6,7 +6,7 @@ import (
 
 	"github.com/onsi/gomega"
 
-	"github.com/mansam/kvo/pkg/bundle"
+	"github.com/mansam/quo/pkg/bundle"
 )
 
 func TestExportSaysOnCompletionWhatItCouldNotCollect(t *testing.T) {

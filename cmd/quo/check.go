@@ -5,8 +5,8 @@ import (
 	"flag"
 	"os"
 
-	"github.com/mansam/kvo/pkg/capture"
-	"github.com/mansam/kvo/pkg/cluster"
+	"github.com/mansam/quo/pkg/capture"
+	"github.com/mansam/quo/pkg/cluster"
 )
 
 // checkArgs is a check command line, once parsed.

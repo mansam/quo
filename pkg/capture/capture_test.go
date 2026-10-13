@@ -16,8 +16,8 @@ import (
 	"github.com/onsi/gomega"
 	"sigs.k8s.io/yaml"
 
-	"github.com/mansam/kvo/pkg/bundle"
-	"github.com/mansam/kvo/pkg/cluster"
+	"github.com/mansam/quo/pkg/bundle"
+	"github.com/mansam/quo/pkg/cluster"
 )
 
 // testVMMember is where the fixture VirtualMachine lands in a bundle.

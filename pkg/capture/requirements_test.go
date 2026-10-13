@@ -5,8 +5,8 @@ import (
 
 	"github.com/onsi/gomega"
 
-	"github.com/mansam/kvo/pkg/bundle"
-	"github.com/mansam/kvo/pkg/cluster"
+	"github.com/mansam/quo/pkg/bundle"
+	"github.com/mansam/quo/pkg/cluster"
 )
 
 // The storage the fixture VirtualMachine's two disks were provisioned from,

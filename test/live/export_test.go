@@ -17,9 +17,9 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/yaml"
 
-	"github.com/mansam/kvo/pkg/bundle"
-	"github.com/mansam/kvo/pkg/capture"
-	"github.com/mansam/kvo/pkg/cluster"
+	"github.com/mansam/quo/pkg/bundle"
+	"github.com/mansam/quo/pkg/capture"
+	"github.com/mansam/quo/pkg/cluster"
 )
 
 // sharedCapture is the one capture of the fixture VirtualMachine the tests share.

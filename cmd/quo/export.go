@@ -9,9 +9,9 @@ import (
 	"os"
 	"strings"
 
-	"github.com/mansam/kvo/pkg/bundle"
-	"github.com/mansam/kvo/pkg/capture"
-	"github.com/mansam/kvo/pkg/cluster"
+	"github.com/mansam/quo/pkg/bundle"
+	"github.com/mansam/quo/pkg/capture"
+	"github.com/mansam/quo/pkg/cluster"
 )
 
 // exportArgs is an export command line, once parsed.
