@@ -12,13 +12,21 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
-// The carried object the fixtures put in a bundle.
-const objectPath = "objects/virtualmachine/db-01.yaml"
+// The carried object the fixtures put in a bundle, and where the same object
+// lands when it is held as evidence instead.
+const (
+	objectPath   = "objects/virtualmachine/db-01.yaml"
+	evidencePath = "evidence/virtualmachine/db-01.yaml"
+)
 
 // The claim behind the disk the fixtures stage.
 const diskClaim = "db-01-root"
 
 var objectBody = []byte("apiVersion: kubevirt.io/v1\nkind: VirtualMachine\n")
+
+// The same VirtualMachine as the source cluster expands it, which is evidence
+// rather than something a target would be given.
+var expandedBody = []byte("apiVersion: kubevirt.io/v1\nkind: VirtualMachine\nspec: {}\n")
 
 // Stand-in for the compressed bytes an export server sends.
 var diskBody = []byte("\x1f\x8b\x08not really gzip, but opaque to quo")
@@ -204,6 +212,96 @@ func TestInspectListsTheCarriedObjectsByKindAndName(t *testing.T) {
 	// An object borrowed from another namespace is named with it; one from
 	// the VirtualMachine's own namespace is not.
 	g.Expect(report).To(gomega.MatchRegexp(`NetworkAttachmentDefinition\s+shared-networks/storage-net\n`))
+}
+
+func TestInspectPresentsEvidenceDistinctlyFromTheObjectsABundleCarries(t *testing.T) {
+	g := gomega.NewGomegaWithT(t)
+	manifest := indexing(t)
+	manifest.Objects = []Object{testObject()}
+	manifest.Evidence = []Object{
+		{
+			Kind: "StorageClass",
+			Name: "ocs-storagecluster-ceph-rbd",
+			Path: EvidencePath("StorageClass", "ocs-storagecluster-ceph-rbd"),
+		},
+		{
+			Kind:      "KubeVirt",
+			Namespace: "kubevirt",
+			Name:      "kubevirt",
+			Path:      EvidencePath("KubeVirt", "kubevirt"),
+		},
+		{
+			// The same VirtualMachine the bundle carries, as the source
+			// cluster expands it.
+			Kind:      "VirtualMachine",
+			Namespace: "support-cases",
+			Name:      "db-01",
+			Path:      EvidencePath("VirtualMachine", "db-01"),
+		},
+	}
+	archive := tarball(t,
+		rawMember{path: ManifestPath, data: encodeManifest(t, manifest)},
+		rawMember{path: objectPath, data: objectBody})
+	described := &bytes.Buffer{}
+
+	err := Inspect(bytes.NewReader(archive), described)
+
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	report := described.String()
+	// A reader deciding what to do with a bundle has to be able to tell at a
+	// glance which objects are the VirtualMachine and which only describe the
+	// cluster it came from.
+	g.Expect(report).To(gomega.ContainSubstring("Carried objects (1)"))
+	g.Expect(report).To(gomega.ContainSubstring("Evidence (3)"))
+	g.Expect(report).To(gomega.ContainSubstring("never applied"))
+	g.Expect(report).To(gomega.MatchRegexp(`StorageClass\s+ocs-storagecluster-ceph-rbd\n`))
+	g.Expect(report).To(gomega.MatchRegexp(`KubeVirt\s+kubevirt/kubevirt\n`))
+	// The bundle holds the VirtualMachine twice, under one kind and one name.
+	// The evidence listing is where a reader is told which one this is.
+	g.Expect(report).To(gomega.MatchRegexp(
+		`VirtualMachine\s+db-01 \(as the source cluster expands it\)\n`))
+	g.Expect(report).To(gomega.MatchRegexp(`VirtualMachine\s+db-01\n`))
+}
+
+func TestInspectSaysNothingAboutEvidenceWhenABundleHoldsNone(t *testing.T) {
+	g := gomega.NewGomegaWithT(t)
+	described := &bytes.Buffer{}
+
+	err := Inspect(bytes.NewReader(validBundle(t)), described)
+
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	g.Expect(described.String()).ToNot(gomega.ContainSubstring("Evidence"))
+}
+
+func TestWriterHoldsEvidenceApartFromTheObjectsABundleCarries(t *testing.T) {
+	g := gomega.NewGomegaWithT(t)
+	file, err := os.Create(filepath.Join(t.TempDir(), "bundle"))
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	defer func() {
+		_ = file.Close()
+	}()
+	writer := NewWriter(file)
+	err = writer.Carry(testObject(), objectBody)
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+
+	// One kind and one name, which collide among the carried objects but not
+	// across the two groupings: a bundle holds the VirtualMachine as it
+	// stands and the form the source cluster expands it to.
+	err = writer.AddEvidence(testObject(), expandedBody)
+
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	g.Expect(writer.Carry(testObject(), objectBody)).To(gomega.HaveOccurred())
+	g.Expect(writer.AddEvidence(testObject(), expandedBody)).To(gomega.HaveOccurred())
+	err = writer.Open(testProvenance())
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	err = writer.Close()
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	archive, err := os.ReadFile(file.Name())
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	manifest, err := Read(bytes.NewReader(archive))
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	g.Expect(manifest.Objects[0].Path).To(gomega.Equal(objectPath))
+	g.Expect(manifest.Evidence[0].Path).To(gomega.Equal(evidencePath))
 }
 
 func TestInspectPrintsTheCaptureRecordWithTheSkippedObjectsInASectionOfTheirOwn(t *testing.T) {

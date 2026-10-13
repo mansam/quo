@@ -36,6 +36,7 @@ type Writer struct {
 	members    []Member
 	record     CaptureRecord
 	objects    []Object
+	evidence   []Object
 	disks      []Disk
 	indexOf    map[string]int
 	offset     int64
@@ -69,27 +70,56 @@ func (r *Writer) Add(path string, data []byte) {
 // namespace and name; where the object lands is this package's concern. Like
 // Add, the content is held in memory until the bundle is opened.
 //
-// It reports an object that would land on top of one already collected. A
-// member path holds a kind and a name but not a namespace, so two objects of
-// one kind and name taken from different namespaces collide, and writing both
-// would produce a bundle whose manifest disagrees with its own members.
+// It reports an object that would land on top of one already collected.
 func (r *Writer) Carry(object Object, data []byte) (err error) {
 	object.Path = ObjectPath(object.Kind, object.Name)
-	for i := range r.objects {
-		if r.objects[i].Path != object.Path {
+	err = validateUniquePath(r.objects, object)
+	if err != nil {
+		return
+	}
+	r.objects = append(r.objects, object)
+	r.Add(object.Path, data)
+	return
+}
+
+// AddEvidence collects one evidence object: a member of the evidence
+// grouping, which the manifest names separately from the objects a bundle
+// carries. Nothing will recreate an evidence object on a target, and keeping
+// it out of the objects grouping is what stops a reader treating it as
+// something to apply.
+//
+// Like Carry, the content is held in memory until the bundle is opened, and an
+// object that would land on top of one already collected is reported.
+func (r *Writer) AddEvidence(object Object, data []byte) (err error) {
+	object.Path = EvidencePath(object.Kind, object.Name)
+	err = validateUniquePath(r.evidence, object)
+	if err != nil {
+		return
+	}
+	r.evidence = append(r.evidence, object)
+	r.Add(object.Path, data)
+	return
+}
+
+// validateUniquePath reports an object that would land on top of one already
+// collected. A member path holds a kind and a name but not a namespace, so two
+// objects of one kind and name taken from different namespaces collide, and
+// writing both would produce a bundle whose manifest disagrees with its own
+// members.
+func validateUniquePath(collected []Object, object Object) (err error) {
+	for i := range collected {
+		if collected[i].Path != object.Path {
 			continue
 		}
 		err = fmt.Errorf(
 			"%s %q and %s %q both belong at %q",
-			r.objects[i].Kind,
-			path.Join(r.objects[i].Namespace, r.objects[i].Name),
+			collected[i].Kind,
+			path.Join(collected[i].Namespace, collected[i].Name),
 			object.Kind,
 			path.Join(object.Namespace, object.Name),
 			object.Path)
 		return
 	}
-	r.objects = append(r.objects, object)
-	r.Add(object.Path, data)
 	return
 }
 
@@ -264,6 +294,7 @@ func (r *Writer) encode() (encoded []byte, err error) {
 		Provenance:    r.provenance,
 		CaptureRecord: r.record,
 		Objects:       r.objects,
+		Evidence:      r.evidence,
 		Members:       r.members,
 		Disks:         r.disks,
 	}

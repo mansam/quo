@@ -29,6 +29,18 @@ const (
 	testChassis = "CHS-00042"
 )
 
+// What the evidence every fixture cluster offers says about the source
+// environment.
+const (
+	testKubeVirtNamespace = "kubevirt"
+	testKubeVirtName      = "kubevirt"
+	testFeatureGate       = "HotplugVolumes"
+	// Resolved values a stopped VirtualMachine does not carry and only
+	// expand-spec can supply.
+	testMachineType   = "pc-q35-rhel9.4.0"
+	testExpandedCores = int64(4)
+)
+
 // Annotation values that a general YAML library would be liable to reinterpret
 // as something other than a string.
 const (
@@ -56,9 +68,16 @@ type fakeCluster struct {
 	// requested records every reference the capture asked for, in order, so a
 	// test can see what the traversal looked for as well as what it found.
 	requested []cluster.ObjectRef
+	// kubevirt is KubeVirt's own configuration, and expanded is what the
+	// cluster resolves the VirtualMachine to. Neither is addressed by
+	// reference, so each is held on its own.
+	kubevirt  *unstructured.Unstructured
+	expanded  *unstructured.Unstructured
 	vmErr     error
 	infoErr   error
 	exportErr error
+	kvErr     error
+	expandErr error
 }
 
 var _ cluster.Cluster = &fakeCluster{}
@@ -96,6 +115,45 @@ func (r *fakeCluster) GetObject(ctx context.Context, ref cluster.ObjectRef) (obj
 		return
 	}
 	object = held.DeepCopy()
+	return
+}
+
+func (r *fakeCluster) GetKubeVirt(ctx context.Context) (kv *unstructured.Unstructured, err error) {
+	err = ctx.Err()
+	if err != nil {
+		err = fmt.Errorf("list %s: %w", cluster.KindKubeVirt, err)
+		return
+	}
+	if r.kvErr != nil {
+		err = r.kvErr
+		return
+	}
+	if r.kubevirt == nil {
+		err = fmt.Errorf("%s: %w", cluster.KindKubeVirt, cluster.ErrNotFound)
+		return
+	}
+	kv = r.kubevirt.DeepCopy()
+	return
+}
+
+func (r *fakeCluster) ExpandSpec(
+	ctx context.Context,
+	namespace, name string) (expanded *unstructured.Unstructured, err error) {
+	//
+	err = ctx.Err()
+	if err != nil {
+		err = fmt.Errorf("get %s %q: %w", cluster.KindVirtualMachine, name, err)
+		return
+	}
+	if r.expandErr != nil {
+		err = r.expandErr
+		return
+	}
+	if r.expanded == nil {
+		err = fmt.Errorf("%s %q: %w", cluster.KindVirtualMachine, name, cluster.ErrNotFound)
+		return
+	}
+	expanded = r.expanded.DeepCopy()
 	return
 }
 
@@ -182,10 +240,14 @@ var apiVersionByKind = map[string]string{
 	cluster.KindConfigMap:                         "v1",
 	cluster.KindControllerRevision:                "apps/v1",
 	cluster.KindDataVolume:                        "cdi.kubevirt.io/v1beta1",
+	cluster.KindKubeVirt:                          "kubevirt.io/v1",
 	cluster.KindNetworkAttachmentDefinition:       "k8s.cni.cncf.io/v1",
+	cluster.KindPersistentVolume:                  "v1",
 	cluster.KindPersistentVolumeClaim:             "v1",
 	cluster.KindSecret:                            "v1",
 	cluster.KindServiceAccount:                    "v1",
+	cluster.KindStorageClass:                      "storage.k8s.io/v1",
+	cluster.KindStorageProfile:                    "cdi.kubevirt.io/v1beta1",
 	cluster.KindVirtualMachineClusterInstancetype: "instancetype.kubevirt.io/v1beta1",
 	cluster.KindVirtualMachineClusterPreference:   "instancetype.kubevirt.io/v1beta1",
 	cluster.KindVirtualMachineInstancetype:        "instancetype.kubevirt.io/v1beta1",
@@ -268,6 +330,10 @@ func stoppedCluster(t *testing.T) (c *fakeCluster) {
 
 // clusterWithStatus builds a cluster holding one VirtualMachine reporting the
 // given printable status. An empty status means it reports none at all.
+//
+// The cluster has KubeVirt installed and serves expand-spec, because every
+// cluster quo captures from does, and a fixture missing either would make
+// every bundle look as though a capture had gone wrong.
 func clusterWithStatus(t *testing.T, status string) (c *fakeCluster) {
 	t.Helper()
 	c = &fakeCluster{
@@ -277,7 +343,9 @@ func clusterWithStatus(t *testing.T, status string) (c *fakeCluster) {
 			KubeVirtVersion:   "v1.3.1",
 			KubernetesVersion: "v1.31.4",
 		},
-		export: &fakeExport{content: map[string][]byte{}},
+		kubevirt: kubeVirtConfiguration(t),
+		expanded: expandedVirtualMachine(t, status),
+		export:   &fakeExport{content: map[string][]byte{}},
 	}
 	return
 }
@@ -358,6 +426,43 @@ func backVolume(t *testing.T, vm *unstructured.Unstructured, name string, backin
 	if err != nil {
 		t.Fatalf("attach volume %q: %v", name, err)
 	}
+}
+
+// kubeVirtConfiguration builds KubeVirt's own configuration. Its feature
+// gates are what a support engineer reads it for, and its namespace and name
+// are an installation's rather than something quo knows in advance.
+func kubeVirtConfiguration(t *testing.T) (kv *unstructured.Unstructured) {
+	t.Helper()
+	kv = &unstructured.Unstructured{
+		Object: map[string]any{
+			"apiVersion": apiVersionByKind[cluster.KindKubeVirt],
+			"kind":       cluster.KindKubeVirt,
+			"metadata": map[string]any{
+				"name":      testKubeVirtName,
+				"namespace": testKubeVirtNamespace,
+			},
+			"spec": map[string]any{
+				"configuration": map[string]any{
+					"developerConfiguration": map[string]any{
+						"featureGates": []any{testFeatureGate},
+					},
+				},
+			},
+		},
+	}
+	return
+}
+
+// expandedVirtualMachine builds the form the source cluster resolves the
+// fixture VirtualMachine to. It carries the machine type and CPU topology a
+// stopped VirtualMachine does not have, which is the whole reason expand-spec
+// is worth calling.
+func expandedVirtualMachine(t *testing.T, status string) (expanded *unstructured.Unstructured) {
+	t.Helper()
+	expanded = virtualMachine(t, status)
+	setField(t, expanded, testMachineType, "spec", "template", "spec", "domain", "machine", "type")
+	setField(t, expanded, testExpandedCores, "spec", "template", "spec", "domain", "cpu", "cores")
+	return
 }
 
 // virtualMachine builds a VirtualMachine carrying the identity values and the

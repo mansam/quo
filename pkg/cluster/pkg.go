@@ -36,6 +36,13 @@ type Cluster interface {
 	// reported as ErrNotFound, ErrForbidden or ErrNotInstalled where that is
 	// what happened, so a capture can record why it skipped the object.
 	GetObject(ctx context.Context, ref ObjectRef) (object *unstructured.Unstructured, err error)
+	// GetKubeVirt returns KubeVirt's own configuration, above all the feature
+	// gates it has enabled. KubeVirt is a singleton whose namespace and name
+	// differ between installations, so it is not addressed by reference.
+	GetKubeVirt(ctx context.Context) (kv *unstructured.Unstructured, err error)
+	// ExpandSpec returns the form the cluster resolves the named
+	// VirtualMachine to, through KubeVirt's expand-spec subresource.
+	ExpandSpec(ctx context.Context, namespace, name string) (expanded *unstructured.Unstructured, err error)
 	// GetInfo returns what a bundle records about the cluster it came from.
 	GetInfo(ctx context.Context) (info Info, err error)
 	// ExportDisks creates a VirtualMachineExport for the named VirtualMachine
@@ -69,6 +76,19 @@ const (
 	KindVirtualMachineClusterPreference   = "VirtualMachineClusterPreference"
 	KindVirtualMachineInstancetype        = "VirtualMachineInstancetype"
 	KindVirtualMachinePreference          = "VirtualMachinePreference"
+)
+
+// Kinds quo reads as evidence about the source environment rather than as part
+// of the closure. All of them sit outside the namespace being captured from,
+// which is where a capture run by a namespace owner runs out of permission.
+//
+// KubeVirt is read through GetKubeVirt rather than by reference, because it is
+// a singleton whose namespace and name differ between installations.
+const (
+	KindKubeVirt         = "KubeVirt"
+	KindPersistentVolume = "PersistentVolume"
+	KindStorageClass     = "StorageClass"
+	KindStorageProfile   = "StorageProfile"
 )
 
 // DiskExport is a VirtualMachineExport that has become ready: the disks of one

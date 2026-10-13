@@ -29,8 +29,28 @@ var resourceByKind = map[string]resource{
 			Resource: "network-attachment-definitions",
 		},
 	},
+	KindPersistentVolume: {
+		gvr:           schema.GroupVersionResource{Version: "v1", Resource: "persistentvolumes"},
+		clusterScoped: true,
+	},
 	KindPersistentVolumeClaim: {
 		gvr: schema.GroupVersionResource{Version: "v1", Resource: "persistentvolumeclaims"},
+	},
+	KindStorageClass: {
+		gvr: schema.GroupVersionResource{
+			Group:    "storage.k8s.io",
+			Version:  "v1",
+			Resource: "storageclasses",
+		},
+		clusterScoped: true,
+	},
+	KindStorageProfile: {
+		gvr: schema.GroupVersionResource{
+			Group:    "cdi.kubevirt.io",
+			Version:  "v1beta1",
+			Resource: "storageprofiles",
+		},
+		clusterScoped: true,
 	},
 	KindSecret: {
 		gvr: schema.GroupVersionResource{Version: "v1", Resource: "secrets"},

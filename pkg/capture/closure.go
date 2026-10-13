@@ -82,6 +82,12 @@ func carryVirtualMachine(co *collector, vm *unstructured.Unstructured) (err erro
 // it can read into the bundle as carried objects, and records what became of
 // every one of them.
 //
+// It returns the PersistentVolumeClaims it read, because they are what the
+// evidence about the source cluster's storage hangs off: a claim names the
+// StorageClass it was provisioned from and the PersistentVolume it is bound
+// to. A claim quo could not read contributes nothing, which is why the
+// evidence follows the claims that arrived rather than the ones referenced.
+//
 // Collection is best effort. The person capturing a bundle is frequently a
 // namespace owner without cluster read, and failing an hours-long capture
 // over one object they were not allowed to look at would be unacceptable. An
@@ -97,13 +103,14 @@ func carryClosure(
 	ctx context.Context,
 	c cluster.Cluster,
 	co *collector,
-	vm *unstructured.Unstructured) (err error) {
+	vm *unstructured.Unstructured) (claims []*unstructured.Unstructured, err error) {
 	//
 	for _, ref := range buildClosure(vm) {
 		var object *unstructured.Unstructured
 		object, err = c.GetObject(ctx, ref)
 		if err != nil {
 			if ctx.Err() != nil {
+				claims = nil
 				return
 			}
 			co.skip(ref, err)
@@ -112,8 +119,13 @@ func carryClosure(
 		}
 		err = co.carry(ref, object)
 		if err != nil {
+			claims = nil
 			return
 		}
+		if ref.Kind != cluster.KindPersistentVolumeClaim {
+			continue
+		}
+		claims = append(claims, object)
 	}
 	return
 }

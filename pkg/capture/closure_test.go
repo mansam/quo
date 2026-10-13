@@ -394,7 +394,11 @@ func TestExportCarriesAnObjectReferencedFromMoreThanOnePlaceOnce(t *testing.T) {
 	}))
 	// Read once from the cluster and written once into the bundle.
 	g.Expect(c.requested).To(gomega.Equal([]cluster.ObjectRef{ref(cluster.KindSecret, testSecret)}))
-	g.Expect(order).To(gomega.HaveLen(3))
+	g.Expect(order).To(gomega.Equal(withEvidence([]string{
+		bundle.ManifestPath,
+		testVMMember,
+		bundle.ObjectPath(cluster.KindSecret, testSecret),
+	})))
 }
 
 func TestExportRefusesTwoObjectsOfOneKindAndNameFromDifferentNamespaces(t *testing.T) {
@@ -434,7 +438,9 @@ func TestExportCarriesOnlyTheVirtualMachineWhenItsClosureIsEmpty(t *testing.T) {
 	g.Expect(carried(manifest)).To(gomega.Equal([]cluster.ObjectRef{
 		ref(cluster.KindVirtualMachine, testName),
 	}))
-	g.Expect(order).To(gomega.Equal([]string{bundle.ManifestPath, testVMMember}))
+	// Evidence about the source cluster is collected whether or not the
+	// VirtualMachine refers to anything.
+	g.Expect(order).To(gomega.Equal(withEvidence([]string{bundle.ManifestPath, testVMMember})))
 	g.Expect(c.requested).To(gomega.BeEmpty())
 }
 

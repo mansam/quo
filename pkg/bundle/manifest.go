@@ -12,6 +12,7 @@ type Manifest struct {
 	Provenance    Provenance    `json:"provenance"`
 	CaptureRecord CaptureRecord `json:"captureRecord,omitempty"`
 	Objects       []Object      `json:"objects,omitempty"`
+	Evidence      []Object      `json:"evidence,omitempty"`
 	Members       []Member      `json:"members"`
 	Disks         []Disk        `json:"disks,omitempty"`
 }
@@ -52,9 +53,11 @@ type Attempt struct {
 	Message string `json:"message,omitempty"`
 }
 
-// Object names one carried object and where it sits in the bundle, so that a
-// reader learns what a bundle holds from the manifest alone rather than by
-// untarring it and inferring kinds from member paths.
+// Object names one object a bundle holds and where it sits, so that a reader
+// learns what a bundle holds from the manifest alone rather than by untarring
+// it and inferring kinds from member paths. The manifest lists carried objects
+// and evidence separately, so which of the two an entry is follows from the
+// list it appears in.
 type Object struct {
 	Kind string `json:"kind"`
 	// Namespace is empty for a cluster-scoped object.

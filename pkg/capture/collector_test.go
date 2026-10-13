@@ -24,13 +24,23 @@ func TestExportRecordsWhatBecameOfEveryObjectItAttempted(t *testing.T) {
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	_, content := readBundle(t, captured)
 	manifest := capturedManifest(t, content)
-	// The VirtualMachine the capture already had in hand, then every object
-	// it went to the cluster for, in the order it asked.
-	g.Expect(attempted(manifest)).To(gomega.Equal(
-		append([]cluster.ObjectRef{ref(cluster.KindVirtualMachine, testName)}, c.requested...)))
+	// The VirtualMachine the capture already had in hand, then every object it
+	// went to the cluster for in the order it asked, then the evidence that is
+	// not addressed by reference at all.
+	g.Expect(attempted(manifest)).To(gomega.Equal(append(
+		append([]cluster.ObjectRef{ref(cluster.KindVirtualMachine, testName)}, c.requested...),
+		refIn(cluster.KindKubeVirt, testKubeVirtNamespace, testKubeVirtName),
+		ref(cluster.KindVirtualMachine, testName))))
+	// Everything the closure named was carried, and the two objects collected
+	// to explain the source cluster are evidence.
+	countOf := map[bundle.Disposition]int{}
 	for i := range manifest.CaptureRecord {
-		g.Expect(manifest.CaptureRecord[i].Disposition).To(gomega.Equal(bundle.DispositionCarried))
+		countOf[manifest.CaptureRecord[i].Disposition]++
 	}
+	g.Expect(countOf).To(gomega.Equal(map[bundle.Disposition]int{
+		bundle.DispositionCarried:  1 + len(c.requested),
+		bundle.DispositionEvidence: 2,
+	}))
 	// The record the capture reports is the record the bundle carries, so a
 	// reader of either is looking at the same thing.
 	g.Expect(record).To(gomega.Equal(manifest.CaptureRecord))

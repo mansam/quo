@@ -23,6 +23,13 @@ func TestExportSaysOnCompletionWhatItCouldNotCollect(t *testing.T) {
 			Disposition: bundle.DispositionSkipped,
 			Reason:      bundle.SkipForbidden,
 		},
+		{
+			// KubeVirt's configuration is a singleton whose name quo only
+			// learns by reading it.
+			Kind:        "KubeVirt",
+			Disposition: bundle.DispositionSkipped,
+			Reason:      bundle.SkipForbidden,
+		},
 	}
 	reported := &bytes.Buffer{}
 
@@ -30,8 +37,9 @@ func TestExportSaysOnCompletionWhatItCouldNotCollect(t *testing.T) {
 
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	said := reported.String()
-	g.Expect(said).To(gomega.ContainSubstring("1 of the 2 objects"))
+	g.Expect(said).To(gomega.ContainSubstring("2 of the 3 objects"))
 	g.Expect(said).To(gomega.ContainSubstring("Secret db-01-cloudinit: forbidden"))
+	g.Expect(said).To(gomega.ContainSubstring("KubeVirt: forbidden"))
 }
 
 func TestExportSaysNothingAboutSkippedObjectsWhenItCollectedEverything(t *testing.T) {

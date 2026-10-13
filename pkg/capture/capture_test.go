@@ -23,6 +23,12 @@ import (
 // testVMMember is where the fixture VirtualMachine lands in a bundle.
 const testVMMember = "objects/virtualmachine/db-01.yaml"
 
+// Where the evidence every fixture cluster offers lands in a bundle.
+const (
+	testKubeVirtMember = "evidence/kubevirt/kubevirt.yaml"
+	testExpandedMember = "evidence/virtualmachine/db-01.yaml"
+)
+
 // The claims behind the fixture VirtualMachine's disks, and where each lands
 // in a bundle.
 const (
@@ -69,10 +75,10 @@ func TestExportCarriesTheVirtualMachineUnderTheObjectsGrouping(t *testing.T) {
 
 	order, content := captureBundle(t)
 
-	g.Expect(order).To(gomega.Equal([]string{
+	g.Expect(order).To(gomega.Equal(withEvidence([]string{
 		bundle.ManifestPath,
 		testVMMember,
-	}))
+	})))
 	carried := decodeMember(t, content, testVMMember)
 	g.Expect(carried["kind"]).To(gomega.Equal("VirtualMachine"))
 	g.Expect(carried["apiVersion"]).To(gomega.Equal("kubevirt.io/v1"))
@@ -242,12 +248,10 @@ func TestExportKeysDiskMembersByClaimRatherThanByVolumeName(t *testing.T) {
 
 	order, content := captureWithDisks(t, clusterWithTwoDisks(t), testOptions())
 
-	g.Expect(order).To(gomega.Equal([]string{
-		bundle.ManifestPath,
-		testVMMember,
+	g.Expect(order).To(gomega.Equal(withEvidence(
+		[]string{bundle.ManifestPath, testVMMember},
 		rootMember,
-		dataMember,
-	}))
+		dataMember)))
 	manifest := capturedManifest(t, content)
 	g.Expect(manifest.Disks).To(gomega.Equal([]bundle.Disk{
 		{
@@ -272,7 +276,11 @@ func TestExportDownloadsAClaimTwoVolumesShareOnlyOnce(t *testing.T) {
 	order, _ := captureWithDisks(t, c, testOptions())
 
 	g.Expect(c.export.opened).To(gomega.Equal([]string{rootClaim, dataClaim}))
-	g.Expect(order).To(gomega.HaveLen(4))
+	// One member per claim rather than one per volume.
+	g.Expect(order).To(gomega.Equal(withEvidence(
+		[]string{bundle.ManifestPath, testVMMember},
+		rootMember,
+		dataMember)))
 }
 
 func TestExportStoresTheDiskBytesItReceivedVerbatim(t *testing.T) {
@@ -715,6 +723,17 @@ func nested(t *testing.T, object map[string]any, keys ...string) (found map[stri
 		}
 		found = next
 	}
+	return
+}
+
+// withEvidence returns the members a bundle holds when the given objects were
+// carried and the given disks staged. Evidence sits between the two, which is
+// where a capture writes it: after the closure has been read and before any
+// disk arrives.
+func withEvidence(carried []string, disks ...string) (order []string) {
+	order = append(order, carried...)
+	order = append(order, testKubeVirtMember, testExpandedMember)
+	order = append(order, disks...)
 	return
 }
 
