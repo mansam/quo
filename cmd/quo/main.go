@@ -51,9 +51,13 @@ func usage(out *os.File) {
 	_, _ = fmt.Fprint(out, `quo captures a stopped KubeVirt VirtualMachine as a diagnostic bundle.
 
 Usage:
-  quo export -n <namespace> <name> -o <path>   capture a VirtualMachine
+  quo export -n <namespace> <name> [-o <path>] capture a VirtualMachine
   quo check -n <namespace> <name>              say what a capture would collect
   quo inspect <path>                           describe a bundle
+
+The export path may be a directory or the name of the bundle file. A directory,
+or no -o at all, gets a bundle named after the VirtualMachine; with no -o that
+is <name>.quo in the current directory.
 
 A bundle contains plaintext Secrets from the source cluster. Treat it with the
 same care as the cluster it was captured from.
