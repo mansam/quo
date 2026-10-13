@@ -2,14 +2,10 @@ package capture
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"strings"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"sigs.k8s.io/yaml"
 
-	"github.com/mansam/kvo/pkg/bundle"
 	"github.com/mansam/kvo/pkg/cluster"
 )
 
@@ -71,9 +67,8 @@ func buildClosure(vm *unstructured.Unstructured) (refs []cluster.ObjectRef) {
 // carryVirtualMachine collects the VirtualMachine itself, which the capture
 // already has in hand and so does not read a second time as part of its own
 // closure.
-func carryVirtualMachine(writer *bundle.Writer, vm *unstructured.Unstructured) (err error) {
-	err = carry(
-		writer,
+func carryVirtualMachine(co *collector, vm *unstructured.Unstructured) (err error) {
+	err = co.carry(
 		cluster.ObjectRef{
 			Kind:      cluster.KindVirtualMachine,
 			Namespace: vm.GetNamespace(),
@@ -83,51 +78,43 @@ func carryVirtualMachine(writer *bundle.Writer, vm *unstructured.Unstructured) (
 	return
 }
 
-// carryClosure reads the objects the VirtualMachine depends on and collects
-// them into the bundle as carried objects.
+// carryClosure reads the objects the VirtualMachine depends on, collects what
+// it can read into the bundle as carried objects, and records what became of
+// every one of them.
+//
+// Collection is best effort. The person capturing a bundle is frequently a
+// namespace owner without cluster read, and failing an hours-long capture
+// over one object they were not allowed to look at would be unacceptable. An
+// object that was not read is recorded as skipped rather than passed over in
+// silence, because a reader who found it simply absent could not tell it from
+// an object that never existed.
+//
+// A capture that has been cancelled or has run out of time is not best
+// effort and ends there. Recording the rest of the closure as unreadable
+// would produce a bundle saying each object could not be read when what
+// happened is that quo stopped asking.
 func carryClosure(
 	ctx context.Context,
 	c cluster.Cluster,
-	writer *bundle.Writer,
+	co *collector,
 	vm *unstructured.Unstructured) (err error) {
 	//
 	for _, ref := range buildClosure(vm) {
 		var object *unstructured.Unstructured
 		object, err = c.GetObject(ctx, ref)
-		if errors.Is(err, cluster.ErrNotFound) {
-			// An instancetype matcher can name an object that has since been
-			// deleted. The ControllerRevision it was pinned to is captured in
-			// its own right and is then the only complete record of what the
-			// VirtualMachine was created with, so the capture goes on.
+		if err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+			co.skip(ref, err)
 			err = nil
 			continue
 		}
-		if err != nil {
-			return
-		}
-		err = carry(writer, ref, object)
+		err = co.carry(ref, object)
 		if err != nil {
 			return
 		}
 	}
-	return
-}
-
-// carry collects one object into the bundle as Kubernetes YAML, exactly as the
-// cluster returned it.
-func carry(writer *bundle.Writer, ref cluster.ObjectRef, object *unstructured.Unstructured) (err error) {
-	encoded, err := yaml.Marshal(object.Object)
-	if err != nil {
-		err = fmt.Errorf("marshal %s %q: %w", ref.Kind, ref.Name, err)
-		return
-	}
-	err = writer.Carry(
-		bundle.Object{
-			Kind:      ref.Kind,
-			Namespace: ref.Namespace,
-			Name:      ref.Name,
-		},
-		encoded)
 	return
 }
 

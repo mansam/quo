@@ -34,6 +34,7 @@ type Writer struct {
 	provenance Provenance
 	pending    []content
 	members    []Member
+	record     CaptureRecord
 	objects    []Object
 	disks      []Disk
 	indexOf    map[string]int
@@ -90,6 +91,13 @@ func (r *Writer) Carry(object Object, data []byte) (err error) {
 	r.objects = append(r.objects, object)
 	r.Add(object.Path, data)
 	return
+}
+
+// Record collects the capture record: every object the capture attempted and
+// what became of it. It must be complete before the bundle is opened, because
+// the room reserved for the manifest is sized from what the manifest holds.
+func (r *Writer) Record(attempted CaptureRecord) {
+	r.record = attempted
 }
 
 // Reserve declares a disk that will be staged into the bundle later, so that
@@ -254,6 +262,7 @@ func (r *Writer) encode() (encoded []byte, err error) {
 	manifest := &Manifest{
 		FormatVersion: FormatVersion,
 		Provenance:    r.provenance,
+		CaptureRecord: r.record,
 		Objects:       r.objects,
 		Members:       r.members,
 		Disks:         r.disks,

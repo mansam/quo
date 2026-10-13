@@ -15,17 +15,30 @@ import (
 )
 
 // Export captures the VirtualMachine named in opt and writes a bundle to out.
+// It returns the capture record, which names every object it attempted and
+// what became of each one.
 //
 // It refuses a VirtualMachine that is not stopped, before writing anything.
 // The VirtualMachine is carried exactly as the cluster returned it: quo
 // normalises nothing, so MAC addresses, firmware UUID, serial and chassis
 // values travel as they are.
 //
+// Reading a referenced object is best effort and a failure to read one is
+// recorded rather than fatal. What remains fatal is a failure that would
+// leave a bundle not worth having: the VirtualMachine itself being
+// unreadable, a destination that cannot be written, or a disk that cannot be
+// collected.
+//
 // The destination is seekable because the manifest is the first member of a
 // bundle and indexes every other one, including disks whose size and digest
 // are only known once they have arrived. The writer reserves room for the
 // manifest at the front and fills it in at the end.
-func Export(ctx context.Context, c cluster.Cluster, opt Options, out io.WriteSeeker) (err error) {
+func Export(
+	ctx context.Context,
+	c cluster.Cluster,
+	opt Options,
+	out io.WriteSeeker) (record bundle.CaptureRecord, err error) {
+	//
 	vm, err := c.GetVirtualMachine(ctx, opt.Namespace, opt.Name)
 	if err != nil {
 		return
@@ -44,14 +57,20 @@ func Export(ctx context.Context, c cluster.Cluster, opt Options, out io.WriteSee
 		return
 	}
 	writer := bundle.NewWriter(out)
-	err = carryVirtualMachine(writer, vm)
+	co := &collector{writer: writer}
+	err = carryVirtualMachine(co, vm)
 	if err != nil {
 		return
 	}
-	err = carryClosure(ctx, c, writer, vm)
+	err = carryClosure(ctx, c, co, vm)
 	if err != nil {
 		return
 	}
+	// The record is complete once the closure has been read, and the manifest
+	// has to hold it before the bundle is opened: the room reserved for the
+	// manifest is sized from what it holds.
+	record = co.record
+	writer.Record(record)
 	provenance := bundle.Provenance{
 		SourceCluster:     info.SourceCluster,
 		Namespace:         opt.Namespace,
@@ -74,7 +93,9 @@ func Export(ctx context.Context, c cluster.Cluster, opt Options, out io.WriteSee
 	defer func() {
 		// A capture that has just spent hours transferring disks is not worth
 		// failing over an export that outlives it, and the export expires on
-		// its own. The capture record will record this once it exists.
+		// its own. This is not a capture record entry: the record names the
+		// objects quo tried to collect, and the manifest holding it has
+		// already been written by the time this runs.
 		_ = export.Close()
 	}()
 	transfers, err := planTransfers(claims, export, opt)
@@ -92,7 +113,12 @@ func Export(ctx context.Context, c cluster.Cluster, opt Options, out io.WriteSee
 // leaves no bundle behind to be mistaken for a whole one. Disks are staged
 // beside it too, because the directory the user chose for the bundle is the
 // one they chose for having room.
-func ExportToFile(ctx context.Context, c cluster.Cluster, opt Options, dest string) (err error) {
+func ExportToFile(
+	ctx context.Context,
+	c cluster.Cluster,
+	opt Options,
+	dest string) (record bundle.CaptureRecord, err error) {
+	//
 	if opt.Scratch == "" {
 		opt.Scratch = filepath.Dir(dest)
 	}
@@ -108,7 +134,7 @@ func ExportToFile(ctx context.Context, c cluster.Cluster, opt Options, dest stri
 			_ = os.Remove(partial.Name())
 		}
 	}()
-	err = Export(ctx, c, opt, partial)
+	record, err = Export(ctx, c, opt, partial)
 	if err != nil {
 		return
 	}

@@ -36,6 +36,7 @@ func describe(out io.Writer, manifest *Manifest) (err error) {
 	_, _ = fmt.Fprintf(tw, "  Kubernetes version:\t%s\n", orUnknown(provenance.KubernetesVersion))
 	describeObjects(tw, manifest)
 	describeDisks(tw, manifest)
+	describeRecord(tw, manifest)
 	_, _ = fmt.Fprintf(tw, "\nMembers (%d), digests verified\n", len(manifest.Members))
 	for i := range manifest.Members {
 		member := manifest.Members[i]
@@ -62,19 +63,19 @@ func describeObjects(out io.Writer, manifest *Manifest) {
 			out,
 			"  %s\t%s\n",
 			object.Kind,
-			qualified(object, manifest.Provenance.Namespace))
+			qualified(object.Namespace, object.Name, manifest.Provenance.Namespace))
 	}
 }
 
-// qualified renders a carried object's name. A namespace is shown only when it
-// is not the one the VirtualMachine was captured from, which is how a reader
+// qualified renders an object's name. Its namespace is shown only when it is
+// not the one the VirtualMachine was captured from, which is how a reader
 // spots an object borrowed from elsewhere in the cluster.
-func qualified(object Object, namespace string) (rendered string) {
-	rendered = object.Name
-	if object.Namespace == "" || object.Namespace == namespace {
+func qualified(namespace, name, captured string) (rendered string) {
+	rendered = name
+	if namespace == "" || namespace == captured {
 		return
 	}
-	rendered = object.Namespace + "/" + object.Name
+	rendered = namespace + "/" + name
 	return
 }
 
@@ -98,6 +99,43 @@ func describeDisks(out io.Writer, manifest *Manifest) {
 			sizeOf[disk.Path],
 			disk.Format,
 			strings.Join(disk.Volumes, ", "))
+	}
+}
+
+// describeRecord writes the capture record: how many objects got each
+// disposition, and then every skipped object in a section of its own.
+//
+// Skipped objects are what a reader has to act on, so they are listed rather
+// than counted and sit under their own heading instead of among the dozens of
+// objects that were collected without incident.
+func describeRecord(out io.Writer, manifest *Manifest) {
+	if len(manifest.CaptureRecord) == 0 {
+		return
+	}
+	countOf := map[Disposition]int{}
+	for i := range manifest.CaptureRecord {
+		countOf[manifest.CaptureRecord[i].Disposition]++
+	}
+	_, _ = fmt.Fprintf(out, "\nCapture record (%d)\n", len(manifest.CaptureRecord))
+	for _, disposition := range dispositions {
+		if countOf[disposition] == 0 {
+			continue
+		}
+		_, _ = fmt.Fprintf(out, "  %s\t%d\n", disposition, countOf[disposition])
+	}
+	skipped := manifest.CaptureRecord.Skipped()
+	if len(skipped) == 0 {
+		return
+	}
+	_, _ = fmt.Fprintf(out, "\nSkipped (%d), absent from this bundle\n", len(skipped))
+	for i := range skipped {
+		_, _ = fmt.Fprintf(
+			out,
+			"  %s\t%s\t%s\t%s\n",
+			skipped[i].Kind,
+			qualified(skipped[i].Namespace, skipped[i].Name, manifest.Provenance.Namespace),
+			skipped[i].Reason,
+			skipped[i].Message)
 	}
 }
 

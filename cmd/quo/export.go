@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/mansam/kvo/pkg/bundle"
 	"github.com/mansam/kvo/pkg/capture"
 	"github.com/mansam/kvo/pkg/cluster"
 )
@@ -31,7 +32,7 @@ func runExport(args []string) (err error) {
 		return
 	}
 	parsed.opt.Progress = newReporter(os.Stderr)
-	err = capture.ExportToFile(context.TODO(), c, parsed.opt, parsed.output)
+	record, err := capture.ExportToFile(context.TODO(), c, parsed.opt, parsed.output)
 	if err != nil {
 		return
 	}
@@ -41,6 +42,42 @@ func runExport(args []string) (err error) {
 		parsed.opt.Namespace,
 		parsed.opt.Name,
 		parsed.output)
+	if err != nil {
+		return
+	}
+	err = printSkipped(os.Stdout, record)
+	return
+}
+
+// printSkipped says what a capture could not collect. A capture that skipped
+// something still succeeded, so this is said plainly rather than as a
+// failure, and it names each object so that a permissions problem can be
+// fixed and the capture run again.
+func printSkipped(out io.Writer, record bundle.CaptureRecord) (err error) {
+	skipped := record.Skipped()
+	if len(skipped) == 0 {
+		return
+	}
+	_, err = fmt.Fprintf(
+		out,
+		"\n%d of the %d objects quo tried to collect were skipped:\n",
+		len(skipped),
+		len(record))
+	if err != nil {
+		return
+	}
+	for i := range skipped {
+		_, err = fmt.Fprintf(
+			out,
+			"  %s %s: %s\n",
+			skipped[i].Kind,
+			skipped[i].Name,
+			skipped[i].Reason)
+		if err != nil {
+			return
+		}
+	}
+	_, err = fmt.Fprintf(out, "The bundle's capture record says what became of each one.\n")
 	return
 }
 

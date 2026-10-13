@@ -8,11 +8,48 @@ import "time"
 // Fields carry JSON tags because the manifest is marshalled through the
 // Kubernetes YAML library, which encodes with JSON semantics.
 type Manifest struct {
-	FormatVersion string     `json:"formatVersion"`
-	Provenance    Provenance `json:"provenance"`
-	Objects       []Object   `json:"objects,omitempty"`
-	Members       []Member   `json:"members"`
-	Disks         []Disk     `json:"disks,omitempty"`
+	FormatVersion string        `json:"formatVersion"`
+	Provenance    Provenance    `json:"provenance"`
+	CaptureRecord CaptureRecord `json:"captureRecord,omitempty"`
+	Objects       []Object      `json:"objects,omitempty"`
+	Members       []Member      `json:"members"`
+	Disks         []Disk        `json:"disks,omitempty"`
+}
+
+// CaptureRecord lists every object a capture attempted and what became of
+// each one, in the order they were attempted.
+//
+// It lives in the manifest so that it cannot be separated from the bundle it
+// describes, and it holds the objects quo could not collect as well as the
+// ones it could. An object missing from a bundle with no entry saying so
+// would leave a reader unable to tell an object that never existed from one
+// quo was not allowed to read.
+type CaptureRecord []Attempt
+
+// Skipped returns the objects the capture could not collect.
+func (r CaptureRecord) Skipped() (skipped []Attempt) {
+	for i := range r {
+		if r[i].Disposition != DispositionSkipped {
+			continue
+		}
+		skipped = append(skipped, r[i])
+	}
+	return
+}
+
+// Attempt is one entry of the capture record: an object quo tried to capture
+// and what became of it.
+type Attempt struct {
+	Kind string `json:"kind"`
+	// Namespace is empty for a cluster-scoped object.
+	Namespace   string      `json:"namespace,omitempty"`
+	Name        string      `json:"name"`
+	Disposition Disposition `json:"disposition"`
+	// Reason is set only on a skipped object.
+	Reason SkipReason `json:"reason,omitempty"`
+	// Message is what the cluster said when the read failed, which is where
+	// an actionable detail such as the missing permission appears.
+	Message string `json:"message,omitempty"`
 }
 
 // Object names one carried object and where it sits in the bundle, so that a

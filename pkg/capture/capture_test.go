@@ -476,7 +476,7 @@ func TestExportToFileWritesABundleThatReadsBack(t *testing.T) {
 	dir := t.TempDir()
 	dest := filepath.Join(dir, "db-01.bundle")
 
-	err := ExportToFile(context.TODO(), stoppedCluster(t), testOptions(), dest)
+	_, err := ExportToFile(context.TODO(), stoppedCluster(t), testOptions(), dest)
 
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	file, err := os.Open(dest)
@@ -498,7 +498,7 @@ func TestExportToFileStagesDisksBesideTheBundleAndClearsUpAfterItself(t *testing
 	c := clusterWithTwoDisks(t)
 	c.export.scratch = dir
 
-	err := ExportToFile(context.TODO(), c, testOptions(), dest)
+	_, err := ExportToFile(context.TODO(), c, testOptions(), dest)
 
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	file, err := os.Open(dest)
@@ -538,7 +538,7 @@ func TestExportToFileLeavesNoBundleBehindWhenTheCaptureFails(t *testing.T) {
 			dir := t.TempDir()
 			dest := filepath.Join(dir, "db-01.bundle")
 
-			err := ExportToFile(context.TODO(), tt.c, testOptions(), dest)
+			_, err := ExportToFile(context.TODO(), tt.c, testOptions(), dest)
 
 			g.Expect(err).To(gomega.HaveOccurred())
 			_, statErr := os.Stat(dest)
@@ -547,6 +547,19 @@ func TestExportToFileLeavesNoBundleBehindWhenTheCaptureFails(t *testing.T) {
 			g.Expect(entryNames(t, dir)).To(gomega.BeEmpty())
 		})
 	}
+}
+
+func TestExportToFileFailsWhenTheOutputPathCannotBeWritten(t *testing.T) {
+	g := gomega.NewGomegaWithT(t)
+	// A capture that cannot put the bundle anywhere is not worth running, so
+	// this is reported rather than collected and discarded.
+	dest := filepath.Join(t.TempDir(), "no-such-directory", "db-01.bundle")
+
+	_, err := ExportToFile(context.TODO(), stoppedCluster(t), testOptions(), dest)
+
+	g.Expect(err).To(gomega.HaveOccurred())
+	_, statErr := os.Stat(dest)
+	g.Expect(os.IsNotExist(statErr)).To(gomega.BeTrue())
 }
 
 // captureBundle captures the fixture VirtualMachine and returns the members
@@ -584,10 +597,22 @@ func stagingIn(t *testing.T, c *fakeCluster, opt Options) (staging Options) {
 }
 
 // captureInto captures into a file and returns whatever was written to it.
+func captureInto(t *testing.T, c cluster.Cluster, opt Options) (captured []byte, err error) {
+	t.Helper()
+	_, captured, err = captureRecording(t, c, opt)
+	return
+}
+
+// captureRecording captures into a file and returns the capture record along
+// with whatever was written.
 //
 // The destination is a file rather than a buffer because a bundle's manifest
 // is written into room reserved at the front, which a stream cannot offer.
-func captureInto(t *testing.T, c cluster.Cluster, opt Options) (captured []byte, err error) {
+func captureRecording(
+	t *testing.T,
+	c cluster.Cluster,
+	opt Options) (record bundle.CaptureRecord, captured []byte, err error) {
+	//
 	t.Helper()
 	dest := filepath.Join(t.TempDir(), "db-01.bundle")
 	file, createErr := os.Create(dest)
@@ -597,7 +622,7 @@ func captureInto(t *testing.T, c cluster.Cluster, opt Options) (captured []byte,
 	defer func() {
 		_ = file.Close()
 	}()
-	err = Export(context.TODO(), c, opt, file)
+	record, err = Export(context.TODO(), c, opt, file)
 	captured, readErr := os.ReadFile(dest)
 	if readErr != nil {
 		t.Fatalf("read bundle: %v", readErr)
