@@ -30,7 +30,7 @@ customer has.
 ## Solution
 
 `quo export` captures a stopped VirtualMachine — its definition, all of its
-disks, and its closure — as a single bundle file.
+disks, and everything it depends on — as a single bundle file.
 
 The governing constraint is fidelity: quo changes nothing it is not forced to
 change. Identity is preserved exactly. MAC addresses, firmware UUID, serial and
@@ -39,10 +39,10 @@ causing the problem. The guest is never touched: no sealing, no generalization,
 no reconfiguration, and the behaviour is the same whatever the guest operating
 system is.
 
-Alongside the VirtualMachine, the bundle carries evidence about the environment
-it came from — StorageClasses, CDI StorageProfiles, the bound PersistentVolume
-for each claim, KubeVirt's own configuration — because platform configuration
-is often where the problem actually is. It records its requirements, the things
+Alongside the VirtualMachine, the bundle collects what describes the cluster it
+came from — StorageClasses, CDI StorageProfiles, the bound PersistentVolume for
+each claim, KubeVirt's own configuration — because platform configuration is
+often where the problem actually is. It records its requirements, the things
 it deliberately does not carry, so a reader knows what a target cluster would
 need to provide. And it carries a capture record naming everything quo tried to
 collect and what became of it, so a support engineer can tell "this did not
@@ -93,18 +93,18 @@ later phase.
     instancetypes, so that I can tell whether the live object has drifted from
     what the VirtualMachine was actually created with.
 15. As a support engineer, I want the expanded form of the VirtualMachine
-    recorded as evidence, so that I can compare what the source cluster
-    resolved against what my own cluster resolves.
+    recorded, so that I can compare what the source cluster resolved against
+    what my own cluster resolves.
 16. As a support engineer, I want the NetworkAttachmentDefinitions referenced by
     the VirtualMachine, so that I can see how its networking was declared.
 17. As a support engineer, I want the PersistentVolumeClaims and DataVolumes, so
     that I can see what storage was requested.
 18. As a support engineer, I want any ServiceAccount the VirtualMachine
-    references, so that the closure is complete.
+    references, so that nothing it depends on is left behind.
 19. As a support engineer, I want access-credential Secrets captured, so that I
     can see what keys and passwords were being injected.
 
-### Evidence about the source environment
+### What describes the source cluster
 
 20. As a support engineer, I want the StorageClass behind each claim, so that I
     can see the provisioner and its parameters.
@@ -163,7 +163,7 @@ later phase.
     that tooling can refuse a bundle it does not understand.
 38. As a support engineer, I want to open a bundle with ordinary tools, so that
     I am not blocked when quo is unavailable or will not run.
-39. As a support engineer, I want the carried objects to be readable as
+39. As a support engineer, I want the collected resources to be readable as
     Kubernetes YAML, so that I can apply or inspect them by hand.
 
 ### Operating constraints
@@ -199,8 +199,9 @@ at which tests attach.
 
 Everything quo needs from outside the process sits behind one interface:
 fetching the VirtualMachine, fetching an arbitrary object by typed reference,
-calling the expand-spec subresource, reading the evidence objects, creating and
-awaiting a VirtualMachineExport, and opening a byte stream for a disk.
+calling the expand-spec subresource, reading what describes the source cluster,
+creating and awaiting a VirtualMachineExport, and opening a byte stream for a
+disk.
 
 There is exactly one real implementation, a thin adapter over KubeVirt's client,
 and one fake used by tests. Disk streaming belongs in this interface rather than
@@ -212,7 +213,7 @@ The VirtualMachine must be powered off. quo checks this and refuses otherwise
 with a message naming the VirtualMachine and telling the user to stop it. There
 is no snapshot path and no flag to override.
 
-### Computing the closure
+### Finding the related resources
 
 quo performs its own traversal rather than calling KubeVirt's `objectgraph`
 subresource, because that subresource is behind an Alpha feature gate that is
@@ -230,25 +231,32 @@ deleted, in which case the ControllerRevision is the only complete record.
 VirtualMachineInstance and Pod appear in KubeVirt's graph but are irrelevant
 here, because a stopped VirtualMachine has neither.
 
-Each discovered object is classified as a carried object, evidence, or a
-requirement. KubeVirt's own dependency-type vocabulary maps onto this directly:
-its config dependencies become carried objects, its storage and network
-dependencies become requirements, with the underlying disk data carried
-separately as bundle members.
+Every object quo reads is collected into one set. A bundle does not mark which
+of them a target would recreate: that depends on the target cluster and the
+mappings given at deploy time, so a deploy decides it by kind. KubeVirt's
+storage and network dependencies are additionally recorded as requirements,
+with the underlying disk data held separately as bundle members. See
+ADR-0002.
 
-### Evidence
+### What describes the source cluster
 
-Beyond the closure, quo captures: the StorageClass for each claim, the CDI
-StorageProfile for each of those StorageClasses, the bound PersistentVolume for
-each claim, and KubeVirt's own configuration. It also calls the expand-spec
-subresource and records the result.
+Beyond the resources the VirtualMachine refers to, quo captures: the
+StorageClass for each claim, the CDI StorageProfile for each of those
+StorageClasses, the bound PersistentVolume for each claim, and KubeVirt's own
+configuration. It also calls the expand-spec subresource and records the
+result.
 
-The expanded form is evidence, not resolution. quo does not use it to rewrite
-the VirtualMachine. Every input to resolution — the instancetype objects, the
-ControllerRevisions, KubeVirt's configuration — is already in the bundle, so the
-expansion is derivable; it is captured because expansion is version-dependent
-and a difference between the source cluster's resolution and the target's is a
-plausible cause of the problem being investigated.
+quo does not use the expanded form to rewrite the VirtualMachine. It is held as
+a member of its own rather than as a resource, because no object on the cluster
+has that name and nothing will apply it to a target.
+
+It is not derivable from the rest of the bundle, as an earlier version of this
+spec claimed. Since KubeVirt v1.4.0 the subresource applies the source
+cluster's defaults after merging the instancetype — machine type,
+architecture, CPU topology, eviction strategy — and those come from the
+KubeVirt CR, which a namespace owner is frequently not allowed to read. The
+subresource is namespaced, so for that capture the expansion is the only record
+of them.
 
 ### Requirements
 
@@ -260,23 +268,23 @@ Nothing in this phase consumes these records. They are written at capture
 because the information is free while connected to the source cluster and
 expensive to reconstruct afterwards.
 
-Container disk images are a requirement rather than a carried object: quo does
-not repackage container images.
+Container disk images are a requirement rather than something a bundle holds:
+quo does not repackage container images.
 
 ### Capture record
 
 Collection is best effort. A failure to read any single object does not abort
 the capture.
 
-Every object quo attempted appears in the capture record with its disposition —
-carried, evidence, requirement, or skipped — and anything skipped carries a
-reason distinguishing at minimum: forbidden, not found, and not installed. The
-last covers an optional component such as CDI being absent.
+Every object quo attempted appears in the capture record with its outcome —
+collected, required, or skipped — and anything skipped carries a reason
+distinguishing at minimum: forbidden, not found, and not installed. The last
+covers an optional component such as CDI being absent.
 
-Much of the evidence set is cluster-scoped, and the person capturing a bundle is
-frequently a namespace owner without cluster read. Failing the whole capture in
-that case would be unacceptable; silently omitting would be worse, because the
-reader could not tell the difference.
+Much of what describes the source cluster is cluster-scoped, and the person
+capturing a bundle is frequently a namespace owner without cluster read.
+Failing the whole capture in that case would be unacceptable; silently omitting
+would be worse, because the reader could not tell the difference.
 
 A separate check operation reports what a capture would collect and what it
 would skip, without transferring any disks.
@@ -319,8 +327,8 @@ The manifest is strictly the first member. A reader learns the format version,
 provenance, requirements, capture record and member index before any disk byte
 arrives, which is what makes inspection possible on a partial transfer.
 
-The manifest is YAML, and so is every carried object and evidence object. A
-single format throughout is more pleasant for anyone who untars a bundle by
+The manifest is YAML, and so is every resource a bundle holds. A single format
+throughout is more pleasant for anyone who untars a bundle by
 hand. Marshalling goes through the Kubernetes YAML library rather than a general
 YAML library, so that encoding follows JSON semantics and avoids the failure
 modes that bite machine-written YAML — a version string parsed as a number, a
@@ -329,9 +337,10 @@ bare `no` becoming boolean false.
 Every member carries a SHA-256 digest recorded in the manifest, so integrity
 data cannot be separated from the bundle.
 
-Disks are stored under a disks grouping, carried objects under an objects
-grouping, and evidence separately from carried objects so that a reader is never
-misled into applying something that was collected only to be read.
+Disks are stored under a disks grouping and resources under a resources
+grouping. The source cluster's expansion of the VirtualMachine is a member of
+its own, because it carries the VirtualMachine's own kind and name and would
+otherwise land on top of it.
 
 Disk members are keyed by PersistentVolumeClaim, not by volume name. A
 VirtualMachine's volumes are a named list and nothing prevents two of them
@@ -364,7 +373,8 @@ Test names read as specifications rather than labels — "forbidden StorageClass
 is recorded as skipped, not omitted", "instancetype matcher naming a deleted
 object still captures the ControllerRevision" — following the house style guide.
 Edge cases are explicit: missing fields, absent optional components, empty
-closures, objects referenced from more than one place.
+VirtualMachines that refer to nothing, objects referenced from more than one
+place.
 
 ### The main suite
 
@@ -373,9 +383,9 @@ objects and canned disk bytes. Tests construct a cluster state, run a capture
 into a buffer, read the bundle back, and assert on it. No Kubernetes fake
 clientset, no mock framework, no HTTP test server.
 
-This covers: closure traversal across every reference type; classification into
-carried objects, evidence and requirements; capture record contents including
-each skip reason; manifest correctness and member ordering; digests; refusal to
+This covers: traversal across every reference type; what is collected and what
+is recorded as a requirement; capture record contents including each skip
+reason; manifest correctness and member ordering; digests; refusal to
 capture a running VirtualMachine; and behaviour when an object is forbidden,
 absent, or references something deleted.
 
@@ -446,8 +456,8 @@ filtering, masking or encryption.
 detect corruption, not tampering.
 
 **Duplicating must-gather.** quo collects a specific, small set of cluster
-objects as evidence. It does not scrape logs or gather general cluster
-diagnostics.
+objects that describe the source cluster. It does not scrape logs or gather
+general cluster diagnostics.
 
 ## Further Notes
 
@@ -458,7 +468,8 @@ round trip catches format and encoding bugs, but the question "would this
 actually reproduce the VirtualMachine?" cannot be answered until a deploy path
 exists. This is a known and accepted risk, not an oversight. It is the single
 most likely source of rework in phase 2, and implementers should expect the
-closure to turn out incomplete in ways no phase-1 test can reveal.
+set of related resources to turn out incomplete in ways no phase-1 test can
+reveal.
 
 ### Which problems a bundle can carry
 

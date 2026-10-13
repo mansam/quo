@@ -35,3 +35,17 @@ capture).
 - [x] `quo inspect` presents evidence distinctly from carried objects
 - [x] Tests cover each evidence source, CDI being absent, and a namespace-scoped
       caller who can read none of it
+
+## Comments
+
+The vocabulary in this ticket is superseded. A bundle no longer sorts what it
+collects into carried objects and evidence: it holds one set of resources, and
+the capture record's outcomes are collected, required and skipped. The source
+cluster's expansion of the VirtualMachine is a member of its own rather than a
+resource, recorded under its own kind. See
+`docs/adr/0002-one-set-of-resources-in-a-bundle.md` and the rewritten sections
+of `spec.md`.
+
+The acceptance item "`quo inspect` presents evidence distinctly from carried
+objects" no longer applies: there is nothing to present distinctly. What
+replaced it is that inspect names the member holding the expanded spec.
