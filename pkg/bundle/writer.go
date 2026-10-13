@@ -35,6 +35,7 @@ type Writer struct {
 	pending    []content
 	members    []Member
 	record     CaptureRecord
+	required   Requirements
 	objects    []Object
 	evidence   []Object
 	disks      []Disk
@@ -128,6 +129,14 @@ func validateUniquePath(collected []Object, object Object) (err error) {
 // the room reserved for the manifest is sized from what the manifest holds.
 func (r *Writer) Record(attempted CaptureRecord) {
 	r.record = attempted
+}
+
+// Require collects what the bundle declares a target would have to provide.
+// Like the capture record it must be complete before the bundle is opened,
+// because the room reserved for the manifest is sized from what the manifest
+// holds.
+func (r *Writer) Require(required Requirements) {
+	r.required = required
 }
 
 // Reserve declares a disk that will be staged into the bundle later, so that
@@ -292,6 +301,7 @@ func (r *Writer) encode() (encoded []byte, err error) {
 	manifest := &Manifest{
 		FormatVersion: FormatVersion,
 		Provenance:    r.provenance,
+		Requirements:  r.required,
 		CaptureRecord: r.record,
 		Objects:       r.objects,
 		Evidence:      r.evidence,

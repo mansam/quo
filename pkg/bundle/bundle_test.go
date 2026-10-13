@@ -273,6 +273,107 @@ func TestInspectSaysNothingAboutEvidenceWhenABundleHoldsNone(t *testing.T) {
 	g.Expect(described.String()).ToNot(gomega.ContainSubstring("Evidence"))
 }
 
+func TestInspectPrintsWhatABundleNeedsFromItsLeadingManifestAlone(t *testing.T) {
+	g := gomega.NewGomegaWithT(t)
+	manifest := indexing(t)
+	manifest.Requirements = testRequirements()
+	// Nothing but the manifest. This is what a support engineer has once the
+	// head of a transfer has arrived and before anything the manifest indexes
+	// has, which is the moment they want to know whether their cluster can
+	// satisfy the bundle at all.
+	archive := tarball(t, rawMember{path: ManifestPath, data: encodeManifest(t, manifest)})
+	described := &bytes.Buffer{}
+
+	err := Inspect(bytes.NewReader(archive), described)
+
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	report := described.String()
+	// Nothing was extracted and no disk was waited for: what a target would
+	// have to provide is in the first member.
+	g.Expect(report).To(gomega.ContainSubstring("Members (1), 1 not yet arrived"))
+	g.Expect(report).To(gomega.MatchRegexp(objectPath + `\s+\d+ bytes\s+\(not yet arrived\)\n`))
+	g.Expect(report).To(gomega.ContainSubstring("Networks required (2)"))
+	// Every cluster has a pod network; a secondary one names the attachment
+	// the source cluster backed it with.
+	g.Expect(report).To(gomega.MatchRegexp(`default\s+pod\n`))
+	g.Expect(report).To(gomega.MatchRegexp(`secondary\s+multus\s+shared-networks/storage-net\n`))
+	g.Expect(report).To(gomega.ContainSubstring("Storage required (2)"))
+	g.Expect(report).To(gomega.MatchRegexp(
+		`db-01-root\s+32Gi\s+Block\s+class: ocs-storagecluster-ceph-rbd\n`))
+	// A disk whose claim quo could not read says so rather than reading as a
+	// disk that needs nothing.
+	g.Expect(report).To(gomega.MatchRegexp(`db-01-data\s+\(unknown\)\s+\(unknown\)\s+class: \(unknown\)\n`))
+	g.Expect(report).To(gomega.ContainSubstring("Container disk images required (1)"))
+	g.Expect(report).To(gomega.ContainSubstring("never repackaged"))
+	g.Expect(report).To(gomega.MatchRegexp(`containerdisk\s+quay\.io/example/fedora:41\n`))
+}
+
+func TestInspectDescribesATransferThatStoppedPartWayThroughADisk(t *testing.T) {
+	g := gomega.NewGomegaWithT(t)
+	disk := testDisk()
+	archive := writeBundle(t, testProvenance(), staged(t, disk))
+	described := &bytes.Buffer{}
+
+	err := Inspect(bytes.NewReader(arrived(t, archive)), described)
+
+	// Where a transfer in flight actually is: the manifest and the objects
+	// have arrived and the disk is still coming. Refusing to say anything
+	// about it would withhold the part the reader is waiting on the rest for.
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	report := described.String()
+	g.Expect(report).To(gomega.ContainSubstring("Members (2), 1 not yet arrived"))
+	g.Expect(report).To(gomega.MatchRegexp(objectPath + `\s+\d+ bytes\s+sha256:`))
+	g.Expect(report).To(gomega.MatchRegexp(disk.Path + `\s+\d+ bytes\s+\(not yet arrived\)\n`))
+}
+
+func TestReadStillRefusesABundleThatStoppedPartWayThroughADisk(t *testing.T) {
+	g := gomega.NewGomegaWithT(t)
+	archive := writeBundle(t, testProvenance(), staged(t, testDisk()))
+
+	read, err := Read(bytes.NewReader(arrived(t, archive)))
+
+	// Describing the part of a bundle that arrived is one thing. Handing back
+	// a manifest as though the bundle behind it were whole is another: every
+	// other caller reads one to work with the members it indexes.
+	g.Expect(err).To(gomega.MatchError(&FormatError{}))
+	g.Expect(err.Error()).To(gomega.ContainSubstring(DiskPath(diskClaim, DiskGzip)))
+	g.Expect(read).To(gomega.BeNil())
+}
+
+func TestInspectSaysNothingAboutRequirementsWhenABundleDeclaresNone(t *testing.T) {
+	g := gomega.NewGomegaWithT(t)
+	described := &bytes.Buffer{}
+
+	err := Inspect(bytes.NewReader(validBundle(t)), described)
+
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	g.Expect(described.String()).ToNot(gomega.ContainSubstring("required"))
+}
+
+func TestWriterRecordsTheRequirementsInTheManifest(t *testing.T) {
+	g := gomega.NewGomegaWithT(t)
+	file, err := os.Create(filepath.Join(t.TempDir(), "bundle"))
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	defer func() {
+		_ = file.Close()
+	}()
+	writer := NewWriter(file)
+
+	writer.Require(testRequirements())
+
+	err = writer.Open(testProvenance())
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	err = writer.Close()
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	archive, err := os.ReadFile(file.Name())
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	manifest, err := Read(bytes.NewReader(archive))
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	// The room reserved for the manifest is sized from what it holds, so
+	// requirements declared before the bundle was opened come back whole.
+	g.Expect(manifest.Requirements).To(gomega.Equal(testRequirements()))
+}
+
 func TestWriterHoldsEvidenceApartFromTheObjectsABundleCarries(t *testing.T) {
 	g := gomega.NewGomegaWithT(t)
 	file, err := os.Create(filepath.Join(t.TempDir(), "bundle"))
@@ -487,6 +588,19 @@ func tarball(t *testing.T, members ...rawMember) (archive []byte) {
 	return
 }
 
+// arrived returns the leading bytes of a bundle: everything up to the point
+// where the disk's content begins, which is where a transfer that is still
+// running has got to.
+func arrived(t *testing.T, archive []byte) (head []byte) {
+	t.Helper()
+	at := bytes.Index(archive, diskBody)
+	if at < 0 {
+		t.Fatal("the bundle carries no disk to stop part-way through")
+	}
+	head = archive[:at]
+	return
+}
+
 // validBundle builds a bundle carrying one object.
 func validBundle(t *testing.T) (archive []byte) {
 	t.Helper()
@@ -546,6 +660,36 @@ func testObject() (object Object) {
 		Namespace: "support-cases",
 		Name:      "db-01",
 		Path:      objectPath,
+	}
+	return
+}
+
+// testRequirements is what the fixtures declare a target would have to
+// provide: one of each kind of requirement, and one disk whose claim quo
+// could not read.
+func testRequirements() (required Requirements) {
+	required = Requirements{
+		Networks: []NetworkRequirement{
+			{Name: "default", Type: NetworkPod},
+			{
+				Name:       "secondary",
+				Type:       NetworkMultus,
+				Namespace:  "shared-networks",
+				Attachment: "storage-net",
+			},
+		},
+		Storage: []StorageRequirement{
+			{
+				Claim:        diskClaim,
+				StorageClass: "ocs-storagecluster-ceph-rbd",
+				Size:         "32Gi",
+				VolumeMode:   "Block",
+			},
+			{Claim: "db-01-data"},
+		},
+		ContainerDisks: []ContainerDiskRequirement{
+			{Volume: "containerdisk", Image: "quay.io/example/fedora:41"},
+		},
 	}
 	return
 }
