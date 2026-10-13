@@ -41,14 +41,14 @@ const (
 	// form.
 	expandSpec = "expand-spec"
 	// expandSpecName is how discovery lists that subresource. A subresource is
-	// named for the resource it hangs off as well as for itself, and the
+	// named for the resource it belongs to as well as for itself, and the
 	// subresource group lists no bare virtualmachines resource at all, so
 	// looking for one would report expand-spec as absent from every cluster.
 	expandSpecName = "virtualmachines/" + expandSpec
 )
 
-// KubeVirt is the Cluster backed by a real cluster. It is a thin adapter over
-// the Kubernetes client and holds no logic of its own.
+// KubeVirt is the Cluster backed by a real cluster. It adapts the Kubernetes
+// client and holds no logic of its own.
 //
 // Objects are read as unstructured so that every field survives the round trip
 // into a bundle, including fields this build of quo does not know about.
@@ -117,7 +117,7 @@ func (r *KubeVirt) GetVirtualMachine(ctx context.Context, namespace, name string
 
 // GetObject returns the object the reference names.
 //
-// A read that failed is reported as one of the capture's own signals, because
+// A read that failed is reported as one of this package's own errors, because
 // none of them is a reason to abandon a capture and each is recorded
 // differently in the capture record.
 func (r *KubeVirt) GetObject(ctx context.Context, ref ObjectRef) (object *unstructured.Unstructured, err error) {
@@ -144,7 +144,7 @@ func (r *KubeVirt) GetObject(ctx context.Context, ref ObjectRef) (object *unstru
 //
 // KubeVirt is a singleton whose namespace and name differ between
 // installations, so it is listed rather than read by name. A read that failed
-// is reported as one of the capture's own signals, because the resource is
+// is reported as one of this package's own errors, because the resource is
 // cluster-scoped and commonly forbidden to the person capturing a bundle.
 func (r *KubeVirt) GetKubeVirt(ctx context.Context) (kv *unstructured.Unstructured, err error) {
 	list, err := r.dynamic.
@@ -217,7 +217,7 @@ func (r *KubeVirt) ExportDisks(ctx context.Context, namespace, name string) (exp
 	return
 }
 
-// mapReadError maps a failure to read an object onto the signal a capture acts
+// mapReadError maps a failure to read an object onto the error a capture acts
 // on and records.
 //
 // A kind no resource serves reads back from the API as the object simply not
@@ -247,7 +247,7 @@ func (r *KubeVirt) mapReadError(
 	return
 }
 
-// mapListError maps a failure to list the KubeVirt singleton onto the signal a
+// mapListError maps a failure to list the KubeVirt singleton onto the error a
 // capture acts on and records. A list names no object, so neither does the
 // error it produces.
 //
@@ -268,7 +268,7 @@ func (r *KubeVirt) mapListError(err error) (mapped error) {
 
 // serves reports whether the cluster has the named resource at all. The name
 // is the one discovery lists, which for a subresource includes the resource it
-// hangs off.
+// belongs to.
 //
 // Discovery that cannot be read is taken as the resource being served, so that
 // an answer quo does not have is never reported as a component being absent.

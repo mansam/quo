@@ -65,8 +65,8 @@ func buildClosure(vm *unstructured.Unstructured) (refs []cluster.ObjectRef) {
 }
 
 // collectVirtualMachine collects the VirtualMachine itself, which the capture
-// already has in hand and so does not read a second time as part of its own
-// closure.
+// has already read and so does not read a second time while following its
+// references.
 func collectVirtualMachine(co *collector, vm *unstructured.Unstructured) (err error) {
 	err = co.add(
 		cluster.ObjectRef{
@@ -82,11 +82,11 @@ func collectVirtualMachine(co *collector, vm *unstructured.Unstructured) (err er
 // what it can read into the bundle, and records what became of every one of
 // them.
 //
-// It returns the PersistentVolumeClaims it read, because they are what the
-// reads about the source cluster's storage hang off: a claim names the
-// StorageClass it was provisioned from and the PersistentVolume it is bound
-// to. A claim quo could not read contributes nothing, which is why those
-// reads follow the claims that arrived rather than the ones referenced.
+// It returns the PersistentVolumeClaims it read, because the reads about the
+// source cluster's storage are made from them: a claim names the StorageClass
+// it was provisioned from and the PersistentVolume it is bound to. A claim
+// quo could not read contributes nothing, which is why those reads follow the
+// claims that arrived rather than the ones referenced.
 //
 // Collection is best effort. The person capturing a bundle is frequently a
 // namespace owner without cluster read, and a capture that may have taken

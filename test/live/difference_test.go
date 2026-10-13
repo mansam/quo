@@ -33,9 +33,9 @@ var traversal = map[bundle.Outcome]bool{
 // sides and report agreement, which is the one answer this suite must never
 // give wrongly.
 //
-// Since the capture record stopped marking these apart from the objects the
-// traversal reached, this list is the only thing separating them, and a kind
-// added to the environment reads has to be added here too.
+// The capture record does not mark these apart from the objects the
+// traversal reached, so this list is the only thing separating them: a kind
+// added to the reads about the source cluster has to be added here too.
 var untraversedKinds = map[string]bool{
 	cluster.KindKubeVirt:         true,
 	cluster.KindPersistentVolume: true,
@@ -91,8 +91,8 @@ func compare(quo, graph []cluster.ObjectRef) (d difference) {
 }
 
 // diverged reports a difference that means quo is wrong: KubeVirt's graph
-// names a member of the closure quo's traversal did not find, so a bundle would not
-// carry it.
+// names a member of the closure quo's traversal did not find, so a bundle
+// would not carry it.
 //
 // Objects quo found and the graph did not are not divergence. quo follows
 // references KubeVirt's graph does not — a sysprep volume, an ephemeral

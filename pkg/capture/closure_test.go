@@ -547,7 +547,7 @@ func TestExportCarriesObjectsAsKubernetesYAMLThatCanBeAppliedByHand(t *testing.T
 
 	member := bundle.ResourcePath(cluster.KindConfigMap, testConfigMap)
 	g.Expect(order).To(gomega.ContainElement(member))
-	// Everything carried sits under the objects grouping, named by its kind.
+	// Everything carried sits under the resources grouping, named by its kind.
 	g.Expect(member).To(gomega.HavePrefix(bundle.ResourcesDir + "/"))
 	object := decodeMember(t, content, member)
 	g.Expect(object["apiVersion"]).To(gomega.Equal("v1"))

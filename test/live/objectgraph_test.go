@@ -17,12 +17,12 @@ import (
 // VirtualMachine depends on.
 const (
 	// subresourceGroupVersion is where virt-api serves the subresources that
-	// hang off a VirtualMachine. They are served by virt-api rather than by
+	// belong to a VirtualMachine. They are served by virt-api rather than by
 	// the API server, so none of them is a field of the VirtualMachine
 	// resource.
 	subresourceGroupVersion = "subresources.kubevirt.io/v1"
 	// objectGraphResource is how discovery lists the subresource. A
-	// subresource is named for the resource it hangs off as well as for
+	// subresource is named for the resource it belongs to as well as for
 	// itself.
 	objectGraphResource = "virtualmachines/objectgraph"
 )

@@ -135,7 +135,7 @@ func parseSize(recorded string) (size int64, known bool) {
 // capture stages one disk at a time and deletes it before the next starts.
 //
 // complete is false when a claim quo could not read left a disk with no size,
-// which makes both figures lower bounds. The disk still travels in a bundle,
+// which makes both figures lower bounds. The disk is still held in a bundle,
 // so leaving it out of the total would understate the transfer.
 func diskSpace(disks []checkedDisk) (scratch, provisioned int64, complete bool) {
 	complete = true

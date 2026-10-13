@@ -13,8 +13,8 @@ import (
 )
 
 // Why an object could not be read. None of these is a reason to abandon a
-// capture, so the caller is given a signal it can act on and record rather
-// than an error from the Kubernetes client.
+// capture, so the caller is given one of these errors to act on and record
+// rather than an error from the Kubernetes client.
 var (
 	// ErrNotFound reports an object the cluster does not have. A
 	// VirtualMachine can refer to something that has since been deleted.

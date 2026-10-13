@@ -20,16 +20,16 @@ import (
 	"github.com/mansam/quo/pkg/cluster"
 )
 
-// testVMMember is where the fixture VirtualMachine lands in a bundle.
+// testVMMember is where the fixture VirtualMachine sits in a bundle.
 const testVMMember = "resources/virtualmachine/db-01.yaml"
 
-// Where what every fixture cluster says about itself lands in a bundle.
+// Where what every fixture cluster says about itself sits in a bundle.
 const (
 	testKubeVirtMember = "resources/kubevirt/kubevirt.yaml"
 	testExpandedMember = "expanded-spec.yaml"
 )
 
-// The claims behind the fixture VirtualMachine's disks, and where each lands
+// The claims behind the fixture VirtualMachine's disks, and where each sits
 // in a bundle.
 const (
 	rootClaim  = "db-01-root"
@@ -316,7 +316,8 @@ func TestExportStagesOneDiskAtATime(t *testing.T) {
 	_, err := captureInto(t, c, opt)
 
 	g.Expect(err).ToNot(gomega.HaveOccurred())
-	// Peak local disk is the largest single compressed disk, not the total.
+	// The most local disk space in use at once is the largest single
+	// compressed disk, not the total.
 	g.Expect(c.export.staged).To(gomega.Equal(1))
 	g.Expect(entryNames(t, opt.Scratch)).To(gomega.BeEmpty())
 }
@@ -582,8 +583,8 @@ func captureBundle(t *testing.T) (order []string, content map[string][]byte) {
 	return
 }
 
-// captureDisks captures a VirtualMachine that has disks, staging them in a
-// directory of their own so that a test can see what was in it.
+// captureWithDisks captures a VirtualMachine that has disks, staging them in
+// a directory of their own so that a test can see what was in it.
 func captureWithDisks(t *testing.T, c *fakeCluster, opt Options) (order []string, content map[string][]byte) {
 	t.Helper()
 	captured, err := captureInto(t, c, stagingIn(t, c, opt))
@@ -594,7 +595,7 @@ func captureWithDisks(t *testing.T, c *fakeCluster, opt Options) (order []string
 	return
 }
 
-// stagingIn points a capture and the export that feeds it at the same staging
+// stagingIn points a capture and the export it reads from at the same staging
 // directory.
 func stagingIn(t *testing.T, c *fakeCluster, opt Options) (staging Options) {
 	t.Helper()

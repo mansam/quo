@@ -125,11 +125,11 @@ const (
 	// bindImmediately tells CDI to provision the fixture disk at once rather
 	// than waiting for something to consume it.
 	//
-	// A storage class that binds on first consumer leaves a DataVolume parked
-	// in WaitForFirstConsumer until a pod mounts the claim behind it, and the
-	// fixture VirtualMachine is deliberately never started, so nothing ever
-	// would. The annotation has CDI schedule a worker of its own and bind,
-	// which is what it is for.
+	// A storage class that binds on first consumer leaves a DataVolume
+	// waiting in WaitForFirstConsumer until a pod mounts the claim behind it,
+	// and the fixture VirtualMachine is deliberately never started, so
+	// nothing ever would. The annotation has CDI schedule a worker of its own
+	// and bind, which is what it is for.
 	bindImmediately = "cdi.kubevirt.io/storage.bind.immediate.requested"
 	// Identity values a bundle must carry through untouched, which the export
 	// test reads back out of the bundle.
@@ -414,9 +414,10 @@ func (r *fixture) createVirtualMachine(ctx context.Context, s *suite) (err error
 	return
 }
 
-// buildVirtualMachineSpec returns the fixture VirtualMachine's spec. Every volume,
-// matcher and network on it is a reference type quo's traversal follows, so
-// that the comparison against KubeVirt's graph has something to compare.
+// buildVirtualMachineSpec returns the fixture VirtualMachine's spec. Every
+// volume, matcher and network on it is a reference type quo's traversal
+// follows, so that the comparison against KubeVirt's graph has something to
+// compare.
 func (r *fixture) buildVirtualMachineSpec() (spec map[string]any) {
 	spec = map[string]any{
 		"runStrategy": "Halted",
@@ -465,7 +466,7 @@ func (r *fixture) buildVirtualMachineSpec() (spec map[string]any) {
 	return
 }
 
-// volumes are the fixture VirtualMachine's volumes: one backed by a
+// buildVolumes returns the fixture VirtualMachine's volumes: one backed by a
 // DataVolume, one served from a container image, and one each for the
 // ConfigMap, the cloud-init Secret and the ServiceAccount.
 func (r *fixture) buildVolumes() (volumes []any) {
@@ -496,7 +497,7 @@ func (r *fixture) buildVolumes() (volumes []any) {
 	return
 }
 
-// disks attaches every volume to a disk, which KubeVirt requires.
+// buildDisks attaches every volume to a disk, which KubeVirt requires.
 func (r *fixture) buildDisks() (disks []any) {
 	for _, name := range volumeNames {
 		disks = append(disks, map[string]any{
@@ -507,8 +508,8 @@ func (r *fixture) buildDisks() (disks []any) {
 	return
 }
 
-// networks are the pod network every VirtualMachine has and, where Multus is
-// installed, a secondary network naming the fixture's
+// buildNetworks returns the pod network every VirtualMachine has and, where
+// Multus is installed, a secondary network naming the fixture's
 // NetworkAttachmentDefinition.
 func (r *fixture) buildNetworks() (networks []any) {
 	networks = []any{
@@ -524,7 +525,8 @@ func (r *fixture) buildNetworks() (networks []any) {
 	return
 }
 
-// interfaces bind the VirtualMachine to its networks, one interface each.
+// buildInterfaces returns the interfaces binding the VirtualMachine to its
+// networks, one interface each.
 func (r *fixture) buildInterfaces() (interfaces []any) {
 	interfaces = []any{
 		map[string]any{"name": networkPod, "masquerade": map[string]any{}},
@@ -539,8 +541,8 @@ func (r *fixture) buildInterfaces() (interfaces []any) {
 	return
 }
 
-// object is one fixture object, carrying whatever fields beyond its kind and
-// name the thing being tested needs.
+// buildObject returns one fixture object, carrying whatever fields beyond its
+// kind and name the thing being tested needs.
 func (r *fixture) buildObject(
 	apiVersion, kind, part string,
 	fields map[string]any) (object map[string]any) {

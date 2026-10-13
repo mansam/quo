@@ -13,7 +13,7 @@ import (
 	"github.com/mansam/quo/pkg/cluster"
 )
 
-// progressInterval is how often a transfer in flight is reported.
+// progressInterval is how often a transfer in progress is reported.
 const progressInterval = 2 * time.Second
 
 // claim is a PersistentVolumeClaim the VirtualMachine references and the
@@ -23,7 +23,7 @@ type claim struct {
 	volumes []string
 }
 
-// transfer is one disk on its way from the export into the bundle.
+// transfer is one disk being copied from the export into the bundle.
 type transfer struct {
 	export  cluster.DiskExport
 	disk    bundle.Disk
@@ -94,8 +94,8 @@ func planTransfers(claims []claim, export cluster.DiskExport, opt Options) (tran
 }
 
 // recordedFormat maps the format an export offers onto the one a bundle
-// records. It is the single point at which KubeVirt's vocabulary becomes
-// quo's, so an unknown format is reported rather than stored.
+// records. It is the one place a KubeVirt format name becomes a quo one, so
+// an unknown format is reported rather than stored.
 func recordedFormat(claim string, format cluster.DiskFormat) (recorded bundle.DiskFormat, err error) {
 	switch format {
 	case cluster.FormatGzip:
@@ -112,8 +112,8 @@ func recordedFormat(claim string, format cluster.DiskFormat) (recorded bundle.Di
 //
 // The disk is staged in a file, which establishes its compressed size and
 // digest, written into the bundle, and deleted before the next one starts.
-// Peak local disk is therefore the largest single compressed disk rather than
-// the total.
+// The most local disk space in use at once is therefore the largest single
+// compressed disk rather than the total.
 func (r *transfer) stage(ctx context.Context, writer *bundle.Writer) (err error) {
 	staged, err := os.CreateTemp(r.scratch, ".quo-disk-*")
 	if err != nil {

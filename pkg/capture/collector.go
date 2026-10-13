@@ -35,9 +35,9 @@ type sink interface {
 // what a target would have to provide, which is derived from the referenced
 // resources and recorded as it is derived.
 //
-// A capture and a check both go through here, so that the two cannot drift
-// into accounting for different objects. What they do differ in is where the
-// objects go, which is the collector's sink.
+// A capture and a check both go through here, so that the two cannot come to
+// account for different objects. What they do differ in is where the objects
+// go, which is the collector's sink.
 func (r *collector) collect(
 	ctx context.Context,
 	c cluster.Cluster,

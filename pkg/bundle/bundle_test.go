@@ -13,7 +13,7 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
-// Where the resource the fixtures put in a bundle lands.
+// Where the resource the fixtures put in a bundle sits.
 const resourcePath = "resources/virtualmachine/db-01.yaml"
 
 // The claim behind the disk the fixtures stage.
@@ -206,8 +206,8 @@ func TestInspectListsTheResourcesByKindAndName(t *testing.T) {
 	report := described.String()
 	g.Expect(report).To(gomega.ContainSubstring("Resources (2)"))
 	g.Expect(report).To(gomega.MatchRegexp(`VirtualMachine\s+db-01\n`))
-	// An object borrowed from another namespace is named with it; one from
-	// the VirtualMachine's own namespace is not.
+	// An object from another namespace is named with it; one from the
+	// VirtualMachine's own namespace is not.
 	g.Expect(report).To(gomega.MatchRegexp(`NetworkAttachmentDefinition\s+shared-networks/storage-net\n`))
 }
 
@@ -255,9 +255,9 @@ func TestInspectPrintsWhatABundleNeedsFromItsLeadingManifestAlone(t *testing.T) 
 	manifest := indexing(t)
 	manifest.Requirements = testRequirements()
 	// Nothing but the manifest. This is what a support engineer has once the
-	// head of a transfer has arrived and before anything the manifest indexes
-	// has, which is the moment they want to know whether their cluster can
-	// satisfy the bundle at all.
+	// first bytes of a transfer have arrived and before anything the manifest
+	// indexes has, which is the moment they want to know whether their
+	// cluster can satisfy the bundle at all.
 	archive := tarball(t, rawMember{path: ManifestPath, data: encodeManifest(t, manifest)})
 	described := &bytes.Buffer{}
 
@@ -292,7 +292,7 @@ func TestInspectDescribesATransferThatStoppedPartWayThroughADisk(t *testing.T) {
 
 	err := Inspect(bytes.NewReader(arrived(t, archive)), described)
 
-	// Where a transfer in flight actually is: the manifest and the objects
+	// Where a transfer still running actually is: the manifest and the objects
 	// have arrived and the disk is still coming. Refusing to say anything
 	// about it would withhold the part the reader is waiting on the rest for.
 	g.Expect(err).ToNot(gomega.HaveOccurred())
@@ -362,7 +362,7 @@ func TestWriterKeepsTheExpandedSpecOutOfTheResources(t *testing.T) {
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 
 	// The expansion carries the VirtualMachine's own kind and name, so it
-	// would land on top of it among the resources. It is a member of its own
+	// would overwrite it among the resources. It is a member of its own
 	// instead.
 	writer.AddExpandedSpec(expandedBody)
 
@@ -592,7 +592,7 @@ type stagedDisk struct {
 }
 
 // writeBundle writes a bundle carrying the fixture object and the given
-// disks, and returns the bytes that landed on disk.
+// disks, and returns the bytes that were written.
 func writeBundle(t *testing.T, provenance Provenance, disks ...stagedDisk) (archive []byte) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "bundle")
