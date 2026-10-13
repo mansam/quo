@@ -8,8 +8,8 @@
 // subresource sits behind a feature gate that is off by default, and quo's
 // copy of KubeVirt's logic is not maintained alongside the original. The
 // second is that the real cluster adapter works against a real API, which the
-// everyday suite deliberately bypasses by substituting a fake. A thin adapter
-// is mostly field names and subresource paths, and no test that substitutes a
+// everyday suite deliberately bypasses by substituting a fake. The adapter is
+// mostly field names and subresource paths, and no test that substitutes a
 // fake for it can tell a correct one from a wrong one.
 //
 // The suite is behind the "live" build tag and is excluded from the default
@@ -67,15 +67,15 @@ type suite struct {
 	capture sharedCapture
 }
 
-// requirement is one thing the suite needs from a cluster: the resource whose
-// presence says it is there, and what to report when it is absent.
+// prerequisite is one thing the suite needs from a cluster: the resource
+// whose presence says it is there, and what to report when it is absent.
 type prerequisite struct {
 	groupVersion string
 	resource     string
 	absent       string
 }
 
-// requirements are what a cluster must offer before the suite will run, in
+// prerequisites are what a cluster must offer before the suite will run, in
 // the order they are reported.
 //
 // The ObjectGraph feature gate is not among them. Nothing in discovery says
@@ -229,8 +229,8 @@ func (r *suite) writerFor(
 }
 
 // serves reports whether the cluster has the named resource. The name is the
-// one discovery lists, which for a subresource includes the resource it hangs
-// off.
+// one discovery lists, which for a subresource includes the resource it
+// belongs to.
 func (r *suite) serves(groupVersion, name string) (served bool) {
 	list, err := r.core.Discovery().ServerResourcesForGroupVersion(groupVersion)
 	if err != nil {

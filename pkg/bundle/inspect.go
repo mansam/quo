@@ -16,8 +16,8 @@ import (
 // manifest at its front, and the members that have not arrived are named. The
 // manifest is the first member precisely so that a support engineer can read
 // what a bundle would need from a target — its networks, its storage, the
-// images it is served from — off the head of a transfer, rather than having
-// to wait out the hours the disks take.
+// images it is served from — from the first bytes of a transfer, rather than
+// having to wait out the hours the disks take.
 func Inspect(in io.Reader, out io.Writer) (err error) {
 	manifest, absent, err := readArrived(in)
 	if err != nil {
@@ -187,7 +187,7 @@ func describeContainerDisks(out io.Writer, disks []ContainerDiskRequirement) {
 
 // qualified renders an object's name. Its namespace is shown only when it is
 // not the one the VirtualMachine was captured from, which is how a reader
-// spots an object borrowed from elsewhere in the cluster.
+// spots an object from elsewhere in the cluster.
 func qualified(namespace, name, captured string) (rendered string) {
 	rendered = name
 	if namespace == "" || namespace == captured {

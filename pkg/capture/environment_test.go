@@ -62,7 +62,7 @@ func TestExportCapturesTheStorageBehindEveryPersistentVolumeClaim(t *testing.T) 
 			object := decodeMember(t, content, member)
 			g.Expect(object["kind"]).To(gomega.Equal(tt.kind))
 			// The platform configuration is frequently where the problem
-			// actually is, so it travels rather than being summarised.
+			// actually is, so it is held whole rather than summarised.
 			g.Expect(string(content[member])).To(gomega.ContainSubstring(tt.held))
 			manifest := capturedManifest(t, content)
 			g.Expect(collected(manifest)).To(gomega.ContainElement(clusterRef(tt.kind, tt.object)))

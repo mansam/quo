@@ -211,7 +211,7 @@ func TestExportDeclaresContainerDiskImagesAndNeverRepackagesThem(t *testing.T) {
 			{Volume: "containerdisk", Image: testContainerImage},
 		}))
 	// quo does not repackage container images. The only disk member is the
-	// claim's, and the image travels as a name a target has to be able to
+	// claim's, and the image is recorded as a name a target has to be able to
 	// pull.
 	g.Expect(manifest.Disks).To(gomega.Equal([]bundle.Disk{
 		{

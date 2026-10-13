@@ -217,7 +217,7 @@ func TestCheckFailsOnlyWhenItCouldNotReportAtAll(t *testing.T) {
 	g := gomega.NewGomegaWithT(t)
 	c := stoppedCluster(t)
 	// A VirtualMachine quo cannot read is the one failure a check has no
-	// answer to give around: everything it reports hangs off that object.
+	// answer to give around: everything it reports comes from that object.
 	c.vmErr = fmt.Errorf("virtualmachines.kubevirt.io %q: %w", testName, cluster.ErrForbidden)
 
 	_, err := runCheck(t, c, testOptions())

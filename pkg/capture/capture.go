@@ -21,7 +21,7 @@ import (
 // It refuses a VirtualMachine that is not stopped, before writing anything.
 // The VirtualMachine is collected exactly as the cluster returned it: quo
 // normalises nothing, so MAC addresses, firmware UUID, serial and chassis
-// values travel as they are.
+// values are stored exactly as they were read.
 //
 // Alongside the resources the VirtualMachine refers to, the bundle holds what
 // describes the cluster it came from: the storage behind each of its claims,

@@ -37,8 +37,8 @@ func Read(in io.Reader) (manifest *Manifest, err error) {
 //
 // A bundle that ends early is not an error here. The manifest is the first
 // member so that a reader can learn what a bundle holds and what it would
-// need from a target off the head of a transfer, and a transfer still in
-// flight ends part-way through the file by definition.
+// need from a target from the first bytes of a transfer, and a transfer still
+// running ends part-way through the file by definition.
 func readArrived(in io.Reader) (manifest *Manifest, absent []string, err error) {
 	tr := tar.NewReader(in)
 	manifest, err = readManifest(tr)
@@ -141,7 +141,7 @@ func verifyArrived(tr *tar.Reader, manifest *Manifest) (absent []string, err err
 }
 
 // cutShort reports a read that ran off the end of a bundle, which is what a
-// transfer still in flight looks like rather than a bundle that is wrong.
+// transfer still running looks like rather than a bundle that is wrong.
 func cutShort(err error) (short bool) {
 	short = errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF)
 	return

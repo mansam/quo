@@ -60,7 +60,7 @@ func NewWriter(out io.WriteSeeker) (w *Writer) {
 }
 
 // Add collects a member, which is held in memory until the bundle is opened.
-// Objects are small enough for that; disks are not and go through Expect and
+// Objects are small enough for that; disks are not and go through Reserve and
 // Stage instead.
 func (r *Writer) Add(path string, data []byte) {
 	r.pending = append(r.pending, content{path: path, data: data})
@@ -68,10 +68,10 @@ func (r *Writer) Add(path string, data []byte) {
 
 // Collect collects one resource: a member of the resources grouping that the
 // manifest also names by kind and name. The caller supplies the kind,
-// namespace and name; where the object lands is this package's concern. Like
-// Add, the content is held in memory until the bundle is opened.
+// namespace and name; where the object is written is this package's concern.
+// Like Add, the content is held in memory until the bundle is opened.
 //
-// It reports an object that would land on top of one already collected.
+// It reports an object that would overwrite one already collected.
 func (r *Writer) Collect(resource Resource, data []byte) (err error) {
 	resource.Path = ResourcePath(resource.Kind, resource.Name)
 	err = validateUniquePath(r.resources, resource)
@@ -89,13 +89,13 @@ func (r *Writer) Collect(resource Resource, data []byte) (err error) {
 // It does not go through Collect. The expansion is not a resource: no object
 // on the cluster has that name, nothing applies it to a target, and it carries
 // the same kind and name as the VirtualMachine the bundle collected, so
-// storing it among the resources would land on top of it.
+// storing it among the resources would overwrite it.
 func (r *Writer) AddExpandedSpec(data []byte) {
 	r.expandedSpec = ExpandedSpecPath
 	r.Add(ExpandedSpecPath, data)
 }
 
-// validateUniquePath reports an object that would land on top of one already
+// validateUniquePath reports an object that would overwrite one already
 // collected. A member path holds a kind and a name but not a namespace, so two
 // objects of one kind and name taken from different namespaces collide, and
 // writing both would produce a bundle whose manifest disagrees with its own
@@ -178,8 +178,8 @@ func (r *Writer) Open(provenance Provenance) (err error) {
 
 // Stage writes size bytes read from source into the bundle as the disk member
 // at path, and records the size and digest in the manifest. The caller may
-// discard what it staged as soon as Stage returns, which is what keeps peak
-// local disk down to one disk rather than all of them.
+// discard what it staged as soon as Stage returns, which is what keeps the
+// local disk space in use down to one disk rather than all of them.
 func (r *Writer) Stage(path string, source io.Reader, size int64) (err error) {
 	at, found := r.indexOf[path]
 	if !found {

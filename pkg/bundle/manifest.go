@@ -23,7 +23,7 @@ type Manifest struct {
 // Requirements is what a bundle declares a target cluster would have to
 // provide for the VirtualMachine it carries: the networks it expects, what
 // each of its disks needs from storage, and the container images it is served
-// from. None of it travels in the bundle.
+// from. None of it is held in the bundle.
 //
 // It is recorded at capture because every part of it is free to read while
 // connected to the source cluster and expensive to reconstruct afterwards. It
@@ -68,7 +68,7 @@ type NetworkRequirement struct {
 // it rather than guessed at.
 //
 // Every field but the claim is empty when quo could not read the claim it
-// describes. The disk still travels in the bundle and a target still has to
+// describes. The disk is still held in the bundle and a target still has to
 // find room for it, so the requirement is declared with what is known rather
 // than dropped.
 type StorageRequirement struct {
@@ -188,8 +188,8 @@ type Provenance struct {
 }
 
 // Member indexes one member of a bundle other than the manifest. The digest
-// travels inside the bundle so that integrity data cannot be separated from
-// what it describes.
+// is recorded inside the bundle so that it cannot be separated from the
+// member it describes.
 type Member struct {
 	Path   string `json:"path"`
 	Size   int64  `json:"size"`

@@ -24,7 +24,7 @@ func TestExportRecordsWhatBecameOfEveryObjectItAttempted(t *testing.T) {
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	_, content := readBundle(t, captured)
 	manifest := capturedManifest(t, content)
-	// The VirtualMachine the capture already had in hand, then every object it
+	// The VirtualMachine the capture had already read, then every object it
 	// went to the cluster for in the order it asked, then what describes the
 	// source cluster and is not addressed by reference at all, and last what
 	// the bundle needs a target to provide.
