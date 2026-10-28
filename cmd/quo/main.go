@@ -60,7 +60,7 @@ Usage:
   quo export -n <namespace> <name> [-o <path>] capture a VirtualMachine
   quo check -n <namespace> <name>              say what a capture would collect
   quo inspect <path>                           describe a bundle
-  quo deploy <bundle> -n <namespace> [--name <name>]
+  quo deploy <bundle> -n <namespace> [--name <name>] [--dry-run]
        [--network <network>=<attachment>] [--storage-class <source>=<target>]
                                                put a bundle onto a cluster
   quo undeploy <bundle> -n <namespace> [--dry-run]
@@ -86,7 +86,9 @@ of the machine's networks to a NetworkAttachmentDefinition of the target's,
 named with its namespace when it lives outside the deploy namespace. Every
 mapping is reported in the deploy record, and a requirement that resolves to
 nothing refuses the deploy before anything is created. Container disk images
-are reported as requirements and never pull-checked.
+are reported as requirements and never pull-checked. --dry-run runs every
+refusal a deploy runs and prints the record a real deploy would print, the
+mappings included; nothing is created and nothing is uploaded.
 
 The undeploy namespace is required for the same reason. quo undeploy removes
 exactly one deployment: the objects in the namespace carrying the bundle's

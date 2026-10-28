@@ -322,7 +322,8 @@ func checkVolumeMode(ctx context.Context, t cluster.Target, disk plannedDisk) (e
 // bundle holds that can be placed, named after the claim it backs. They
 // are created before anything uploads and before the VirtualMachine, so
 // that nothing in the namespace looks like a VirtualMachine until its
-// disks are in place.
+// disks are in place. A dry run creates none of them and still says each
+// one as created, which is what a real deploy would do with it.
 func createDataVolumes(
 	ctx context.Context,
 	t cluster.Target,
@@ -334,6 +335,13 @@ func createDataVolumes(
 		if disks[i].step.Outcome == OutcomeSkipped {
 			// A disk that creates nothing was decided when it was
 			// planned; the record already says why.
+			continue
+		}
+		if opt.DryRun {
+			// Nothing is created. The step still says created, because
+			// the record a dry run returns is the record a real deploy
+			// would print.
+			disks[i].step.Outcome = OutcomeCreated
 			continue
 		}
 		dataVolume := buildDataVolume(disks[i], opt, identity)
@@ -350,7 +358,8 @@ func createDataVolumes(
 // uploadDisks streams each held disk's bytes into its DataVolume, one at a
 // time, and finishes the deploy record's entry for it. A disk whose
 // DataVolume was not created is not uploaded, and a disk that fails does
-// not stop the ones behind it.
+// not stop the ones behind it. A dry run sends nothing: it reads each
+// member to its end instead, for the verdict on its bytes.
 func uploadDisks(
 	ctx context.Context,
 	t cluster.Target,
@@ -369,7 +378,9 @@ func uploadDisks(
 // upload streams one disk's member into its DataVolume through the
 // progress reporter, and records what became of it: created only when the
 // bytes the bundle holds arrived whole, skipped when they were not the
-// bytes the manifest recorded, failed when the upload itself failed.
+// bytes the manifest recorded, failed when the upload itself failed. A
+// dry run sends nothing and only reads the member, for the verdict on its
+// bytes.
 func upload(
 	ctx context.Context,
 	t cluster.Target,
@@ -379,7 +390,6 @@ func upload(
 	opt Options) {
 	//
 	disk := &disks[at]
-	report := newReporter(opt, disks, at)
 	stream, err := reader.OpenStream(disk.held.Path)
 	if err != nil {
 		// The member is indexed but the bundle does not carry it as far
@@ -389,6 +399,27 @@ func upload(
 		disk.step.Reason = err.Error()
 		return
 	}
+	if opt.DryRun {
+		// Nothing is sent anywhere, but the member is read to its end,
+		// because its digest is the one thing about the bytes a dry run
+		// can still vouch for: a member that fails it is a skip in the
+		// record, exactly as a real deploy records one.
+		_, readErr := io.Copy(io.Discard, stream)
+		if mismatch := stream.Mismatch(); mismatch != nil {
+			disk.step.Outcome = OutcomeSkipped
+			disk.step.Reason = mismatch.Error()
+			return
+		}
+		if readErr != nil {
+			// A member that ends before it is whole is one a real
+			// deploy would fail to send, which is what the dry run
+			// says.
+			disk.step.Outcome = OutcomeFailed
+			disk.step.Reason = "the upload would fail: " + readErr.Error()
+		}
+		return
+	}
+	report := newReporter(opt, disks, at)
 	report(0, false)
 	sent := &progressReader{in: stream, report: report, reported: time.Now()}
 	err = t.UploadDisk(ctx, opt.Namespace, disk.held.Claim, sent, stream.Size())

@@ -36,6 +36,14 @@ import (
 // to nothing is a refusal too, naming what was tried: nothing is created
 // whose needs cannot be placed.
 //
+// A dry run — Options.DryRun — runs the complete refusal set and returns
+// the record the real deploy would print: the objects it would create, in
+// the order it would create them, and the mappings it would apply. Nothing
+// is created, nothing is uploaded, and no labels land anywhere; the target
+// is only read. The members are still read and verified as the real deploy
+// reads them, so one that fails its digest is a skip in the record, and the
+// error is the one the real deploy's would be.
+//
 // Past the refusals the deploy is best-effort: a step that fails is
 // recorded and the run continues, and a bundle member that fails its
 // digest is skipped rather than applied, so corruption never reaches the
@@ -263,7 +271,9 @@ func readVirtualMachine(
 //
 // The step is the one readVirtualMachine built, so the entry a skipped
 // expansion would have recorded and the entry a created one records name
-// the same object. It is recorded whatever became of it.
+// the same object. It is recorded whatever became of it. A dry run creates
+// nothing and still says the machine as created, which is what a real
+// deploy would do with it.
 //
 // networks is what resolveNetworks decided for the machine's multus
 // networks; the applied VirtualMachine carries the mappings.
@@ -277,6 +287,13 @@ func createVirtualMachine(
 	identity string,
 	networks []Requirement) (finished Step) {
 	//
+	if opt.DryRun {
+		// Nothing is created. The step still says created, because the
+		// record a dry run returns is the record a real deploy would
+		// print.
+		step.Outcome = OutcomeCreated
+		return step
+	}
 	vm := buildVirtualMachine(expanded, opt, provenance, identity, networks)
 	createErr := t.Create(ctx, vm)
 	if createErr != nil {

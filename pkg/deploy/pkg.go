@@ -64,6 +64,12 @@ type Options struct {
 	// network that resolves to nothing, by the attachment's name or by a
 	// mapping, refuses the deploy.
 	Networks map[string]string
+	// DryRun reports what the deploy would do without doing any of it.
+	// Every refusal still runs and the record still says every object
+	// the deploy would create and every mapping it would apply, but
+	// nothing is created, nothing is uploaded, and no labels land
+	// anywhere: the target is only read.
+	DryRun bool
 	// Progress, when set, is called while a disk uploads, so that a
 	// deploy that takes hours can be told apart from one that has hung.
 	Progress func(p Progress)

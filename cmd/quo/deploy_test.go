@@ -17,6 +17,7 @@ func TestDeployAcceptsFlagsOnEitherSideOfTheBundle(t *testing.T) {
 		wantBundle    string
 		wantNamespace string
 		wantName      string
+		wantDryRun    bool
 	}{
 		{
 			name:          "the documented form, with the flags after the bundle",
@@ -37,6 +38,20 @@ func TestDeployAcceptsFlagsOnEitherSideOfTheBundle(t *testing.T) {
 			wantBundle:    "db-01.quo",
 			wantNamespace: "diagnostics",
 		},
+		{
+			name:          "a dry run, with the flag after the bundle",
+			args:          []string{"db-01.quo", "-n", "diagnostics", "--dry-run"},
+			wantBundle:    "db-01.quo",
+			wantNamespace: "diagnostics",
+			wantDryRun:    true,
+		},
+		{
+			name:          "a dry run, with the flag before the bundle",
+			args:          []string{"--dry-run", "-n", "diagnostics", "db-01.quo"},
+			wantBundle:    "db-01.quo",
+			wantNamespace: "diagnostics",
+			wantDryRun:    true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -49,6 +64,7 @@ func TestDeployAcceptsFlagsOnEitherSideOfTheBundle(t *testing.T) {
 			g.Expect(parsed.opt.Bundle).To(gomega.Equal(tt.wantBundle))
 			g.Expect(parsed.opt.Namespace).To(gomega.Equal(tt.wantNamespace))
 			g.Expect(parsed.opt.Name).To(gomega.Equal(tt.wantName))
+			g.Expect(parsed.opt.DryRun).To(gomega.Equal(tt.wantDryRun))
 		})
 	}
 }
@@ -372,4 +388,75 @@ func TestDeployRecordSaysNoUndeployCommandWhenNothingWasCreated(t *testing.T) {
 	// undeploy at.
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	g.Expect(reported.String()).ToNot(gomega.ContainSubstring("undeploy"))
+}
+
+func TestDeployDryRunPrintsTheRecordItWouldPrint(t *testing.T) {
+	g := gomega.NewGomegaWithT(t)
+	record := deploy.Record{
+		Steps: []deploy.Step{
+			{
+				Kind:      "DataVolume",
+				Namespace: "diagnostics",
+				Name:      "db-01-root",
+				Outcome:   deploy.OutcomeCreated,
+			},
+			{
+				Kind:      "VirtualMachine",
+				Namespace: "diagnostics",
+				Name:      "db-01",
+				Outcome:   deploy.OutcomeCreated,
+			},
+		},
+		Requirements: []deploy.Requirement{
+			{
+				Kind: "storage class",
+				From: "fast-rbd",
+				To:   "fast-rbd",
+				How:  "by name",
+			},
+		},
+	}
+	reported := &bytes.Buffer{}
+
+	err := printRecord(reported, record, deploy.Options{
+		Bundle:    "db-01.quo",
+		Namespace: "diagnostics",
+		DryRun:    true,
+	})
+
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	said := reported.String()
+	// The first thing said is that nothing happened: the steps below say
+	// created, because the record is the one a real deploy would print,
+	// and this line keeps them from being read as actions.
+	lines := strings.Split(said, "\n")
+	g.Expect(lines[0]).To(gomega.Equal("Dry run: nothing is created, nothing is uploaded."))
+	g.Expect(said).To(gomega.ContainSubstring("Deploy record (2)"))
+	g.Expect(said).To(gomega.ContainSubstring("diagnostics/db-01-root"))
+	g.Expect(said).To(gomega.ContainSubstring("created"))
+	// The mappings are what a dry run is for checking first.
+	g.Expect(said).To(gomega.ContainSubstring("Requirements (1)"))
+	g.Expect(said).To(gomega.ContainSubstring("fast-rbd -> fast-rbd"))
+	g.Expect(said).To(gomega.ContainSubstring("by name"))
+	// The last thing said is the command that removes what a real deploy
+	// of this bundle would put there, saying it as the dry run's own.
+	g.Expect(said).To(gomega.ContainSubstring("Remove what it would create with:"))
+	lines = strings.Split(strings.TrimRight(said, "\n"), "\n")
+	g.Expect(lines[len(lines)-1]).To(gomega.Equal("  quo undeploy db-01.quo -n diagnostics"))
+}
+
+func TestDeployDryRunPrintsNothingForARunThatRefusedBeforeAttemptingAnything(t *testing.T) {
+	g := gomega.NewGomegaWithT(t)
+	reported := &bytes.Buffer{}
+
+	err := printRecord(reported, deploy.Record{}, deploy.Options{
+		Bundle:    "db-01.quo",
+		Namespace: "diagnostics",
+		DryRun:    true,
+	})
+
+	// A dry run that would be refused says so and prints no record, the
+	// same way a refused real deploy does.
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	g.Expect(reported.String()).To(gomega.BeEmpty())
 }
