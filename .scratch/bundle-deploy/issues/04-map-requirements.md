@@ -133,3 +133,11 @@ Things the next tickets inherit:
   `--network`, and should: the round-trip is where the qualification
   rule — bare inside the deploy namespace, qualified outside — meets a
   real multus.
+
+Tickets 03 and 06 landed on the integration branch while this one was
+being built, and the merge resolved the three tickets onto one another:
+the closure phases and the undeploy command kept their places, this
+ticket's `record.Steps` shape and `Requirements` list carried through
+them, and their tests were adapted to the record's new shape in the
+merge. The printed record now carries both sections and ends with the
+undeploy command, as the glossary's deploy-record entry says it should.
