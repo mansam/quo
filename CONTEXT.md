@@ -84,6 +84,26 @@ _Avoid_: metadata, history, origin, source details
 **Expanded spec**:
 The source cluster's own resolution of the VirtualMachine, with its
 instancetype and preference folded in and the cluster's defaults applied. A
-bundle holds it as a member of its own rather than as a resource: no object
-on the cluster has that name and nothing will apply it to a target.
+bundle holds it as a member of its own rather than as a resource, and a
+deploy applies it, with the forced rewrites, as the deployed
+VirtualMachine: the target runs the machine the source resolved, not what
+the target would resolve from the same declaration. The captured
+VirtualMachine object remains the declaration of record.
 _Avoid_: expanded VirtualMachine, resolved spec, rendered spec
+
+### The deployment
+
+**Deploy record**:
+What a deploy prints when it ends: every object with its outcome —
+created, failed, or skipped, each with a reason — the forced rewrites
+performed, the mappings used, and the undeploy command for what exists.
+The deploy-side mirror of the capture record.
+_Avoid_: report, log, summary, results, output
+
+**Forced rewrite**:
+A change a deploy makes to a bundle's object because the target leaves no
+choice: the name when renaming, the namespace, the storage class from a
+mapping, the upload source of a DataVolume, the network name from a
+mapping, the removal of dataVolumeTemplates, the clearing of the source
+cluster's own metadata, the labels. Everything else deploys byte-for-byte.
+_Avoid_: mutation, transformation, patch

@@ -58,6 +58,9 @@ var resourceByKind = map[string]resource{
 	KindServiceAccount: {
 		gvr: schema.GroupVersionResource{Version: "v1", Resource: "serviceaccounts"},
 	},
+	KindVirtualMachine: {
+		gvr: schema.GroupVersionResource{Group: "kubevirt.io", Version: "v1", Resource: "virtualmachines"},
+	},
 	KindVirtualMachineInstancetype: {
 		gvr: instancetypeResource("virtualmachineinstancetypes"),
 	},

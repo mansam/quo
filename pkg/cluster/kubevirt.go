@@ -5,13 +5,16 @@ import (
 	"fmt"
 
 	k8serr "k8s.io/apimachinery/pkg/api/errors"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/discovery"
+	k8scached "k8s.io/client-go/discovery/cached/memory"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/restmapper"
 	"k8s.io/client-go/tools/clientcmd"
 )
 
@@ -21,6 +24,13 @@ var (
 		Group:    "kubevirt.io",
 		Version:  "v1",
 		Resource: "virtualmachines",
+	}
+	// namespaceResource serves namespaces, which a deploy reads to refuse
+	// before creating anything when the namespace it was told to deploy
+	// into is not there.
+	namespaceResource = schema.GroupVersionResource{
+		Version:  "v1",
+		Resource: "namespaces",
 	}
 	kubeVirtResource = schema.GroupVersionResource{
 		Group:    "kubevirt.io",
@@ -47,8 +57,10 @@ const (
 	expandSpecName = "virtualmachines/" + expandSpec
 )
 
-// KubeVirt is the Cluster backed by a real cluster. It adapts the Kubernetes
-// client and holds no logic of its own.
+// KubeVirt is the adapter over a real cluster, serving both directions quo
+// works in: it is a Cluster, for reading one, and a Target, for putting a
+// deployment onto one. It adapts the Kubernetes client and holds no logic
+// of its own.
 //
 // Objects are read as unstructured so that every field survives the round trip
 // into a bundle, including fields this build of quo does not know about.
@@ -60,6 +72,10 @@ type KubeVirt struct {
 	core      kubernetes.Interface
 	config    *rest.Config
 	host      string
+	// mapper finds the resource serving an object's kind, so that a
+	// deploy can create what a bundle holds without quo having to name
+	// the resource itself.
+	mapper apimeta.RESTMapper
 }
 
 // NewKubeVirt builds a Cluster from a kubeconfig. An empty path uses the
@@ -81,11 +97,14 @@ func NewKubeVirt(kubeconfig string) (c *KubeVirt, err error) {
 		err = fmt.Errorf("build cluster client: %w", err)
 		return
 	}
-	discoveryClient, err := discovery.NewDiscoveryClientForConfig(config)
+	plainDiscovery, err := discovery.NewDiscoveryClientForConfig(config)
 	if err != nil {
 		err = fmt.Errorf("build discovery client: %w", err)
 		return
 	}
+	// The mapper reads discovery lazily and reloads it when a mapping
+	// misses, so it needs a client that caches between the two.
+	discoveryClient := k8scached.NewMemCacheClient(plainDiscovery)
 	coreClient, err := kubernetes.NewForConfig(config)
 	if err != nil {
 		err = fmt.Errorf("build core client: %w", err)
@@ -97,6 +116,7 @@ func NewKubeVirt(kubeconfig string) (c *KubeVirt, err error) {
 		core:      coreClient,
 		config:    config,
 		host:      config.Host,
+		mapper:    restmapper.NewDeferredDiscoveryRESTMapper(discoveryClient),
 	}
 	return
 }

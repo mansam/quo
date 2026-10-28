@@ -527,6 +527,125 @@ func TestInspectListsTheDisksAndTheVolumesEachServes(t *testing.T) {
 	g.Expect(report).To(gomega.ContainSubstring("rootdisk, clone-of-rootdisk"))
 }
 
+func TestReaderReadsTheManifestAndHandsBackTheMembersOneAtATime(t *testing.T) {
+	g := gomega.NewGomegaWithT(t)
+	archive := tarball(t,
+		rawMember{path: ManifestPath, data: encodeManifest(t, indexing(t))},
+		rawMember{path: resourcePath, data: objectBody})
+
+	reader, err := Open(bytes.NewReader(archive))
+
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	g.Expect(reader.Manifest().Members).To(gomega.HaveLen(1))
+	content, err := reader.Read(resourcePath)
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	// The member is verified against the digest the manifest records for
+	// it, and its content is what is handed back.
+	g.Expect(content).To(gomega.Equal(objectBody))
+}
+
+func TestReaderReportsAMemberThatFailsItsDigestAndGoesOnReading(t *testing.T) {
+	g := gomega.NewGomegaWithT(t)
+	manifest := indexing(t)
+	manifest.Members = append(manifest.Members, Member{
+		Path:   ExpandedSpecPath,
+		Size:   int64(len(expandedBody)),
+		Digest: digest(expandedBody),
+	})
+	archive := tarball(t,
+		rawMember{path: ManifestPath, data: encodeManifest(t, manifest)},
+		rawMember{path: resourcePath, data: []byte("corrupted in transit")},
+		rawMember{path: ExpandedSpecPath, data: expandedBody})
+
+	reader, err := Open(bytes.NewReader(archive))
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	_, err = reader.Read(resourcePath)
+	g.Expect(err).To(gomega.MatchError(&DigestMismatchError{}))
+	g.Expect(err.Error()).To(gomega.ContainSubstring(resourcePath))
+
+	// The failed member is behind the reader, so the members that follow
+	// are still readable. A caller that records the corruption can go on
+	// to what arrived whole.
+	content, err := reader.Read(ExpandedSpecPath)
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	g.Expect(content).To(gomega.Equal(expandedBody))
+}
+
+func TestReaderRefusesAMemberItCannotHandBack(t *testing.T) {
+	tests := []struct {
+		name    string
+		archive []byte
+		ask     string
+		reread  bool
+		want    error
+		names   string
+	}{
+		{
+			name: "a member the manifest does not index",
+			archive: tarball(t,
+				rawMember{path: ManifestPath, data: encodeManifest(t, indexing(t))},
+				rawMember{path: resourcePath, data: objectBody}),
+			ask:   "resources/configmap/stowaway.yaml",
+			want:  &FormatError{},
+			names: "is not indexed by the manifest",
+		},
+		{
+			name: "a member the manifest indexes but the bundle does not carry",
+			archive: tarball(t,
+				rawMember{path: ManifestPath, data: encodeManifest(t, indexing(t))}),
+			ask:   resourcePath,
+			want:  &FormatError{},
+			names: "absent",
+		},
+		{
+			name: "a member already read",
+			archive: tarball(t,
+				rawMember{path: ManifestPath, data: encodeManifest(t, indexing(t))},
+				rawMember{path: resourcePath, data: objectBody}),
+			ask:    resourcePath,
+			reread: true,
+			names:  "has already been read",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := gomega.NewGomegaWithT(t)
+			reader, openErr := Open(bytes.NewReader(tt.archive))
+			g.Expect(openErr).ToNot(gomega.HaveOccurred())
+
+			_, err := reader.Read(tt.ask)
+			if tt.reread {
+				g.Expect(err).ToNot(gomega.HaveOccurred())
+				_, err = reader.Read(tt.ask)
+			}
+
+			if tt.want == nil {
+				g.Expect(err).To(gomega.HaveOccurred())
+			} else {
+				g.Expect(err).To(gomega.MatchError(tt.want))
+			}
+			g.Expect(err.Error()).To(gomega.ContainSubstring(tt.names))
+		})
+	}
+}
+
+func TestReaderHandsBackTheManifestsOwnBytes(t *testing.T) {
+	g := gomega.NewGomegaWithT(t)
+	data := encodeManifest(t, indexing(t))
+	archive := tarball(t,
+		rawMember{path: ManifestPath, data: data},
+		rawMember{path: resourcePath, data: objectBody})
+
+	reader, err := Open(bytes.NewReader(archive))
+
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	// No member indexes the manifest, so nothing inside the bundle records
+	// its digest; a reader that needs to say which bundle it is holding
+	// hashes these bytes.
+	g.Expect(reader.ManifestBytes()).To(gomega.Equal(data))
+}
+
 // rawMember is a tar member written exactly as given.
 type rawMember struct {
 	path string

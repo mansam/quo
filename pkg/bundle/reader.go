@@ -16,6 +16,9 @@ import (
 // matches the digest the manifest records for it. Member content is streamed
 // through the digest and discarded, so reading a bundle costs no more memory
 // than its largest member's header.
+//
+// A reader that wants the members one at a time, verifying each as it is
+// used rather than the whole bundle up front, uses Open instead.
 func Read(in io.Reader) (manifest *Manifest, err error) {
 	manifest, absent, err := readArrived(in)
 	if err != nil {
@@ -41,7 +44,7 @@ func Read(in io.Reader) (manifest *Manifest, err error) {
 // running ends part-way through the file by definition.
 func readArrived(in io.Reader) (manifest *Manifest, absent []string, err error) {
 	tr := tar.NewReader(in)
-	manifest, err = readManifest(tr)
+	manifest, _, err = readManifest(tr)
 	if err != nil {
 		return
 	}
@@ -54,8 +57,12 @@ func readArrived(in io.Reader) (manifest *Manifest, absent []string, err error) 
 	return
 }
 
-// readManifest reads and validates the first member of the bundle.
-func readManifest(tr *tar.Reader) (manifest *Manifest, err error) {
+// readManifest reads and validates the first member of the bundle, returning
+// the manifest and the member's own content. The content is returned because
+// no member indexes the manifest, so nothing inside a bundle records its
+// digest; a reader that needs to say which bundle it is holding hashes these
+// bytes.
+func readManifest(tr *tar.Reader) (manifest *Manifest, content []byte, err error) {
 	header, err := tr.Next()
 	if errors.Is(err, io.EOF) {
 		err = &FormatError{Reason: "the bundle is empty"}
@@ -71,13 +78,13 @@ func readManifest(tr *tar.Reader) (manifest *Manifest, err error) {
 		}
 		return
 	}
-	encoded, err := io.ReadAll(tr)
+	content, err = io.ReadAll(tr)
 	if err != nil {
 		err = fmt.Errorf("read manifest: %w", err)
 		return
 	}
 	manifest = &Manifest{}
-	err = yaml.Unmarshal(encoded, manifest)
+	err = yaml.Unmarshal(content, manifest)
 	if err != nil {
 		manifest = nil
 		err = &FormatError{Reason: "the manifest is not valid YAML: " + err.Error()}
@@ -161,6 +168,134 @@ func verifyMember(tr *tar.Reader, member Member) (err error) {
 			Got:  found,
 		}
 		return
+	}
+	return
+}
+
+// Reader reads a bundle one member at a time.
+//
+// The manifest is read and validated by Open. After that a member is read
+// only when it is asked for, and it is verified against the digest the
+// manifest records for it as it is read. A member whose digest does not
+// match is reported rather than fatal to the reader: the caller decides
+// what a corrupted member means, and a deploy records the gap and goes on
+// to the members that follow.
+//
+// A member passed over on the way to a later one is not verified. Only
+// what is read is checked, which is what keeps a reader from hashing
+// every disk a bundle holds before it starts.
+type Reader struct {
+	manifest       *Manifest
+	manifestMember []byte
+	tr             *tar.Reader
+	memberByPath   map[string]Member
+	// passed is the members a walk has already gone by, whether they were
+	// read or merely stepped over.
+	passed map[string]bool
+}
+
+// Open starts reading a bundle from in: it reads the manifest at the
+// front, refuses a bundle whose format version this build does not
+// understand, and returns a Reader positioned before the first member the
+// manifest indexes.
+func Open(in io.Reader) (r *Reader, err error) {
+	tr := tar.NewReader(in)
+	manifest, manifestMember, err := readManifest(tr)
+	if err != nil {
+		return
+	}
+	memberByPath := make(map[string]Member, len(manifest.Members))
+	for i := range manifest.Members {
+		memberByPath[manifest.Members[i].Path] = manifest.Members[i]
+	}
+	r = &Reader{
+		manifest:       manifest,
+		manifestMember: manifestMember,
+		tr:             tr,
+		memberByPath:   memberByPath,
+		passed:         make(map[string]bool, len(manifest.Members)),
+	}
+	return
+}
+
+// Manifest returns the manifest the bundle was opened with.
+func (r *Reader) Manifest() (manifest *Manifest) {
+	manifest = r.manifest
+	return
+}
+
+// ManifestBytes returns the manifest's own content. No member indexes the
+// manifest, so nothing inside the bundle records its digest; a reader that
+// needs to say which bundle it is holding — a deploy, labelling what it
+// creates — hashes these bytes.
+func (r *Reader) ManifestBytes() (content []byte) {
+	content = r.manifestMember
+	return
+}
+
+// Read returns the content of the member at path, verified against the
+// digest the manifest records for it.
+//
+// A bundle is a tar, so members arrive in the order they were written and
+// can be read only once: reading a member passes over every member before
+// it, and asking for one already gone by is an error. Reading a member
+// that failed its digest leaves the reader positioned after it, so a
+// caller that records the failure can go on to the members that follow.
+func (r *Reader) Read(path string) (content []byte, err error) {
+	member, indexed := r.memberByPath[path]
+	if !indexed {
+		err = &FormatError{
+			Reason: fmt.Sprintf("member %q is not indexed by the manifest", path),
+		}
+		return
+	}
+	if r.passed[path] {
+		err = fmt.Errorf("member %q has already been read", path)
+		return
+	}
+	for {
+		header, nextErr := r.tr.Next()
+		if cutShort(nextErr) {
+			err = absentMember(path)
+			return
+		}
+		if nextErr != nil {
+			err = fmt.Errorf("read bundle: %w", nextErr)
+			return
+		}
+		if _, known := r.memberByPath[header.Name]; !known {
+			err = &FormatError{
+				Reason: fmt.Sprintf("member %q is not indexed by the manifest", header.Name),
+			}
+			return
+		}
+		r.passed[header.Name] = true
+		if header.Name != path {
+			continue
+		}
+		content, err = io.ReadAll(r.tr)
+		if cutShort(err) {
+			err = absentMember(path)
+			return
+		}
+		if err != nil {
+			err = fmt.Errorf("read member %q: %w", path, err)
+			return
+		}
+		found := digest(content)
+		if found != member.Digest {
+			err = &DigestMismatchError{Path: path, Want: member.Digest, Got: found}
+			return
+		}
+		return
+	}
+}
+
+// absentMember reports a member the manifest indexes that the bundle does
+// not carry as far as this reader has read.
+func absentMember(path string) (err error) {
+	err = &FormatError{
+		Reason: fmt.Sprintf("member %q is indexed by the manifest but absent", path),
 	}
 	return
 }
