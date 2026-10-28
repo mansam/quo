@@ -102,12 +102,16 @@ func describeResources(out io.Writer, manifest *Manifest) {
 
 // describeExpandedSpec names the member holding the source cluster's
 // expansion of the VirtualMachine. A bundle whose capture could not read it
-// produces no output here.
+// says so rather than staying silent: the expansion is what a deploy applies,
+// so a bundle holding none cannot be deployed, and this is where a reader
+// learns it. The statement comes from the manifest, so it is said even while
+// the rest of the bundle is still arriving.
 func describeExpandedSpec(out io.Writer, manifest *Manifest) {
+	_, _ = fmt.Fprintf(out, "\nExpanded spec\n")
 	if manifest.ExpandedSpec == "" {
+		_, _ = fmt.Fprintf(out, "  none, so the bundle cannot be deployed\n")
 		return
 	}
-	_, _ = fmt.Fprintf(out, "\nExpanded spec\n")
 	_, _ = fmt.Fprintf(out, "  %s\n", manifest.ExpandedSpec)
 }
 
