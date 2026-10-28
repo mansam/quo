@@ -194,7 +194,7 @@ func placeStorageClass(
 	source string,
 	opt Options) (mapping Requirement, err error) {
 	//
-	mapping.Kind = "storage class"
+	mapping.Kind = KindStorageClass
 	mapping.From = source
 	if named, found := opt.StorageClasses[source]; found {
 		// The command line said where these disks go, which overrides
@@ -223,7 +223,7 @@ func placeStorageClass(
 	catchAll, found := opt.StorageClasses[catchAllClass]
 	if !found {
 		err = &UnmappedRequirementError{
-			Kind:        "storage class",
+			Kind:        KindStorageClass,
 			Requirement: source,
 			Tried: fmt.Sprintf(
 				"no storage class of that name is there and no mapping names another; "+
@@ -257,7 +257,7 @@ func verifyStorageClass(
 		return
 	}
 	err = &UnmappedRequirementError{
-		Kind:        "storage class",
+		Kind:        KindStorageClass,
 		Requirement: source,
 		Tried: fmt.Sprintf(
 			"the mapping %s names a class the target does not have", named),

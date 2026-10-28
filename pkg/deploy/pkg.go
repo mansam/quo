@@ -139,6 +139,21 @@ func dryRunStep(step *Step) {
 	step.Outcome = OutcomeCreated
 }
 
+// Kind is the sort of thing a requirement asks the target for.
+type Kind string
+
+// Kinds
+const (
+	// KindStorageClass is the storage a disk asks to be placed on.
+	KindStorageClass Kind = "storage class"
+	// KindNetwork is the network one of the machine's networks asks to
+	// be attached to.
+	KindNetwork Kind = "network"
+	// KindContainerDisk is the container disk image a volume is served
+	// from, which the target has to be able to pull.
+	KindContainerDisk Kind = "container disk"
+)
+
 // Requirement is one of the bundle's requirements as a deploy placed it
 // on the target: what the bundle asked for, what the target provides
 // for it, and how the two were put together. A requirement a deploy
@@ -147,7 +162,7 @@ func dryRunStep(step *Step) {
 type Requirement struct {
 	// Kind says what sort of thing the requirement asks the target for:
 	// a storage class, a network, or a container disk image.
-	Kind string
+	Kind Kind
 	// From is the requirement's own name for what it needs: the class
 	// the bundle records, the VirtualMachine's name for the network, or
 	// the image a container disk is served from.

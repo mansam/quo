@@ -164,7 +164,7 @@ func (r *NoCDIError) Is(err error) (matched bool) {
 type UnmappedRequirementError struct {
 	// Kind is the sort of thing the requirement asks the target for: a
 	// storage class or a network.
-	Kind string
+	Kind Kind
 	// Requirement is the bundle's own name for what it needs: the class
 	// a disk was provisioned from, or the VirtualMachine's name for the
 	// network.

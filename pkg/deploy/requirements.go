@@ -44,7 +44,7 @@ func attachNetworks(
 			return nil, err
 		}
 		networks = append(networks, Requirement{
-			Kind: "network",
+			Kind: KindNetwork,
 			From: required[i].Name,
 			To:   attachment,
 			How:  how,
@@ -81,7 +81,7 @@ func attachNetwork(
 	}
 	if !held {
 		err = &UnmappedRequirementError{
-			Kind:        "network",
+			Kind:        KindNetwork,
 			Requirement: network,
 			Tried: fmt.Sprintf(
 				"--network maps it to %q, which the target cluster does not have",
@@ -112,7 +112,7 @@ func attachNetworkByName(
 	//
 	if required.Attachment == "" {
 		err = &UnmappedRequirementError{
-			Kind:        "network",
+			Kind:        KindNetwork,
 			Requirement: required.Name,
 			Tried: fmt.Sprintf(
 				"the bundle names no attachment for it and no --network maps it; "+
@@ -131,7 +131,7 @@ func attachNetworkByName(
 	}
 	if !held {
 		err = &UnmappedRequirementError{
-			Kind:        "network",
+			Kind:        KindNetwork,
 			Requirement: required.Name,
 			Tried: fmt.Sprintf(
 				"the deploy namespace %s holds no NetworkAttachmentDefinition %q and no --network maps it; "+
@@ -155,7 +155,7 @@ func reportedContainerDisks(
 	//
 	for i := range required {
 		reported = append(reported, Requirement{
-			Kind: "container disk",
+			Kind: KindContainerDisk,
 			From: required[i].Image,
 			How:  "the target has to be able to pull it",
 		})
