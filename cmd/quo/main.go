@@ -1,7 +1,7 @@
 // Command quo captures a stopped KubeVirt VirtualMachine as a diagnostic
 // bundle, says what a capture would collect before one is run, inspects
-// bundles it has captured, and deploys a bundle onto a cluster as a
-// stopped VirtualMachine.
+// bundles it has captured, puts a bundle onto a cluster as a stopped
+// VirtualMachine, and takes a bundle's deployment off a cluster again.
 package main
 
 import (
@@ -41,6 +41,8 @@ func run(args []string) (err error) {
 		err = runInspect(args[1:])
 	case "deploy":
 		err = runDeploy(args[1:])
+	case "undeploy":
+		err = runUndeploy(args[1:])
 	case "-h", "--help", "help":
 		usage(os.Stdout)
 	default:
@@ -61,6 +63,8 @@ Usage:
   quo deploy <bundle> -n <namespace> [--name <name>]
        [--network <network>=<attachment>] [--storage-class <source>=<target>]
                                                put a bundle onto a cluster
+  quo undeploy <bundle> -n <namespace> [--dry-run]
+                                               take a bundle off a cluster
 
 The export path may be a directory or the name of the bundle file. A directory,
 or no -o at all, gets a bundle named after the VirtualMachine; with no -o that
@@ -83,6 +87,12 @@ named with its namespace when it lives outside the deploy namespace. Every
 mapping is reported in the deploy record, and a requirement that resolves to
 nothing refuses the deploy before anything is created. Container disk images
 are reported as requirements and never pull-checked.
+
+The undeploy namespace is required for the same reason. quo undeploy removes
+exactly one deployment: the objects in the namespace carrying the bundle's
+label, and nothing else — not another bundle's deployment, not anyone else's
+work. It does not wait for deletions to finish; a deletion that hangs is what
+kubectl is for. --dry-run says what it would delete and deletes nothing.
 
 A bundle contains plaintext Secrets from the source cluster. Treat it with the
 same care as the cluster it was captured from.

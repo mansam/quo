@@ -1,9 +1,11 @@
 // Package deploy puts a bundle onto a cluster as a stopped VirtualMachine
-// with its disks populated through CDI's upload.
+// with its disks populated through CDI's upload, and takes a bundle's
+// deployment off a cluster again.
 //
-// Deploy is the library entry point. The CLI only parses a command line
-// and calls it, and tests call it directly: given a fake target and a
-// bundle, a test gets back the deploy record a real deploy would print.
+// Deploy and Undeploy are the library entry points. The CLI only parses
+// a command line and calls one of them, and tests call them directly:
+// given a fake target and a bundle, a test gets back the deploy record
+// or the list of deletions a real run would print.
 //
 // The VirtualMachine a deploy creates is the bundle's expanded spec — the
 // source cluster's own resolution of the machine — carrying the forced
@@ -11,6 +13,13 @@
 // applied: it stays the declaration of record. Instancetypes, preferences
 // and ControllerRevisions are never created either; they are in the
 // bundle to be read.
+//
+// The ConfigMaps, Secrets and ServiceAccounts a bundle holds are applied
+// unchanged apart from the forced rewrites, so that the machine's
+// cloud-init, sysprep and access credentials are present when it is
+// examined. Everything else a bundle holds — the network and storage
+// objects above all — is never written, because it describes the source
+// cluster rather than the machine.
 //
 // Every disk becomes a DataVolume named after the claim it backs, with
 // source upload, and the bundle's bytes are streamed into it unchanged.

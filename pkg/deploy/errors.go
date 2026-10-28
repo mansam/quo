@@ -2,6 +2,9 @@ package deploy
 
 import (
 	"fmt"
+	"strings"
+
+	"github.com/mansam/quo/pkg/cluster"
 )
 
 // NoExpandedSpecError reports a bundle whose capture could not read the
@@ -45,18 +48,33 @@ func (r *MissingNamespaceError) Is(err error) (matched bool) {
 	return
 }
 
-// AlreadyExistsError reports an object the target cluster already holds
-// where a deploy would create one of its own. Someone else's work is
-// neither overwritten nor built around.
+// AlreadyExistsError reports objects the target cluster already holds
+// where a deploy would create its own. Someone else's work is neither
+// overwritten nor built around.
 type AlreadyExistsError struct {
-	Kind      string
-	Namespace string
-	Name      string
+	// Objects are the colliding objects, in the order the deploy would
+	// create them.
+	Objects []cluster.ObjectRef
 }
 
-// Error names the object that is already there.
+// Error names every object that is already there.
 func (r *AlreadyExistsError) Error() string {
-	return fmt.Sprintf("%s %s/%s already exists on the target cluster", r.Kind, r.Namespace, r.Name)
+	named := make([]string, 0, len(r.Objects))
+	for i := range r.Objects {
+		named = append(named, fmt.Sprintf(
+			"%s %s/%s",
+			r.Objects[i].Kind,
+			r.Objects[i].Namespace,
+			r.Objects[i].Name))
+	}
+	exists := "exist"
+	if len(r.Objects) == 1 {
+		exists = "exists"
+	}
+	return fmt.Sprintf(
+		"%s already %s on the target cluster",
+		strings.Join(named, ", "),
+		exists)
 }
 
 // Is reports whether err is an AlreadyExistsError.
@@ -85,6 +103,30 @@ func (r *NotCreatedError) Error() string {
 // Is reports whether err is a NotCreatedError.
 func (r *NotCreatedError) Is(err error) (matched bool) {
 	_, matched = err.(*NotCreatedError)
+	return
+}
+
+// NotDeletedError reports an undeploy that ran but did not delete
+// everything it tried to. What the undeploy deleted names each object
+// and what became of it; this error is what makes the exit code
+// non-zero, so that a script can tell a complete undeploy from a
+// partial one.
+type NotDeletedError struct {
+	NotDeleted int
+	Attempted  int
+}
+
+// Error says how much of the undeploy arrived.
+func (r *NotDeletedError) Error() string {
+	return fmt.Sprintf(
+		"the undeploy deleted %d of the %d objects it tried to",
+		r.Attempted-r.NotDeleted,
+		r.Attempted)
+}
+
+// Is reports whether err is a NotDeletedError.
+func (r *NotDeletedError) Is(err error) (matched bool) {
+	_, matched = err.(*NotDeletedError)
 	return
 }
 

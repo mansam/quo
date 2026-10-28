@@ -239,16 +239,23 @@ func TestInspectNamesTheMemberHoldingTheExpandedSpec(t *testing.T) {
 	g.Expect(report).To(gomega.ContainSubstring(ExpandedSpecPath))
 	listed := regexp.MustCompile(`VirtualMachine\s+db-01\n`).FindAllString(report, -1)
 	g.Expect(listed).To(gomega.HaveLen(1))
+	// A bundle holding the expansion is deployable material, so nothing
+	// says otherwise.
+	g.Expect(report).ToNot(gomega.ContainSubstring("cannot be deployed"))
 }
 
-func TestInspectSaysNothingAboutTheExpandedSpecWhenABundleHoldsNone(t *testing.T) {
+func TestInspectSaysABundleHoldingNoExpandedSpecCannotBeDeployed(t *testing.T) {
 	g := gomega.NewGomegaWithT(t)
 	described := &bytes.Buffer{}
 
 	err := Inspect(bytes.NewReader(validBundle(t)), described)
 
+	// The expansion is what a deploy applies, so a bundle holding none
+	// will be refused by one. Saying so here is how a recipient learns it
+	// before trying, rather than from the refusal itself.
 	g.Expect(err).ToNot(gomega.HaveOccurred())
-	g.Expect(described.String()).ToNot(gomega.ContainSubstring("Expanded spec"))
+	g.Expect(described.String()).To(gomega.ContainSubstring(
+		"Expanded spec\n  none, so the bundle cannot be deployed\n"))
 }
 
 func TestInspectPrintsWhatABundleNeedsFromItsLeadingManifestAlone(t *testing.T) {
@@ -283,6 +290,10 @@ func TestInspectPrintsWhatABundleNeedsFromItsLeadingManifestAlone(t *testing.T) 
 	g.Expect(report).To(gomega.MatchRegexp(`db-01-data\s+\(unknown\)\s+\(unknown\)\s+class: \(unknown\)\n`))
 	g.Expect(report).To(gomega.ContainSubstring("Container disk images required (1)"))
 	g.Expect(report).To(gomega.MatchRegexp(`containerdisk\s+quay\.io/example/fedora:41\n`))
+	// The statement that a bundle cannot be deployed is in the manifest
+	// too, so a recipient of a transfer that is still running learns it
+	// before any disk arrives.
+	g.Expect(report).To(gomega.ContainSubstring("cannot be deployed"))
 }
 
 func TestInspectDescribesATransferThatStoppedPartWayThroughADisk(t *testing.T) {

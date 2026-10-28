@@ -18,7 +18,7 @@ func TestDeployMapsANetworkOntoTheAttachmentOfItsName(t *testing.T) {
 		Kind:      cluster.KindNetworkAttachmentDefinition,
 		Namespace: testDeployNamespace,
 		Name:      testAttachment,
-	}, networkAttachmentDefinition(testDeployNamespace, testAttachment))
+	}, heldAttachment(testDeployNamespace, testAttachment))
 
 	record, err := Deploy(context.TODO(), fake, testOptions(path))
 
@@ -96,7 +96,7 @@ func TestDeployAttachesANetworkToTheAttachmentAMappingNames(t *testing.T) {
 				Kind:      cluster.KindNetworkAttachmentDefinition,
 				Namespace: tt.holds,
 				Name:      attachment,
-			}, networkAttachmentDefinition(tt.holds, attachment))
+			}, heldAttachment(tt.holds, attachment))
 			opt := testOptions(path)
 			opt.Networks = map[string]string{testMultusNetwork: tt.named}
 

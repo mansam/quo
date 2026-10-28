@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 
 	"github.com/onsi/gomega"
@@ -219,7 +220,7 @@ func TestDeployPrintsTheRecordHoweverTheRunEnded(t *testing.T) {
 	}
 	reported := &bytes.Buffer{}
 
-	err := printRecord(reported, record)
+	err := printRecord(reported, record, deploy.Options{Bundle: "db-01.quo", Namespace: "diagnostics"})
 
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	said := reported.String()
@@ -280,7 +281,7 @@ func TestDeployPrintsTheRequirementsARecordCarries(t *testing.T) {
 	}
 	reported := &bytes.Buffer{}
 
-	err := printRecord(reported, record)
+	err := printRecord(reported, record, deploy.Options{Bundle: "db-01.quo", Namespace: "diagnostics"})
 
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	said := reported.String()
@@ -305,8 +306,70 @@ func TestDeployPrintsNothingForARunThatRefusedBeforeAttemptingAnything(t *testin
 	g := gomega.NewGomegaWithT(t)
 	reported := &bytes.Buffer{}
 
-	err := printRecord(reported, deploy.Record{})
+	err := printRecord(reported, deploy.Record{}, deploy.Options{Bundle: "db-01.quo", Namespace: "diagnostics"})
 
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	g.Expect(reported.String()).To(gomega.BeEmpty())
+}
+
+func TestDeployRecordEndsWithTheUndeployCommandForWhatExists(t *testing.T) {
+	g := gomega.NewGomegaWithT(t)
+	record := deploy.Record{
+		Steps: []deploy.Step{
+			{
+				Kind:      "DataVolume",
+				Namespace: "diagnostics",
+				Name:      "db-01-root",
+				Outcome:   deploy.OutcomeCreated,
+			},
+			{
+				Kind:      "VirtualMachine",
+				Namespace: "diagnostics",
+				Name:      "db-01",
+				Outcome:   deploy.OutcomeCreated,
+			},
+		},
+	}
+	reported := &bytes.Buffer{}
+
+	err := printRecord(
+		reported,
+		record,
+		deploy.Options{Bundle: "db-01.quo", Namespace: "diagnostics"})
+
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	// The last thing said is the command that removes what the deploy
+	// put there: the exact bundle path and namespace, so it can be run
+	// as it reads.
+	said := reported.String()
+	g.Expect(said).To(gomega.ContainSubstring("Remove it again with:"))
+	g.Expect(said).To(gomega.ContainSubstring("quo undeploy db-01.quo -n diagnostics"))
+	lines := strings.Split(strings.TrimRight(said, "\n"), "\n")
+	g.Expect(lines[len(lines)-1]).To(gomega.Equal("  quo undeploy db-01.quo -n diagnostics"))
+}
+
+func TestDeployRecordSaysNoUndeployCommandWhenNothingWasCreated(t *testing.T) {
+	g := gomega.NewGomegaWithT(t)
+	record := deploy.Record{
+		Steps: []deploy.Step{
+			{
+				Kind:      "VirtualMachine",
+				Namespace: "diagnostics",
+				Name:      "db-01",
+				Outcome:   deploy.OutcomeFailed,
+				Reason:    "the API server went away",
+			},
+		},
+	}
+	reported := &bytes.Buffer{}
+
+	err := printRecord(
+		reported,
+		record,
+		deploy.Options{Bundle: "db-01.quo", Namespace: "diagnostics"})
+
+	// There is nothing on the target, so there is nothing to point an
+	// undeploy at.
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	g.Expect(reported.String()).ToNot(gomega.ContainSubstring("undeploy"))
 }

@@ -9,13 +9,15 @@ import (
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
 )
 
-// Target is everything a deploy needs from the cluster it deploys onto. It
-// is the mirror of the Cluster interface: everything quo writes outside its
-// own process passes through it, so that a test can substitute a fake and
-// never needs a running cluster.
+// Target is everything a deploy needs from the cluster it deploys onto,
+// and everything an undeploy needs from the one it takes a deployment
+// off. It is the mirror of the Cluster interface: everything quo writes
+// outside its own process passes through it, so that a test can
+// substitute a fake and never needs a running cluster.
 //
 // The reads are for the refusals a deploy makes before it creates anything:
 // a namespace that is not there, a name that is already taken. Finding
@@ -46,6 +48,22 @@ type Target interface {
 	// bytes, so a caller that creates the DataVolume and uploads into it
 	// at once needs no readiness loop of its own.
 	UploadDisk(ctx context.Context, namespace, name string, content io.Reader, size int64) (err error)
+	// ListByLabel returns the objects namespace holds that carry the
+	// label key=value. A deploy labels everything it creates with the
+	// bundle's identity, so one label lists one whole deployment, which
+	// is the selection an undeploy makes. Only DeployedKinds are
+	// scanned, because they are the only kinds that can carry the label,
+	// and a kind the cluster serves no resource for is skipped, because
+	// nothing was ever deployed of it. Each object returned carries its
+	// own kind, so a Delete can find the resource to delete from the
+	// way a Create finds the one to write to.
+	ListByLabel(ctx context.Context, namespace, key, value string) (objects []*unstructured.Unstructured, err error)
+	// Delete removes one object from the cluster — one a ListByLabel
+	// returned. It returns once the API server accepts the deletion and
+	// does not wait for the object to be gone: a finalizer can hold one
+	// for as long as it likes, and a deletion that hangs is what
+	// kubectl is for.
+	Delete(ctx context.Context, object *unstructured.Unstructured) (err error)
 }
 
 // The KubeVirt adapter serves both directions quo works in.
@@ -99,6 +117,97 @@ func (r *KubeVirt) Create(ctx context.Context, object *unstructured.Unstructured
 			named = object.GetNamespace() + "/" + named
 		}
 		err = fmt.Errorf("create %s %s: %w", gvk.Kind, named, err)
+		return
+	}
+	return
+}
+
+// DeployedKinds are the kinds of object a deploy can leave in a
+// namespace: the VirtualMachine it applies, the DataVolumes it creates
+// for the bundle's disks, and the ConfigMaps, Secrets and ServiceAccounts
+// it applies unchanged — the by-kind table's created rows. Everything
+// else a bundle holds is read at most and never written, so nothing else
+// carries a deploy's label.
+//
+// The claim a DataVolume creates is not among them: CDI owns the claim
+// through an owner reference and removes it with the DataVolume, so an
+// undeploy never selects the claim on its own.
+var DeployedKinds = []string{
+	KindConfigMap,
+	KindDataVolume,
+	KindSecret,
+	KindServiceAccount,
+	KindVirtualMachine,
+}
+
+// ListByLabel returns the objects namespace holds that carry the label
+// key=value.
+//
+// Each of DeployedKinds is listed with the label as its selector. A kind
+// the cluster serves no resource for reads back from a list as a
+// not-found — a resource the cluster serves would return an empty list —
+// so that kind is skipped: nothing was ever deployed of it.
+func (r *KubeVirt) ListByLabel(
+	ctx context.Context,
+	namespace, key, value string) (objects []*unstructured.Unstructured, err error) {
+	//
+	selector := key + "=" + value
+	for _, kind := range DeployedKinds {
+		served := resourceByKind[kind]
+		list, listErr := r.dynamic.
+			Resource(served.gvr).
+			Namespace(namespace).
+			List(ctx, meta.ListOptions{LabelSelector: selector})
+		if listErr != nil {
+			if k8serr.IsNotFound(listErr) {
+				continue
+			}
+			err = fmt.Errorf("list %s in namespace %q: %w", kind, namespace, listErr)
+			return
+		}
+		// The kind is stamped on each object, so that what a list returns
+		// names its own kind and a Delete can find the resource from it
+		// the way a Create does.
+		gvk := schema.GroupVersionKind{
+			Group:   served.gvr.Group,
+			Version: served.gvr.Version,
+			Kind:    kind,
+		}
+		for i := range list.Items {
+			list.Items[i].SetGroupVersionKind(gvk)
+			objects = append(objects, &list.Items[i])
+		}
+	}
+	return
+}
+
+// Delete removes one object from the cluster.
+//
+// The resource to delete from is found from the object's own kind
+// through discovery, the way Create's is, so the objects a ListByLabel
+// returned can be handed straight back. The call returns once the API
+// server accepts the deletion; whether the object is gone yet — a
+// finalizer can hold one — is the cluster's business.
+func (r *KubeVirt) Delete(ctx context.Context, object *unstructured.Unstructured) (err error) {
+	//
+	gvk := object.GroupVersionKind()
+	mapping, err := r.mapper.RESTMapping(gvk.GroupKind(), gvk.Version)
+	if err != nil {
+		err = fmt.Errorf("find the resource serving a %s: %w", gvk.Kind, err)
+		return
+	}
+	api := r.dynamic.Resource(mapping.Resource)
+	writer := dynamic.ResourceInterface(api)
+	if mapping.Scope.Name() == apimeta.RESTScopeNameNamespace {
+		writer = api.Namespace(object.GetNamespace())
+	}
+	err = writer.Delete(ctx, object.GetName(), meta.DeleteOptions{})
+	if err != nil {
+		named := object.GetName()
+		if object.GetNamespace() != "" {
+			named = object.GetNamespace() + "/" + named
+		}
+		err = fmt.Errorf("delete %s %s: %w", gvk.Kind, named, err)
 		return
 	}
 	return
