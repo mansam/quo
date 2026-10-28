@@ -114,25 +114,36 @@ func (r *NoCDIError) Is(err error) (matched bool) {
 	return
 }
 
-// MissingStorageClassError reports a disk whose storage class the target
-// cluster does not have under the name the bundle records. The disks are
-// not uploaded that cannot be placed.
-type MissingStorageClassError struct {
-	Claim        string
-	StorageClass string
+// UnresolvedRequirementError reports a requirement of the bundle's that
+// resolved to nothing on the target cluster. The disks are not uploaded
+// and the machine is not created for a bundle whose needs cannot be
+// placed; the error says what was tried, so the mapping that is missing
+// can be named on the command line.
+type UnresolvedRequirementError struct {
+	// Kind is the sort of thing the requirement asks the target for: a
+	// storage class or a network.
+	Kind string
+	// Requirement is the bundle's own name for what it needs: the class
+	// a disk was provisioned from, or the VirtualMachine's name for the
+	// network.
+	Requirement string
+	// Tried says every way the deploy tried to place it, and what would
+	// place it instead.
+	Tried string
 }
 
-// Error names the disk and the class it needed.
-func (r *MissingStorageClassError) Error() string {
+// Error names the requirement and what was tried.
+func (r *UnresolvedRequirementError) Error() string {
 	return fmt.Sprintf(
-		"PersistentVolumeClaim %q needs the storage class %q, which the target cluster does not have",
-		r.Claim,
-		r.StorageClass)
+		"%s %q resolves to nothing on the target cluster: %s",
+		r.Kind,
+		r.Requirement,
+		r.Tried)
 }
 
-// Is reports whether err is a MissingStorageClassError.
-func (r *MissingStorageClassError) Is(err error) (matched bool) {
-	_, matched = err.(*MissingStorageClassError)
+// Is reports whether err is an UnresolvedRequirementError.
+func (r *UnresolvedRequirementError) Is(err error) (matched bool) {
+	_, matched = err.(*UnresolvedRequirementError)
 	return
 }
 

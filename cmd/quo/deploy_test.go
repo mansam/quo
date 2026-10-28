@@ -52,6 +52,115 @@ func TestDeployAcceptsFlagsOnEitherSideOfTheBundle(t *testing.T) {
 	}
 }
 
+func TestDeployAcceptsMappingFlagsOnEitherSideOfTheBundle(t *testing.T) {
+	tests := []struct {
+		name               string
+		args               []string
+		wantStorageClasses map[string]string
+		wantNetworks       map[string]string
+	}{
+		{
+			name:               "one storage class mapping, after the bundle",
+			args:               []string{"db-01.quo", "-n", "diagnostics", "--storage-class", "fast-rbd=ceph-rbd"},
+			wantStorageClasses: map[string]string{"fast-rbd": "ceph-rbd"},
+		},
+		{
+			name:               "the storage class catch-all, before the bundle",
+			args:               []string{"--storage-class", "*=ceph-rbd", "-n", "diagnostics", "db-01.quo"},
+			wantStorageClasses: map[string]string{"*": "ceph-rbd"},
+		},
+		{
+			name: "storage class mappings repeat, one per class",
+			args: []string{
+				"-n", "diagnostics",
+				"--storage-class", "fast-rbd=ceph-rbd",
+				"--storage-class", "slow-nfs=ceph-rbd",
+				"db-01.quo",
+			},
+			wantStorageClasses: map[string]string{
+				"fast-rbd": "ceph-rbd",
+				"slow-nfs": "ceph-rbd",
+			},
+		},
+		{
+			name:         "a network mapping naming an attachment in the deploy namespace",
+			args:         []string{"db-01.quo", "-n", "diagnostics", "--network", "lab=lab-net"},
+			wantNetworks: map[string]string{"lab": "lab-net"},
+		},
+		{
+			name: "a network mapping naming an attachment outside the deploy namespace",
+			args: []string{
+				"-n", "diagnostics",
+				"--network", "lab=infrastructure/diagnostic-net",
+				"--network", "office=office-net",
+				"db-01.quo",
+			},
+			wantNetworks: map[string]string{
+				"lab":    "infrastructure/diagnostic-net",
+				"office": "office-net",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := gomega.NewGomegaWithT(t)
+
+			parsed, err := parseDeployArgs(tt.args)
+
+			g.Expect(err).ToNot(gomega.HaveOccurred())
+			g.Expect(parsed.opt.StorageClasses).To(gomega.Equal(tt.wantStorageClasses))
+			g.Expect(parsed.opt.Networks).To(gomega.Equal(tt.wantNetworks))
+		})
+	}
+}
+
+func TestDeployRejectsAMappingItCannotParse(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{
+			name: "a storage class mapping with no equals sign",
+			args: []string{"-n", "diagnostics", "--storage-class", "fast-rbd", "db-01.quo"},
+		},
+		{
+			name: "a storage class mapping with no source",
+			args: []string{"-n", "diagnostics", "--storage-class", "=ceph-rbd", "db-01.quo"},
+		},
+		{
+			name: "a storage class mapping with no target",
+			args: []string{"-n", "diagnostics", "--storage-class", "fast-rbd=", "db-01.quo"},
+		},
+		{
+			name: "a storage class mapping with two equals signs",
+			args: []string{"-n", "diagnostics", "--storage-class", "fast-rbd=ceph=rbd", "db-01.quo"},
+		},
+		{
+			name: "a network mapping with no equals sign",
+			args: []string{"-n", "diagnostics", "--network", "lab", "db-01.quo"},
+		},
+		{
+			name: "a network mapping with no attachment",
+			args: []string{"-n", "diagnostics", "--network", "lab=", "db-01.quo"},
+		},
+		{
+			name: "a network mapping with no network",
+			args: []string{"-n", "diagnostics", "--network", "=lab-net", "db-01.quo"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := gomega.NewGomegaWithT(t)
+
+			_, err := parseDeployArgs(tt.args)
+
+			g.Expect(err).To(gomega.HaveOccurred())
+		})
+	}
+}
+
 func TestDeployRejectsACommandLineItCannotActOn(t *testing.T) {
 	tests := []struct {
 		name string
@@ -85,25 +194,27 @@ func TestDeployRejectsACommandLineItCannotActOn(t *testing.T) {
 func TestDeployPrintsTheRecordHoweverTheRunEnded(t *testing.T) {
 	g := gomega.NewGomegaWithT(t)
 	record := deploy.Record{
-		{
-			Kind:      "VirtualMachine",
-			Namespace: "diagnostics",
-			Name:      "db-01",
-			Outcome:   deploy.OutcomeCreated,
-		},
-		{
-			Kind:      "DataVolume",
-			Namespace: "diagnostics",
-			Name:      "db-01-root",
-			Outcome:   deploy.OutcomeSkipped,
-			Reason:    `member "disks/db-01-root.gz" does not match its digest`,
-		},
-		{
-			Kind:      "Secret",
-			Namespace: "diagnostics",
-			Name:      "db-01-cloudinit",
-			Outcome:   deploy.OutcomeFailed,
-			Reason:    "the API server went away",
+		Steps: []deploy.Step{
+			{
+				Kind:      "VirtualMachine",
+				Namespace: "diagnostics",
+				Name:      "db-01",
+				Outcome:   deploy.OutcomeCreated,
+			},
+			{
+				Kind:      "DataVolume",
+				Namespace: "diagnostics",
+				Name:      "db-01-root",
+				Outcome:   deploy.OutcomeSkipped,
+				Reason:    `member "disks/db-01-root.gz" does not match its digest`,
+			},
+			{
+				Kind:      "Secret",
+				Namespace: "diagnostics",
+				Name:      "db-01-cloudinit",
+				Outcome:   deploy.OutcomeFailed,
+				Reason:    "the API server went away",
+			},
 		},
 	}
 	reported := &bytes.Buffer{}
@@ -123,11 +234,78 @@ func TestDeployPrintsTheRecordHoweverTheRunEnded(t *testing.T) {
 	g.Expect(said).To(gomega.ContainSubstring("the API server went away"))
 }
 
+func TestDeployPrintsTheRequirementsARecordCarries(t *testing.T) {
+	g := gomega.NewGomegaWithT(t)
+	record := deploy.Record{
+		Steps: []deploy.Step{
+			{
+				Kind:      "VirtualMachine",
+				Namespace: "diagnostics",
+				Name:      "db-01",
+				Outcome:   deploy.OutcomeCreated,
+			},
+		},
+		Requirements: []deploy.Requirement{
+			{
+				Kind: "storage class",
+				From: "fast-rbd",
+				To:   "fast-rbd",
+				How:  "by name",
+			},
+			{
+				Kind: "storage class",
+				From: "slow-nfs",
+				To:   "ceph-rbd",
+				How:  "by --storage-class *",
+			},
+			{
+				// The unnamed class: a claim bound to a volume made by
+				// hand, which the catch-all placed.
+				Kind: "storage class",
+				To:   "ceph-rbd",
+				How:  "by --storage-class *",
+			},
+			{
+				Kind: "network",
+				From: "lab",
+				To:   "infrastructure/diagnostic-net",
+				How:  "by --network",
+			},
+			{
+				Kind: "container disk",
+				From: "quay.io/example/support-tools:6.0",
+				How:  "the target has to be able to pull it",
+			},
+		},
+	}
+	reported := &bytes.Buffer{}
+
+	err := printRecord(reported, record)
+
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	said := reported.String()
+	// Every requirement is printed with what it was mapped onto and how,
+	// and the unnamed class says it is unnamed.
+	g.Expect(said).To(gomega.ContainSubstring("Requirements (5)"))
+	g.Expect(said).To(gomega.ContainSubstring("storage class"))
+	g.Expect(said).To(gomega.ContainSubstring("fast-rbd -> fast-rbd"))
+	g.Expect(said).To(gomega.ContainSubstring("by name"))
+	g.Expect(said).To(gomega.ContainSubstring("slow-nfs -> ceph-rbd"))
+	g.Expect(said).To(gomega.ContainSubstring("by --storage-class *"))
+	g.Expect(said).To(gomega.ContainSubstring("(unnamed) -> ceph-rbd"))
+	g.Expect(said).To(gomega.ContainSubstring("network"))
+	g.Expect(said).To(gomega.ContainSubstring("lab -> infrastructure/diagnostic-net"))
+	g.Expect(said).To(gomega.ContainSubstring("by --network"))
+	g.Expect(said).To(gomega.ContainSubstring("container disk"))
+	g.Expect(said).To(gomega.ContainSubstring("quay.io/example/support-tools:6.0"))
+	g.Expect(said).To(gomega.ContainSubstring("the target has to be able to pull it"))
+}
+
 func TestDeployPrintsNothingForARunThatRefusedBeforeAttemptingAnything(t *testing.T) {
 	g := gomega.NewGomegaWithT(t)
 	reported := &bytes.Buffer{}
 
-	err := printRecord(reported, nil)
+	err := printRecord(reported, deploy.Record{})
 
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	g.Expect(reported.String()).To(gomega.BeEmpty())

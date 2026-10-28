@@ -40,8 +40,13 @@ const (
 var testCapturedAt = time.Date(2026, 3, 14, 15, 9, 26, 0, time.UTC)
 
 // The storage class the disk fixtures' claims were provisioned from, as
-// the target holds it.
-const testStorageClass = "fast-rbd"
+// the target holds it; the class of a second disk, which a target may
+// hold or not; and the class a mapping places disks onto.
+const (
+	testStorageClass       = "fast-rbd"
+	testSlowStorageClass   = "slow-nfs"
+	testMappedStorageClass = "ceph-rbd"
+)
 
 // Claims the disk fixture's volumes are backed by: a claim serving two
 // volumes, a claim a dataVolumeTemplate provisions, and two plain claims.
@@ -60,6 +65,18 @@ const (
 const (
 	versionAnnotation = "example.com/schema-version"
 	versionValue      = "1.30"
+)
+
+// The VirtualMachine's own name for its multus network, the
+// NetworkAttachmentDefinition the network was backed by on the source
+// cluster, the one a mapping can attach it to outside the deploy
+// namespace, and the image a container disk volume is served from.
+const (
+	testMultusNetwork       = "lab"
+	testAttachment          = "lab-net"
+	testAttachmentElsewhere = "diagnostic-net"
+	testOutsideNamespace    = "infrastructure"
+	testContainerDiskImage  = "quay.io/example/support-tools:6.0"
 )
 
 // testOptions deploys the bundle at path into the deploy namespace.
@@ -121,9 +138,9 @@ func target() (t *fakeTarget) {
 func storageTarget() (t *fakeTarget) {
 	t = target()
 	t.hold(cluster.ObjectRef{Kind: cluster.KindCDIConfig, Name: cluster.CDIConfigName}, cdiConfig())
-	t.hold(cluster.ObjectRef{Kind: cluster.KindStorageClass, Name: testStorageClass}, storageClass())
+	t.hold(cluster.ObjectRef{Kind: cluster.KindStorageClass, Name: testStorageClass}, storageClassNamed(testStorageClass))
 	t.hold(cluster.ObjectRef{Kind: cluster.KindStorageProfile, Name: testStorageClass},
-		storageProfile("Block", "Filesystem"))
+		storageProfile(testStorageClass, "Block", "Filesystem"))
 	return
 }
 
@@ -436,6 +453,61 @@ func writeUnsizedDiskBundle(t *testing.T) (path string) {
 	return
 }
 
+// writeStorageFixtureBundle writes a bundle holding one disk for each
+// storage requirement given, which is the smallest bundle that exercises
+// how a deploy places classes: the requirements say what each disk needs
+// and the members hold its bytes. It goes through the same writer a
+// capture does, so the fixture is built by the same code that builds
+// real bundles.
+func writeStorageFixtureBundle(
+	t *testing.T,
+	required ...bundle.StorageRequirement) (path string) {
+	t.Helper()
+	path = filepath.Join(t.TempDir(), testBundleFilename)
+	file, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("create bundle: %v", err)
+	}
+	defer func() {
+		_ = file.Close()
+	}()
+	writer := bundle.NewWriter(file)
+	expanded, marshalErr := yaml.Marshal(disksExpandedSpec().Object)
+	if marshalErr != nil {
+		t.Fatalf("marshal the expanded spec: %v", marshalErr)
+	}
+	writer.AddExpandedSpec(expanded)
+	disks := make([]bundle.Disk, 0, len(required))
+	for i := range required {
+		disks = append(disks, bundle.Disk{
+			Claim:   required[i].Claim,
+			Path:    bundle.DiskPath(required[i].Claim, bundle.DiskGzip),
+			Format:  bundle.DiskGzip,
+			Volumes: []string{required[i].Claim},
+		})
+	}
+	writer.Require(bundle.Requirements{Storage: required})
+	for i := range disks {
+		writer.Reserve(disks[i])
+	}
+	err = writer.Open(fixtureProvenance())
+	if err != nil {
+		t.Fatalf("open bundle: %v", err)
+	}
+	for i := range disks {
+		content := diskBody(disks[i].Claim)
+		err = writer.Stage(disks[i].Path, bytes.NewReader(content), int64(len(content)))
+		if err != nil {
+			t.Fatalf("stage disk %q: %v", disks[i].Claim, err)
+		}
+	}
+	err = writer.Close()
+	if err != nil {
+		t.Fatalf("close bundle: %v", err)
+	}
+	return
+}
+
 // diskBody is the compressed bytes the fixture holds for one claim. It is
 // stand-in content — opaque to quo, which streams it unchanged — but
 // different for every claim, so a test can tell one disk from another.
@@ -517,6 +589,134 @@ func disksExpandedSpec() (expanded *unstructured.Unstructured) {
 	return
 }
 
+// writeNetworksFixtureBundle writes a bundle for a VirtualMachine with
+// the networks a capture records: the cluster's own pod network and a
+// multus network backed by a NetworkAttachmentDefinition. attachment
+// names the definition the requirement records, which is what a deploy
+// maps by; empty is what a multus network naming no attachment leaves
+// behind. It goes through the same writer a capture does, so the
+// fixture is built by the same code that builds real bundles.
+func writeNetworksFixtureBundle(t *testing.T, attachment string) (path string) {
+	t.Helper()
+	path = filepath.Join(t.TempDir(), testBundleFilename)
+	file, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("create bundle: %v", err)
+	}
+	defer func() {
+		_ = file.Close()
+	}()
+	writer := bundle.NewWriter(file)
+	expanded, marshalErr := yaml.Marshal(networksExpandedSpec(t, attachment).Object)
+	if marshalErr != nil {
+		t.Fatalf("marshal the expanded spec: %v", marshalErr)
+	}
+	writer.AddExpandedSpec(expanded)
+	writer.Require(bundle.Requirements{Networks: []bundle.NetworkRequirement{
+		{Name: "default", Type: bundle.NetworkPod},
+		{
+			Name:       testMultusNetwork,
+			Type:       bundle.NetworkMultus,
+			Namespace:  testSourceNamespace,
+			Attachment: attachment,
+		},
+	}})
+	err = writer.Open(fixtureProvenance())
+	if err != nil {
+		t.Fatalf("open bundle: %v", err)
+	}
+	err = writer.Close()
+	if err != nil {
+		t.Fatalf("close bundle: %v", err)
+	}
+	return
+}
+
+// networksExpandedSpec builds the form a source cluster resolves the
+// network fixture's VirtualMachine to: the identity values of the plain
+// fixture, plus the networks its interfaces bind to — the cluster's own
+// pod network and a multus network whose networkName is the source
+// cluster's own qualified form of the attachment.
+func networksExpandedSpec(t *testing.T, attachment string) (expanded *unstructured.Unstructured) {
+	t.Helper()
+	expanded = expandedSpec()
+	networkName := ""
+	if attachment != "" {
+		networkName = testSourceNamespace + "/" + attachment
+	}
+	err := unstructured.SetNestedSlice(expanded.Object, []any{
+		map[string]any{"name": "default", "pod": map[string]any{}},
+		map[string]any{
+			"name":   testMultusNetwork,
+			"multus": map[string]any{"networkName": networkName},
+		},
+	}, "spec", "template", "spec", "networks")
+	if err != nil {
+		t.Fatalf("set the networks of the expanded spec: %v", err)
+	}
+	return
+}
+
+// writeContainerDiskFixtureBundle writes a bundle for a VirtualMachine
+// one of whose volumes is served from a container disk image, which a
+// capture records as a requirement and never holds: the target has to be
+// able to pull the image itself. It goes through the same writer a
+// capture does, so the fixture is built by the same code that builds
+// real bundles.
+func writeContainerDiskFixtureBundle(t *testing.T) (path string) {
+	t.Helper()
+	path = filepath.Join(t.TempDir(), testBundleFilename)
+	file, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("create bundle: %v", err)
+	}
+	defer func() {
+		_ = file.Close()
+	}()
+	writer := bundle.NewWriter(file)
+	expanded := expandedSpec()
+	err = unstructured.SetNestedSlice(expanded.Object, []any{
+		map[string]any{
+			"name":          "tools",
+			"containerDisk": map[string]any{"image": testContainerDiskImage},
+		},
+	}, "spec", "template", "spec", "volumes")
+	if err != nil {
+		t.Fatalf("set the volumes of the expanded spec: %v", err)
+	}
+	encoded, marshalErr := yaml.Marshal(expanded.Object)
+	if marshalErr != nil {
+		t.Fatalf("marshal the expanded spec: %v", marshalErr)
+	}
+	writer.AddExpandedSpec(encoded)
+	writer.Require(bundle.Requirements{ContainerDisks: []bundle.ContainerDiskRequirement{
+		{Volume: "tools", Image: testContainerDiskImage},
+	}})
+	err = writer.Open(fixtureProvenance())
+	if err != nil {
+		t.Fatalf("open bundle: %v", err)
+	}
+	err = writer.Close()
+	if err != nil {
+		t.Fatalf("close bundle: %v", err)
+	}
+	return
+}
+
+// networkAttachmentDefinition is a NetworkAttachmentDefinition the target
+// holds, as a multus network attaches through.
+func networkAttachmentDefinition(namespace, name string) (held *unstructured.Unstructured) {
+	held = &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "k8s.cni.cncf.io/v1",
+		"kind":       cluster.KindNetworkAttachmentDefinition,
+		"metadata":   map[string]any{"name": name, "namespace": namespace},
+		"spec": map[string]any{
+			"config": `{"cniVersion":"1.0.0","name":"lab","type":"bridge"}`,
+		},
+	}}
+	return
+}
+
 // cdiConfig is CDI's own configuration, which the deploy reads to tell a
 // target that has CDI from one that does not.
 func cdiConfig() (held *unstructured.Unstructured) {
@@ -528,20 +728,20 @@ func cdiConfig() (held *unstructured.Unstructured) {
 	return
 }
 
-// storageClass is the class the disk fixtures' claims were provisioned
-// from, as the target holds it.
-func storageClass() (held *unstructured.Unstructured) {
+// storageClassNamed is a storage class of the given name, as the target
+// holds it.
+func storageClassNamed(name string) (held *unstructured.Unstructured) {
 	held = &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": "storage.k8s.io/v1",
 		"kind":       "StorageClass",
-		"metadata":   map[string]any{"name": testStorageClass},
+		"metadata":   map[string]any{"name": name},
 	}}
 	return
 }
 
-// storageProfile is the target's own account of what its storage class
-// can provide. modes says which volume modes it offers.
-func storageProfile(modes ...string) (held *unstructured.Unstructured) {
+// storageProfile is the target's own account of what the named storage
+// class can provide. modes says which volume modes it offers.
+func storageProfile(name string, modes ...string) (held *unstructured.Unstructured) {
 	sets := make([]any, 0, len(modes))
 	for _, mode := range modes {
 		sets = append(sets, map[string]any{
@@ -552,7 +752,7 @@ func storageProfile(modes ...string) (held *unstructured.Unstructured) {
 	held = &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": "cdi.kubevirt.io/v1beta1",
 		"kind":       "StorageProfile",
-		"metadata":   map[string]any{"name": testStorageClass},
+		"metadata":   map[string]any{"name": name},
 		"status":     map[string]any{"claimPropertySets": sets},
 	}}
 	return

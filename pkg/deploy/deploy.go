@@ -14,16 +14,26 @@ import (
 )
 
 // Deploy applies a bundle onto the cluster behind t and returns the deploy
-// record: every object it attempted and what became of each one.
+// record: every object it attempted and what became of each one, and every
+// requirement it mapped onto the target's resources.
+//
+// The bundle's requirements are mapped onto the target's resources: a
+// storage class or a multus network maps automatically when the target
+// holds one of the requirement's own name, and Options names the rest.
+// Every mapping is reported in the record, because nothing maps
+// silently. The pod network is never mapped, and a container disk image
+// is reported as a requirement and never pull-checked — quo holds no
+// registry credentials.
 //
 // quo refuses, before creating anything, when the bundle cannot be read or
 // its format version is unknown, when it holds no expanded spec, when the
 // namespace does not exist, and when the VirtualMachine it would create is
 // already there. A bundle holding disks to upload is refused as well when
-// the target has no CDI, when a disk's storage class is not on the target
-// under the name the bundle records, and when the target's own account of
-// that class rules out the volume mode the disk needs. Each refusal names
-// what it found.
+// the target has no CDI and when the target's own account of the class a
+// disk's storage was mapped onto rules out the volume mode the disk needs.
+// A requirement — a storage class or a multus network — that resolves to
+// nothing is a refusal too, naming what was tried: nothing is created
+// whose needs cannot be placed.
 //
 // Past the refusals the deploy is best-effort: a step that fails is
 // recorded and the run continues, and a bundle member that fails its
@@ -74,12 +84,16 @@ func Deploy(ctx context.Context, t cluster.Target, opt Options) (record Record, 
 		// created. The disks are not uploaded for a machine that cannot
 		// be, which is the same rule that refuses a bundle holding no
 		// expansion at all.
-		record = append(record, step)
+		record.Steps = append(record.Steps, step)
 		err = &NotCreatedError{NotCreated: 1, Attempted: 1}
 		return
 	}
 	disks := planDisks(manifest, opt)
-	err = resolveDisks(ctx, t, disks)
+	storage, err := resolveDisks(ctx, t, disks, opt)
+	if err != nil {
+		return
+	}
+	networks, err := resolveNetworks(ctx, t, manifest.Requirements.Networks, opt)
 	if err != nil {
 		return
 	}
@@ -88,10 +102,17 @@ func Deploy(ctx context.Context, t cluster.Target, opt Options) (record Record, 
 	createDataVolumes(ctx, t, disks, opt, identity)
 	uploadDisks(ctx, t, reader, disks, opt)
 	for i := range disks {
-		record = append(record, disks[i].step)
+		record.Steps = append(record.Steps, disks[i].step)
 	}
-	record = append(record, createVirtualMachine(
-		ctx, t, expanded, step, opt, manifest.Provenance, identity))
+	record.Steps = append(record.Steps, createVirtualMachine(
+		ctx, t, expanded, step, opt, manifest.Provenance, identity, networks))
+	// Every requirement the bundle declared is reported with what it was
+	// mapped onto, or with what the target has to do for it: nothing
+	// maps silently, and what is only reported is said too.
+	record.Requirements = append(record.Requirements, storage...)
+	record.Requirements = append(record.Requirements, networks...)
+	record.Requirements = append(
+		record.Requirements, reportedContainerDisks(manifest.Requirements.ContainerDisks)...)
 	err = notCreated(record)
 	return
 }
@@ -183,6 +204,9 @@ func readVirtualMachine(
 // The step is the one readVirtualMachine built, so the entry a skipped
 // expansion would have recorded and the entry a created one records name
 // the same object. It is recorded whatever became of it.
+//
+// networks is what resolveNetworks decided for the machine's multus
+// networks; the applied VirtualMachine carries the mappings.
 func createVirtualMachine(
 	ctx context.Context,
 	t cluster.Target,
@@ -190,9 +214,10 @@ func createVirtualMachine(
 	step Step,
 	opt Options,
 	provenance bundle.Provenance,
-	identity string) (finished Step) {
+	identity string,
+	networks []Requirement) (finished Step) {
 	//
-	vm := buildVirtualMachine(expanded, opt, provenance, identity)
+	vm := buildVirtualMachine(expanded, opt, provenance, identity, networks)
 	createErr := t.Create(ctx, vm)
 	if createErr != nil {
 		step.Outcome = OutcomeFailed
@@ -209,13 +234,13 @@ func createVirtualMachine(
 // that a script can tell a complete deploy from a partial one.
 func notCreated(record Record) (err error) {
 	missing := 0
-	for i := range record {
-		if record[i].Outcome != OutcomeCreated {
+	for i := range record.Steps {
+		if record.Steps[i].Outcome != OutcomeCreated {
 			missing++
 		}
 	}
 	if missing > 0 {
-		err = &NotCreatedError{NotCreated: missing, Attempted: len(record)}
+		err = &NotCreatedError{NotCreated: missing, Attempted: len(record.Steps)}
 	}
 	return
 }

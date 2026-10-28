@@ -30,7 +30,7 @@ func TestDeployAppliesTheExpandedSpecAsTheVirtualMachine(t *testing.T) {
 
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	// The deploy record says what the run did.
-	g.Expect(record).To(gomega.Equal(Record{
+	g.Expect(record.Steps).To(gomega.Equal([]Step{
 		{
 			Kind:      cluster.KindVirtualMachine,
 			Namespace: testDeployNamespace,
@@ -90,8 +90,8 @@ func TestDeployCarriesOnlyTheForcedRewrites(t *testing.T) {
 			record, err := Deploy(context.TODO(), fake, opt)
 
 			g.Expect(err).ToNot(gomega.HaveOccurred())
-			g.Expect(record).To(gomega.HaveLen(1))
-			g.Expect(record[0].Name).To(gomega.Equal(tt.want))
+			g.Expect(record.Steps).To(gomega.HaveLen(1))
+			g.Expect(record.Steps[0].Name).To(gomega.Equal(tt.want))
 			g.Expect(fake.created).To(gomega.HaveLen(1))
 			// What lands is the expanded spec carrying the forced
 			// rewrites — the name, the namespace, the labels, the
@@ -259,7 +259,7 @@ func TestDeployRefusesABundleItCannotDeploy(t *testing.T) {
 				g.Expect(err.Error()).To(gomega.ContainSubstring(tt.names))
 			}
 			// Nothing was attempted, so nothing was created.
-			g.Expect(record).To(gomega.BeEmpty())
+			g.Expect(record.Steps).To(gomega.BeEmpty())
 			g.Expect(fake.created).To(gomega.BeEmpty())
 		})
 	}
@@ -310,7 +310,7 @@ func TestDeployRefusesWhenTheTargetCannotTakeIt(t *testing.T) {
 			g.Expect(err).To(gomega.MatchError(tt.want))
 			// The refusal names what it found.
 			g.Expect(err.Error()).To(gomega.ContainSubstring(tt.names))
-			g.Expect(record).To(gomega.BeEmpty())
+			g.Expect(record.Steps).To(gomega.BeEmpty())
 			g.Expect(fake.created).To(gomega.BeEmpty())
 		})
 	}
@@ -335,10 +335,10 @@ func TestDeploySkipsAnExpandedSpecThatFailsItsDigest(t *testing.T) {
 	// The step is skipped and recorded, and nothing was created:
 	// corruption never reaches the target.
 	g.Expect(err).To(gomega.MatchError(&NotCreatedError{}))
-	g.Expect(record).To(gomega.HaveLen(1))
-	g.Expect(record[0].Kind).To(gomega.Equal(cluster.KindVirtualMachine))
-	g.Expect(record[0].Outcome).To(gomega.Equal(OutcomeSkipped))
-	g.Expect(record[0].Reason).To(gomega.ContainSubstring("does not match its digest"))
+	g.Expect(record.Steps).To(gomega.HaveLen(1))
+	g.Expect(record.Steps[0].Kind).To(gomega.Equal(cluster.KindVirtualMachine))
+	g.Expect(record.Steps[0].Outcome).To(gomega.Equal(OutcomeSkipped))
+	g.Expect(record.Steps[0].Reason).To(gomega.ContainSubstring("does not match its digest"))
 	g.Expect(fake.created).To(gomega.BeEmpty())
 }
 
@@ -355,9 +355,9 @@ func TestDeployRecordsACreateThatFailed(t *testing.T) {
 	// one.
 	g.Expect(err).To(gomega.MatchError(&NotCreatedError{}))
 	g.Expect(err.Error()).To(gomega.ContainSubstring("0 of the 1 objects"))
-	g.Expect(record).To(gomega.HaveLen(1))
-	g.Expect(record[0].Outcome).To(gomega.Equal(OutcomeFailed))
-	g.Expect(record[0].Reason).To(gomega.ContainSubstring("the API server went away"))
+	g.Expect(record.Steps).To(gomega.HaveLen(1))
+	g.Expect(record.Steps[0].Outcome).To(gomega.Equal(OutcomeFailed))
+	g.Expect(record.Steps[0].Reason).To(gomega.ContainSubstring("the API server went away"))
 	g.Expect(fake.created).To(gomega.BeEmpty())
 }
 
@@ -376,7 +376,7 @@ func TestDeployStopsWhereItStandsWhenCancelled(t *testing.T) {
 		// target stays where it is: a deploy never rolls back.
 		g.Expect(err).To(gomega.HaveOccurred())
 		g.Expect(err.Error()).To(gomega.ContainSubstring("context canceled"))
-		g.Expect(record).To(gomega.BeEmpty())
+		g.Expect(record.Steps).To(gomega.BeEmpty())
 		g.Expect(fake.created).To(gomega.BeEmpty())
 	})
 
@@ -390,9 +390,9 @@ func TestDeployStopsWhereItStandsWhenCancelled(t *testing.T) {
 		record, err := Deploy(context.TODO(), fake, testOptions(path))
 
 		g.Expect(err).To(gomega.MatchError(&NotCreatedError{}))
-		g.Expect(record).To(gomega.HaveLen(1))
-		g.Expect(record[0].Outcome).To(gomega.Equal(OutcomeFailed))
-		g.Expect(record[0].Reason).To(gomega.ContainSubstring("context canceled"))
+		g.Expect(record.Steps).To(gomega.HaveLen(1))
+		g.Expect(record.Steps[0].Outcome).To(gomega.Equal(OutcomeFailed))
+		g.Expect(record.Steps[0].Reason).To(gomega.ContainSubstring("context canceled"))
 		g.Expect(fake.created).To(gomega.BeEmpty())
 	})
 }

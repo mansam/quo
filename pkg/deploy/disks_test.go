@@ -24,7 +24,7 @@ func TestDeployPutsEveryDiskBackAsAnUploadDataVolume(t *testing.T) {
 	// The record says what the run did: one DataVolume per disk the bundle
 	// holds, in the order the machine's volumes reference their claims,
 	// and the VirtualMachine last.
-	g.Expect(record).To(gomega.Equal(Record{
+	g.Expect(record.Steps).To(gomega.Equal([]Step{
 		{
 			Kind:      cluster.KindDataVolume,
 			Namespace: testDeployNamespace,
@@ -99,6 +99,362 @@ func TestDeployPutsEveryDiskBackAsAnUploadDataVolume(t *testing.T) {
 	g.Expect(volumes).To(gomega.Equal(declared))
 }
 
+func TestDeployReportsAStorageClassMatchedByName(t *testing.T) {
+	g := gomega.NewGomegaWithT(t)
+	path := writeDisksFixtureBundle(t)
+	fake := storageTarget()
+
+	record, err := Deploy(context.TODO(), fake, testOptions(path))
+
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	// A mapping is automatic when the target has a storage class of the
+	// requirement's own name, and it is reported: nothing maps silently.
+	// Every disk of the fixture asks for the one class.
+	g.Expect(record.Requirements).To(gomega.Equal([]Requirement{
+		{
+			Kind: "storage class",
+			From: testStorageClass,
+			To:   testStorageClass,
+			How:  "by name",
+		},
+	}))
+	// The disks landed on the class of the same name.
+	for i := range fake.created {
+		if fake.created[i].GetKind() != cluster.KindDataVolume {
+			continue
+		}
+		class, _, _ := unstructured.NestedString(
+			fake.created[i].Object, "spec", "storage", "storageClassName")
+		g.Expect(class).To(gomega.Equal(testStorageClass))
+	}
+}
+
+func TestDeployPlacesTheDisksOfOneClassWhereAMappingSays(t *testing.T) {
+	tests := []struct {
+		name  string
+		holds bool
+	}{
+		{
+			name:  "a target without the class the bundle records",
+			holds: false,
+		},
+		{
+			name:  "a target holding the class the bundle records, which the mapping overrides",
+			holds: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := gomega.NewGomegaWithT(t)
+			path := writeDisksFixtureBundle(t)
+			fake := target()
+			fake.hold(cluster.ObjectRef{Kind: cluster.KindCDIConfig, Name: cluster.CDIConfigName}, cdiConfig())
+			if tt.holds {
+				fake.hold(
+					cluster.ObjectRef{Kind: cluster.KindStorageClass, Name: testStorageClass},
+					storageClassNamed(testStorageClass))
+			}
+			fake.hold(
+				cluster.ObjectRef{Kind: cluster.KindStorageClass, Name: testMappedStorageClass},
+				storageClassNamed(testMappedStorageClass))
+			opt := testOptions(path)
+			opt.StorageClasses = map[string]string{
+				testStorageClass: testMappedStorageClass,
+			}
+
+			record, err := Deploy(context.TODO(), fake, opt)
+
+			g.Expect(err).ToNot(gomega.HaveOccurred())
+			// The mapping is reported like any other, saying the flag
+			// that named it.
+			g.Expect(record.Requirements).To(gomega.Equal([]Requirement{
+				{
+					Kind: "storage class",
+					From: testStorageClass,
+					To:   testMappedStorageClass,
+					How:  "by --storage-class",
+				},
+			}))
+			// Every disk landed on the class the mapping names, whatever
+			// the target holds under the class the bundle records.
+			g.Expect(fake.created).To(gomega.HaveLen(5))
+			for i := range fake.created {
+				if fake.created[i].GetKind() != cluster.KindDataVolume {
+					continue
+				}
+				class, _, _ := unstructured.NestedString(
+					fake.created[i].Object, "spec", "storage", "storageClassName")
+				g.Expect(class).To(gomega.Equal(testMappedStorageClass))
+			}
+		})
+	}
+}
+
+func TestDeployCatchesTheStorageClassesThatDoNotMatchByName(t *testing.T) {
+	g := gomega.NewGomegaWithT(t)
+	// One disk of a class the target holds and one of a class it does
+	// not, which is what a machine whose disks were provisioned from
+	// more than one class looks like.
+	path := writeStorageFixtureBundle(t,
+		bundle.StorageRequirement{
+			Claim:        testRootClaim,
+			StorageClass: testStorageClass,
+			Size:         "32Gi",
+			VolumeMode:   "Block",
+		},
+		bundle.StorageRequirement{
+			Claim:        testThinClaim,
+			StorageClass: testSlowStorageClass,
+			Size:         "5Gi",
+			VolumeMode:   "Filesystem",
+		},
+	)
+	fake := target()
+	fake.hold(cluster.ObjectRef{Kind: cluster.KindCDIConfig, Name: cluster.CDIConfigName}, cdiConfig())
+	fake.hold(
+		cluster.ObjectRef{Kind: cluster.KindStorageClass, Name: testStorageClass},
+		storageClassNamed(testStorageClass))
+	fake.hold(
+		cluster.ObjectRef{Kind: cluster.KindStorageClass, Name: testMappedStorageClass},
+		storageClassNamed(testMappedStorageClass))
+	opt := testOptions(path)
+	// The catch-all names where the classes that do not match by name
+	// go; it does not take the ones that do.
+	opt.StorageClasses = map[string]string{"*": testMappedStorageClass}
+
+	record, err := Deploy(context.TODO(), fake, opt)
+
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	g.Expect(record.Requirements).To(gomega.Equal([]Requirement{
+		{
+			Kind: "storage class",
+			From: testStorageClass,
+			To:   testStorageClass,
+			How:  "by name",
+		},
+		{
+			Kind: "storage class",
+			From: testSlowStorageClass,
+			To:   testMappedStorageClass,
+			How:  "by --storage-class *",
+		},
+	}))
+	// The disk of the held class stayed on it; the disk of the other
+	// one landed on the catch-all's class.
+	classOf := func(at int) string {
+		class, _, _ := unstructured.NestedString(
+			fake.created[at].Object, "spec", "storage", "storageClassName")
+		return class
+	}
+	g.Expect(classOf(0)).To(gomega.Equal(testStorageClass))
+	g.Expect(classOf(1)).To(gomega.Equal(testMappedStorageClass))
+}
+
+func TestDeployCatchesEveryClassWhenNoneMatchByName(t *testing.T) {
+	g := gomega.NewGomegaWithT(t)
+	path := writeDisksFixtureBundle(t)
+	// A target holding only the class the catch-all names: no disk of
+	// the bundle matches by name, so every one of them is caught.
+	fake := target()
+	fake.hold(cluster.ObjectRef{Kind: cluster.KindCDIConfig, Name: cluster.CDIConfigName}, cdiConfig())
+	fake.hold(
+		cluster.ObjectRef{Kind: cluster.KindStorageClass, Name: testMappedStorageClass},
+		storageClassNamed(testMappedStorageClass))
+	opt := testOptions(path)
+	opt.StorageClasses = map[string]string{"*": testMappedStorageClass}
+
+	record, err := Deploy(context.TODO(), fake, opt)
+
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	g.Expect(record.Requirements).To(gomega.Equal([]Requirement{
+		{
+			Kind: "storage class",
+			From: testStorageClass,
+			To:   testMappedStorageClass,
+			How:  "by --storage-class *",
+		},
+	}))
+	for i := range fake.created {
+		if fake.created[i].GetKind() != cluster.KindDataVolume {
+			continue
+		}
+		class, _, _ := unstructured.NestedString(
+			fake.created[i].Object, "spec", "storage", "storageClassName")
+		g.Expect(class).To(gomega.Equal(testMappedStorageClass))
+	}
+}
+
+func TestDeployPlacesAnUnnamedClassOnlyThroughTheCatchAll(t *testing.T) {
+	// One disk whose requirement records a size but no class, which is
+	// what a claim bound to a volume made by hand leaves behind: the
+	// bytes are held and their size is known, but nothing says what
+	// provisioned them.
+	path := writeStorageFixtureBundle(t, bundle.StorageRequirement{
+		Claim:      testThinClaim,
+		Size:       "5Gi",
+		VolumeMode: "Filesystem",
+	})
+
+	tests := []struct {
+		name    string
+		catchUp string
+	}{
+		{
+			name:    "the catch-all places it, as the class that does not match by name",
+			catchUp: testMappedStorageClass,
+		},
+		{
+			name:    "with no catch-all it stays a gap, because quo will not guess at placement",
+			catchUp: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := gomega.NewGomegaWithT(t)
+			fake := target()
+			fake.hold(cluster.ObjectRef{Kind: cluster.KindCDIConfig, Name: cluster.CDIConfigName}, cdiConfig())
+			fake.hold(
+				cluster.ObjectRef{Kind: cluster.KindStorageClass, Name: testMappedStorageClass},
+				storageClassNamed(testMappedStorageClass))
+			opt := testOptions(path)
+			if tt.catchUp != "" {
+				opt.StorageClasses = map[string]string{"*": tt.catchUp}
+			}
+
+			record, err := Deploy(context.TODO(), fake, opt)
+
+			if tt.catchUp == "" {
+				// A disk with no class recorded and no catch-all given
+				// creates nothing: the gap is recorded and the run goes
+				// on to the machine.
+				g.Expect(err).To(gomega.MatchError(&NotCreatedError{}))
+				g.Expect(record.Steps).To(gomega.HaveLen(2))
+				g.Expect(record.Steps[0].Name).To(gomega.Equal(testThinClaim))
+				g.Expect(record.Steps[0].Outcome).To(gomega.Equal(OutcomeSkipped))
+				g.Expect(record.Steps[0].Reason).To(gomega.Equal("the bundle records no storage class for it"))
+				g.Expect(record.Requirements).To(gomega.BeEmpty())
+				g.Expect(fake.created).To(gomega.HaveLen(1))
+				return
+			}
+			g.Expect(err).ToNot(gomega.HaveOccurred())
+			// The unnamed class is one of the classes that do not match
+			// by name, so the catch-all places it and the mapping is
+			// reported.
+			g.Expect(record.Requirements).To(gomega.Equal([]Requirement{
+				{
+					Kind: "storage class",
+					To:   testMappedStorageClass,
+					How:  "by --storage-class *",
+				},
+			}))
+			class, _, _ := unstructured.NestedString(
+				fake.created[0].Object, "spec", "storage", "storageClassName")
+			g.Expect(class).To(gomega.Equal(testMappedStorageClass))
+			g.Expect(fake.uploaded).To(gomega.HaveLen(1))
+		})
+	}
+}
+
+func TestDeployRefusesAStorageClassThatResolvesToNothing(t *testing.T) {
+	path := writeDisksFixtureBundle(t)
+	// A target with CDI but nothing else: no class the bundle records
+	// and no class a mapping could name.
+	bare := target()
+	bare.hold(cluster.ObjectRef{Kind: cluster.KindCDIConfig, Name: cluster.CDIConfigName}, cdiConfig())
+	// A target holding the class the bundle records, so only the mapping
+	// stands between the disks and a class that is not there.
+	holdsClass := target()
+	holdsClass.hold(cluster.ObjectRef{Kind: cluster.KindCDIConfig, Name: cluster.CDIConfigName}, cdiConfig())
+	holdsClass.hold(
+		cluster.ObjectRef{Kind: cluster.KindStorageClass, Name: testStorageClass},
+		storageClassNamed(testStorageClass))
+
+	tests := []struct {
+		name   string
+		target *fakeTarget
+		mapped map[string]string
+		names  string
+	}{
+		{
+			name:   "no storage class of that name and no mapping names another",
+			target: bare,
+			// The refusal names the requirement, what was tried, and the
+			// flag that would place it.
+			names: "place it with --storage-class " + testStorageClass + "=<target>",
+		},
+		{
+			name:   "a mapping that names a class the target does not have",
+			target: holdsClass,
+			mapped: map[string]string{testStorageClass: testMappedStorageClass},
+			names:  "--storage-class " + testStorageClass + "=" + testMappedStorageClass,
+		},
+		{
+			name:   "a catch-all that names a class the target does not have",
+			target: bare,
+			mapped: map[string]string{"*": testMappedStorageClass},
+			names:  "--storage-class *=" + testMappedStorageClass,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := gomega.NewGomegaWithT(t)
+			opt := testOptions(path)
+			opt.StorageClasses = tt.mapped
+
+			record, err := Deploy(context.TODO(), tt.target, opt)
+
+			g.Expect(err).To(gomega.MatchError(&UnresolvedRequirementError{}))
+			// The refusal names the requirement and what was tried.
+			g.Expect(err.Error()).To(gomega.ContainSubstring(testStorageClass))
+			g.Expect(err.Error()).To(gomega.ContainSubstring(tt.names))
+			// It refused before creating anything, so nothing was
+			// attempted and nothing was created: disks are not uploaded
+			// that cannot be placed.
+			g.Expect(record.Steps).To(gomega.BeEmpty())
+			g.Expect(record.Requirements).To(gomega.BeEmpty())
+			g.Expect(tt.target.created).To(gomega.BeEmpty())
+			g.Expect(tt.target.uploaded).To(gomega.BeEmpty())
+		})
+	}
+}
+
+func TestDeployRefusesADiskWhoseMappedClassCannotProvideItsVolumeMode(t *testing.T) {
+	g := gomega.NewGomegaWithT(t)
+	path := writeStorageFixtureBundle(t, bundle.StorageRequirement{
+		Claim:        testRootClaim,
+		StorageClass: testStorageClass,
+		Size:         "32Gi",
+		VolumeMode:   "Block",
+	})
+	// The target holds the class the mapping names, but its own account
+	// of that class rules out the volume mode the disk needs. No mapping
+	// fixes that: the class cannot hold the disk as it was captured.
+	fake := target()
+	fake.hold(cluster.ObjectRef{Kind: cluster.KindCDIConfig, Name: cluster.CDIConfigName}, cdiConfig())
+	fake.hold(
+		cluster.ObjectRef{Kind: cluster.KindStorageClass, Name: testMappedStorageClass},
+		storageClassNamed(testMappedStorageClass))
+	fake.hold(
+		cluster.ObjectRef{Kind: cluster.KindStorageProfile, Name: testMappedStorageClass},
+		storageProfile(testMappedStorageClass, "Filesystem"))
+	opt := testOptions(path)
+	opt.StorageClasses = map[string]string{
+		testStorageClass: testMappedStorageClass,
+	}
+
+	record, err := Deploy(context.TODO(), fake, opt)
+
+	g.Expect(err).To(gomega.MatchError(&UnsupportedVolumeModeError{}))
+	// The refusal names the class the disk was mapped onto, which is the
+	// one whose account of itself rules the mode out.
+	g.Expect(err.Error()).To(gomega.ContainSubstring(testMappedStorageClass))
+	g.Expect(record.Steps).To(gomega.BeEmpty())
+	g.Expect(fake.created).To(gomega.BeEmpty())
+}
+
 func TestDeployCreatesTheDataVolumesThenUploadsThenTheVirtualMachineLast(t *testing.T) {
 	g := gomega.NewGomegaWithT(t)
 	path := writeDisksFixtureBundle(t)
@@ -136,10 +492,10 @@ func TestDeployRecordsADiskTheBundleHoldsNoBytesFor(t *testing.T) {
 	// a partial one.
 	g.Expect(err).To(gomega.MatchError(&NotCreatedError{}))
 	g.Expect(err.Error()).To(gomega.ContainSubstring("4 of the 5 objects"))
-	g.Expect(record).To(gomega.HaveLen(5))
-	g.Expect(record[2].Name).To(gomega.Equal(testGapClaim))
-	g.Expect(record[2].Outcome).To(gomega.Equal(OutcomeSkipped))
-	g.Expect(record[2].Reason).To(gomega.Equal("the bundle holds no bytes for it"))
+	g.Expect(record.Steps).To(gomega.HaveLen(5))
+	g.Expect(record.Steps[2].Name).To(gomega.Equal(testGapClaim))
+	g.Expect(record.Steps[2].Outcome).To(gomega.Equal(OutcomeSkipped))
+	g.Expect(record.Steps[2].Reason).To(gomega.Equal("the bundle holds no bytes for it"))
 	g.Expect(fake.created).To(gomega.HaveLen(4))
 	g.Expect(fake.uploaded).To(gomega.HaveLen(3))
 	g.Expect(fake.uploaded[2].name).To(gomega.Equal(testThinClaim))
@@ -157,10 +513,10 @@ func TestDeployRecordsADiskTheBundleCannotSize(t *testing.T) {
 	// recorded, and the run continues to the machine.
 	g.Expect(err).To(gomega.MatchError(&NotCreatedError{}))
 	g.Expect(err.Error()).To(gomega.ContainSubstring("1 of the 2 objects"))
-	g.Expect(record).To(gomega.HaveLen(2))
-	g.Expect(record[0].Name).To(gomega.Equal(testThinClaim))
-	g.Expect(record[0].Outcome).To(gomega.Equal(OutcomeSkipped))
-	g.Expect(record[0].Reason).To(gomega.Equal("the bundle records no size for it"))
+	g.Expect(record.Steps).To(gomega.HaveLen(2))
+	g.Expect(record.Steps[0].Name).To(gomega.Equal(testThinClaim))
+	g.Expect(record.Steps[0].Outcome).To(gomega.Equal(OutcomeSkipped))
+	g.Expect(record.Steps[0].Reason).To(gomega.Equal("the bundle records no size for it"))
 	g.Expect(fake.created).To(gomega.HaveLen(1))
 	g.Expect(fake.uploaded).To(gomega.BeEmpty())
 }
@@ -177,10 +533,10 @@ func TestDeployRefusesATargetThatCannotTakeTheDisks(t *testing.T) {
 	// root disk needs.
 	filesystemOnly := target()
 	filesystemOnly.hold(cluster.ObjectRef{Kind: cluster.KindCDIConfig, Name: cluster.CDIConfigName}, cdiConfig())
-	filesystemOnly.hold(cluster.ObjectRef{Kind: cluster.KindStorageClass, Name: testStorageClass}, storageClass())
+	filesystemOnly.hold(cluster.ObjectRef{Kind: cluster.KindStorageClass, Name: testStorageClass}, storageClassNamed(testStorageClass))
 	filesystemOnly.hold(
 		cluster.ObjectRef{Kind: cluster.KindStorageProfile, Name: testStorageClass},
-		storageProfile("Filesystem"))
+		storageProfile(testStorageClass, "Filesystem"))
 
 	tests := []struct {
 		name   string
@@ -197,7 +553,7 @@ func TestDeployRefusesATargetThatCannotTakeTheDisks(t *testing.T) {
 		{
 			name:   "a disk whose storage class the target does not have",
 			target: noClass,
-			want:   &MissingStorageClassError{},
+			want:   &UnresolvedRequirementError{},
 			names:  testStorageClass,
 		},
 		{
@@ -220,7 +576,7 @@ func TestDeployRefusesATargetThatCannotTakeTheDisks(t *testing.T) {
 			// It refused before creating anything, so nothing was
 			// attempted and nothing was created: disks are not uploaded
 			// that cannot be placed.
-			g.Expect(record).To(gomega.BeEmpty())
+			g.Expect(record.Steps).To(gomega.BeEmpty())
 			g.Expect(tt.target.created).To(gomega.BeEmpty())
 			g.Expect(tt.target.uploaded).To(gomega.BeEmpty())
 		})
@@ -246,15 +602,15 @@ func TestDeployRecordsADiskThatFailsItsDigestAndGoesOn(t *testing.T) {
 	// arrived.
 	g.Expect(err).To(gomega.MatchError(&NotCreatedError{}))
 	g.Expect(err.Error()).To(gomega.ContainSubstring("4 of the 5 objects"))
-	g.Expect(record).To(gomega.HaveLen(5))
+	g.Expect(record.Steps).To(gomega.HaveLen(5))
 	// The corrupted disk is skipped and recorded: what was deployed for
 	// it is not what the bundle holds. The VirtualMachine is created too,
 	// because a member that fails its digest is a recorded gap rather
 	// than a refusal — the expansion itself arrived whole.
-	g.Expect(record[0].Name).To(gomega.Equal(testRootClaim))
-	g.Expect(record[0].Outcome).To(gomega.Equal(OutcomeSkipped))
-	g.Expect(record[0].Reason).To(gomega.ContainSubstring("does not match its digest"))
-	g.Expect(record[4].Outcome).To(gomega.Equal(OutcomeCreated))
+	g.Expect(record.Steps[0].Name).To(gomega.Equal(testRootClaim))
+	g.Expect(record.Steps[0].Outcome).To(gomega.Equal(OutcomeSkipped))
+	g.Expect(record.Steps[0].Reason).To(gomega.ContainSubstring("does not match its digest"))
+	g.Expect(record.Steps[4].Outcome).To(gomega.Equal(OutcomeCreated))
 	// The disks behind it proceeded: their DataVolumes were created and
 	// their bytes uploaded.
 	g.Expect(fake.uploaded).To(gomega.HaveLen(3))
@@ -271,19 +627,19 @@ func TestDeployRecordsAnUploadThatFailedAndGoesOn(t *testing.T) {
 
 	g.Expect(err).To(gomega.MatchError(&NotCreatedError{}))
 	g.Expect(err.Error()).To(gomega.ContainSubstring("4 of the 5 objects"))
-	g.Expect(record).To(gomega.HaveLen(5))
+	g.Expect(record.Steps).To(gomega.HaveLen(5))
 	// The failed upload is recorded with its reason, and the DataVolume
 	// step says failed rather than created: the target holds the
 	// DataVolume, but it does not hold the disk.
-	g.Expect(record[0].Name).To(gomega.Equal(testRootClaim))
-	g.Expect(record[0].Outcome).To(gomega.Equal(OutcomeFailed))
-	g.Expect(record[0].Reason).To(gomega.ContainSubstring("the upload failed"))
-	g.Expect(record[0].Reason).To(gomega.ContainSubstring("connection reset by peer"))
+	g.Expect(record.Steps[0].Name).To(gomega.Equal(testRootClaim))
+	g.Expect(record.Steps[0].Outcome).To(gomega.Equal(OutcomeFailed))
+	g.Expect(record.Steps[0].Reason).To(gomega.ContainSubstring("the upload failed"))
+	g.Expect(record.Steps[0].Reason).To(gomega.ContainSubstring("connection reset by peer"))
 	// The disks behind it proceeded, and the VirtualMachine was created
 	// last whatever became of them.
 	g.Expect(fake.uploaded).To(gomega.HaveLen(3))
 	g.Expect(fake.uploaded[0].name).To(gomega.Equal(testDataClaim))
-	g.Expect(record[4].Outcome).To(gomega.Equal(OutcomeCreated))
+	g.Expect(record.Steps[4].Outcome).To(gomega.Equal(OutcomeCreated))
 }
 
 func TestDeployReportsTheProgressOfEachUpload(t *testing.T) {

@@ -6,8 +6,10 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"os/signal"
+	"slices"
 	"strings"
 	"syscall"
 	"text/tabwriter"
@@ -90,27 +92,47 @@ func newUploadReporter(out io.Writer) (report func(p deploy.Progress)) {
 }
 
 // printRecord writes the deploy record: every object a deploy attempted
-// and what became of each one. A run that refused before attempting
-// anything has no record, so nothing is printed for one.
+// and what became of each one, and every requirement it mapped onto the
+// target's resources. A run that refused before attempting anything has
+// no record, so nothing is printed for one.
 //
 // Write errors are discarded per line because tabwriter reports them
 // again from Flush, which is checked.
 func printRecord(out io.Writer, record deploy.Record) (err error) {
-	if len(record) == 0 {
+	if len(record.Steps) == 0 && len(record.Requirements) == 0 {
 		return
 	}
 	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintf(tw, "Deploy record (%d)\n", len(record))
-	for i := range record {
-		line := fmt.Sprintf(
-			"  %s\t%s\t%s",
-			record[i].Kind,
-			named(record[i]),
-			record[i].Outcome)
-		if record[i].Reason != "" {
-			line += "\t" + record[i].Reason
+	if len(record.Steps) > 0 {
+		_, _ = fmt.Fprintf(tw, "Deploy record (%d)\n", len(record.Steps))
+		for i := range record.Steps {
+			line := fmt.Sprintf(
+				"  %s\t%s\t%s",
+				record.Steps[i].Kind,
+				named(record.Steps[i]),
+				record.Steps[i].Outcome)
+			if record.Steps[i].Reason != "" {
+				line += "\t" + record.Steps[i].Reason
+			}
+			_, _ = fmt.Fprintf(tw, "%s\n", line)
 		}
-		_, _ = fmt.Fprintf(tw, "%s\n", line)
+	}
+	if len(record.Requirements) > 0 {
+		_, _ = fmt.Fprintf(tw, "Requirements (%d)\n", len(record.Requirements))
+		for i := range record.Requirements {
+			from := record.Requirements[i].From
+			if from == "" {
+				from = "(unnamed)"
+			}
+			placed := from
+			if record.Requirements[i].To != "" {
+				placed += " -> " + record.Requirements[i].To
+			}
+			_, _ = fmt.Fprintf(tw, "  %s\t%s\t%s\n",
+				record.Requirements[i].Kind,
+				placed,
+				record.Requirements[i].How)
+		}
 	}
 	err = tw.Flush()
 	if err != nil {
@@ -130,6 +152,44 @@ func named(step deploy.Step) (rendered string) {
 	return
 }
 
+// mappingFlag is a repeatable flag that names mappings: each occurrence
+// gives one <left>=<right> pair, collected into a map from left to
+// right. The flag package has no repeatable string flag of its own, so
+// this is one. A repeated left side keeps the last right side, the way
+// a repeated plain flag keeps its last value.
+type mappingFlag struct {
+	// pairs is every pair the command line gave.
+	pairs map[string]string
+	// want says what a well-formed value looks like, for the error a
+	// malformed one produces.
+	want string
+}
+
+// Set parses one occurrence and adds its pair.
+func (f *mappingFlag) Set(value string) (err error) {
+	left, right, found := strings.Cut(value, "=")
+	if !found || left == "" || right == "" || strings.Contains(right, "=") {
+		err = errors.New(f.want)
+		return
+	}
+	if f.pairs == nil {
+		f.pairs = map[string]string{}
+	}
+	f.pairs[left] = right
+	return
+}
+
+// String renders the pairs the flag has collected, so that a flag with a
+// default can say what it is. The zero flag has none.
+func (f *mappingFlag) String() (rendered string) {
+	lefts := slices.Sorted(maps.Keys(f.pairs))
+	pairs := make([]string, 0, len(lefts))
+	for _, left := range lefts {
+		pairs = append(pairs, left+"="+f.pairs[left])
+	}
+	return strings.Join(pairs, ", ")
+}
+
 // parseDeployArgs parses and validates a deploy command line. It contacts
 // nothing, so the whole command line is testable without a cluster.
 func parseDeployArgs(args []string) (parsed deployArgs, err error) {
@@ -137,6 +197,16 @@ func parseDeployArgs(args []string) (parsed deployArgs, err error) {
 	fs.StringVar(&parsed.opt.Namespace, "n", "", "namespace to deploy into")
 	fs.StringVar(&parsed.opt.Namespace, "namespace", "", "namespace to deploy into")
 	fs.StringVar(&parsed.opt.Name, "name", "", "name for the deployed VirtualMachine")
+	storageClasses := &mappingFlag{
+		want: "a storage class mapping wants <source>=<target>",
+	}
+	fs.Var(storageClasses, "storage-class",
+		"place the disks of one storage class onto a target class; * covers every class that does not match by name")
+	networks := &mappingFlag{
+		want: "a network mapping wants <network>=<attachment>",
+	}
+	fs.Var(networks, "network",
+		"attach one of the machine's networks to a NetworkAttachmentDefinition")
 	fs.StringVar(&parsed.kubeconfig, "kubeconfig", "", "path to a kubeconfig file")
 	positional, err := parseFlags(fs, args)
 	if err != nil {
@@ -147,6 +217,8 @@ func parseDeployArgs(args []string) (parsed deployArgs, err error) {
 	if err != nil {
 		return
 	}
+	parsed.opt.StorageClasses = storageClasses.pairs
+	parsed.opt.Networks = networks.pairs
 	err = validateDeploy(parsed.opt)
 	return
 }

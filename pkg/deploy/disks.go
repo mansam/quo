@@ -3,6 +3,7 @@ package deploy
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"time"
 
@@ -15,6 +16,12 @@ import (
 // progressInterval is how often an upload in progress is reported.
 const progressInterval = 2 * time.Second
 
+// catchAllClass is the --storage-class key that covers every storage
+// class that does not match by name — the classes the target does not
+// hold under the requirement's own name, and the unnamed class, which
+// names nothing to match.
+const catchAllClass = "*"
+
 // plannedDisk is one of the VirtualMachine's disks as a deploy goes about
 // putting it back: what the bundle holds of it, what the bundle says it
 // needs from storage, and the deploy record's entry for it.
@@ -26,6 +33,10 @@ type plannedDisk struct {
 	// field but the claim is empty when the capture could not read the
 	// claim behind it.
 	required bundle.StorageRequirement
+	// storageClass is the target's class the disk lands on: the class of
+	// the requirement's own name when the target holds one, or the class
+	// a mapping places it on.
+	storageClass string
 	// step is the deploy record's entry, which the phases fill in as the
 	// disk proceeds.
 	step Step
@@ -37,10 +48,12 @@ type plannedDisk struct {
 //
 // A requirement with no member — the claim was forbidden, or never existed
 // — creates nothing, because there are no bytes to put anywhere. A member
-// whose requirement records no size, or no storage class, creates nothing
-// either: quo will not guess at what the target should provide, because a
-// disk placed by guesswork is not the disk the machine ran on. Both gaps
-// are recorded, so the run says what it left out.
+// whose requirement records no size creates nothing either: quo will not
+// guess at what the target should provide, because a disk placed by
+// guesswork is not the disk the machine ran on. A requirement that records
+// no class is placed by the catch-all mapping when one is given, and
+// creates nothing without one, for the same reason. Every gap is
+// recorded, so the run says what it left out.
 func planDisks(manifest *bundle.Manifest, opt Options) (disks []plannedDisk) {
 	//
 	heldByClaim := make(map[string]bundle.Disk, len(manifest.Disks))
@@ -67,7 +80,10 @@ func planDisks(manifest *bundle.Manifest, opt Options) (disks []plannedDisk) {
 		case disk.required.Size == "":
 			disk.step.Outcome = OutcomeSkipped
 			disk.step.Reason = "the bundle records no size for it"
-		case disk.required.StorageClass == "":
+		case disk.required.StorageClass == "" && opt.StorageClasses[catchAllClass] == "":
+			// A class recorded nowhere can be placed only by the
+			// catch-all. Without it quo will not guess: a disk placed by
+			// guesswork is not the disk the machine ran on.
 			disk.step.Outcome = OutcomeSkipped
 			disk.step.Reason = "the bundle records no storage class for it"
 		}
@@ -100,13 +116,17 @@ func planDisks(manifest *bundle.Manifest, opt Options) (disks []plannedDisk) {
 // cannot be placed on it.
 //
 // CDI has to be there, because a disk goes back onto a cluster only
-// through its upload. The storage class a disk was provisioned from has to
-// be there under the same name, and the target's own account of that
-// class — its StorageProfile — must not rule out the volume mode the disk
-// needs. A profile that says nothing about the class is not a refusal:
-// CDI falls back to its own defaults when the claim is created, and the
-// create is what answers.
-func resolveDisks(ctx context.Context, t cluster.Target, disks []plannedDisk) (err error) {
+// through its upload. Each class the bundle records is placed once and
+// reported, because nothing maps silently, and the target's own account
+// of the class the disks land on — its StorageProfile — must not rule out
+// the volume mode they need. A profile that says nothing about the class
+// is not a refusal: CDI falls back to its own defaults when the claim is
+// created, and the create is what answers.
+func resolveDisks(
+	ctx context.Context,
+	t cluster.Target,
+	disks []plannedDisk,
+	opt Options) (requirements []Requirement, err error) {
 	//
 	toUpload := 0
 	for i := range disks {
@@ -129,30 +149,27 @@ func resolveDisks(ctx context.Context, t cluster.Target, disks []plannedDisk) (e
 	if err != nil {
 		return
 	}
+	placed := map[string]Requirement{}
 	checked := map[string]bool{}
 	for i := range disks {
 		if disks[i].step.Outcome == OutcomeSkipped {
 			continue
 		}
-		required := disks[i].required
-		_, err = t.GetObject(ctx, cluster.ObjectRef{
-			Kind: cluster.KindStorageClass,
-			Name: required.StorageClass,
-		})
-		if errors.Is(err, cluster.ErrNotFound) {
-			err = &MissingStorageClassError{
-				Claim:        required.Claim,
-				StorageClass: required.StorageClass,
+		source := disks[i].required.StorageClass
+		mapping, found := placed[source]
+		if !found {
+			mapping, err = placeStorageClass(ctx, t, source, opt)
+			if err != nil {
+				return
 			}
-			return
+			placed[source] = mapping
+			requirements = append(requirements, mapping)
 		}
-		if err != nil {
-			return
-		}
-		if required.VolumeMode == "" || checked[required.StorageClass] {
+		disks[i].storageClass = mapping.To
+		if disks[i].required.VolumeMode == "" || checked[disks[i].storageClass] {
 			continue
 		}
-		checked[required.StorageClass] = true
+		checked[disks[i].storageClass] = true
 		err = checkVolumeMode(ctx, t, disks[i])
 		if err != nil {
 			return
@@ -161,12 +178,116 @@ func resolveDisks(ctx context.Context, t cluster.Target, disks []plannedDisk) (e
 	return
 }
 
+// placeStorageClass says where the disks of one of the bundle's storage
+// classes land, as the requirement the deploy record holds for the class:
+// what the bundle asked for, the target's class its disks land on, and how
+// the choice was made. An explicit --storage-class overrides whatever the
+// target holds under the requirement's own name; short of that, the
+// target's class of that name is the mapping a deploy makes on its own,
+// and the catch-all covers what does not match by name — a class the
+// target does not hold, and the unnamed class, which names nothing to
+// match. A class that resolves to nothing is a refusal, because the disks
+// are not uploaded that cannot be placed.
+func placeStorageClass(
+	ctx context.Context,
+	t cluster.Target,
+	source string,
+	opt Options) (mapping Requirement, err error) {
+	//
+	mapping.Kind = "storage class"
+	mapping.From = source
+	if named, found := opt.StorageClasses[source]; found {
+		// The command line said where these disks go, which overrides
+		// whatever the target holds under the requirement's own name.
+		mapping.To, mapping.How = named, "by --storage-class"
+		err = verifyStorageClass(ctx, t, source, mapping.To,
+			fmt.Sprintf("--storage-class %s=%s", source, named))
+		return
+	}
+	var held bool
+	if source != "" {
+		held, err = holds(ctx, t, cluster.ObjectRef{
+			Kind: cluster.KindStorageClass,
+			Name: source,
+		})
+		if err != nil {
+			return
+		}
+	}
+	if held {
+		// The target's class of the requirement's own name, and the read
+		// was the check that it is there.
+		mapping.To, mapping.How = source, "by name"
+		return
+	}
+	catchAll, found := opt.StorageClasses[catchAllClass]
+	if !found {
+		err = &UnresolvedRequirementError{
+			Kind:        "storage class",
+			Requirement: source,
+			Tried: fmt.Sprintf(
+				"no storage class of that name is there and no mapping names another; "+
+					"place it with --storage-class %s=<target>, or every class that does not match by name with --storage-class *=<target>",
+				source),
+		}
+		return
+	}
+	mapping.To, mapping.How = catchAll, "by --storage-class *"
+	err = verifyStorageClass(ctx, t, source, mapping.To,
+		fmt.Sprintf("--storage-class *=%s", catchAll))
+	return
+}
+
+// verifyStorageClass refuses a mapping that names a storage class the
+// target does not hold, because the disks land on the class it names.
+// named says the mapping as the command line gives it.
+func verifyStorageClass(
+	ctx context.Context,
+	t cluster.Target,
+	source, target, named string) (err error) {
+	//
+	held, err := holds(ctx, t, cluster.ObjectRef{
+		Kind: cluster.KindStorageClass,
+		Name: target,
+	})
+	if err != nil {
+		return
+	}
+	if held {
+		return
+	}
+	err = &UnresolvedRequirementError{
+		Kind:        "storage class",
+		Requirement: source,
+		Tried: fmt.Sprintf(
+			"the mapping %s names a class the target does not have", named),
+	}
+	return
+}
+
+// holds says whether the target cluster holds the object the reference
+// names. A kind the target has not installed holds nothing, the same as
+// a name it has no object under: both leave a mapping nothing to point
+// at, and only a read that failed for another reason is an error.
+func holds(ctx context.Context, t cluster.Target, ref cluster.ObjectRef) (held bool, err error) {
+	_, err = t.GetObject(ctx, ref)
+	if errors.Is(err, cluster.ErrNotFound) || errors.Is(err, cluster.ErrNotInstalled) {
+		err = nil
+		return
+	}
+	if err != nil {
+		return
+	}
+	held = true
+	return
+}
+
 // checkVolumeMode refuses a disk whose volume mode the target's own
-// account of its storage class rules out.
+// account of the class it was mapped onto rules out.
 func checkVolumeMode(ctx context.Context, t cluster.Target, disk plannedDisk) (err error) {
 	profile, readErr := t.GetObject(ctx, cluster.ObjectRef{
 		Kind: cluster.KindStorageProfile,
-		Name: disk.required.StorageClass,
+		Name: disk.storageClass,
 	})
 	if readErr != nil {
 		// A profile that cannot be read says nothing. The refusal this
@@ -190,7 +311,7 @@ func checkVolumeMode(ctx context.Context, t cluster.Target, disk plannedDisk) (e
 	if len(sets) > 0 && !offered {
 		err = &UnsupportedVolumeModeError{
 			Claim:        disk.required.Claim,
-			StorageClass: disk.required.StorageClass,
+			StorageClass: disk.storageClass,
 			VolumeMode:   disk.required.VolumeMode,
 		}
 	}
@@ -215,7 +336,7 @@ func createDataVolumes(
 			// planned; the record already says why.
 			continue
 		}
-		dataVolume := buildDataVolume(disks[i].held, disks[i].required, opt, identity)
+		dataVolume := buildDataVolume(disks[i], opt, identity)
 		err := t.Create(ctx, dataVolume)
 		if err != nil {
 			disks[i].step.Outcome = OutcomeFailed

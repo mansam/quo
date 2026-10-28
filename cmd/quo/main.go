@@ -59,6 +59,7 @@ Usage:
   quo check -n <namespace> <name>              say what a capture would collect
   quo inspect <path>                           describe a bundle
   quo deploy <bundle> -n <namespace> [--name <name>]
+       [--network <network>=<attachment>] [--storage-class <source>=<target>]
                                                put a bundle onto a cluster
 
 The export path may be a directory or the name of the bundle file. A directory,
@@ -71,6 +72,17 @@ default namespace by accident is a quiet mistake. The deployed VirtualMachine
 is the source cluster's own resolution of the captured one and is left stopped;
 starting it is virtctl start. Each disk the bundle holds is uploaded into a
 DataVolume through the target cluster's CDI, which has to be installed.
+
+A deploy maps the bundle's requirements onto what the target has. A storage
+class or a multus network maps onto the target's resource of the same name on
+its own; --storage-class <source>=<target> places the disks of one class, with
+--storage-class *=<target> covering every class that does not match by name,
+the unnamed class included; and --network <network>=<attachment> attaches one
+of the machine's networks to a NetworkAttachmentDefinition of the target's,
+named with its namespace when it lives outside the deploy namespace. Every
+mapping is reported in the deploy record, and a requirement that resolves to
+nothing refuses the deploy before anything is created. Container disk images
+are reported as requirements and never pull-checked.
 
 A bundle contains plaintext Secrets from the source cluster. Treat it with the
 same care as the cluster it was captured from.
