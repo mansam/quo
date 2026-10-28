@@ -195,6 +195,61 @@ func TestDeployRefusesANetworkThatMapsToNothing(t *testing.T) {
 	}
 }
 
+func TestDeployReportsANetworkMappingThatMatchedNoNetworkOfTheMachine(t *testing.T) {
+	tests := []struct {
+		name    string
+		network string
+	}{
+		{
+			name:    "a network the machine has not",
+			network: "office",
+		},
+		{
+			name:    "the pod network, which is never mapped",
+			network: "default",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := gomega.NewGomegaWithT(t)
+			path := writeNetworksFixtureBundle(t, testAttachment)
+			fake := target()
+			fake.hold(cluster.ObjectRef{
+				Kind:      cluster.KindNetworkAttachmentDefinition,
+				Namespace: testDeployNamespace,
+				Name:      testAttachment,
+			}, heldAttachment(testDeployNamespace, testAttachment))
+			opt := testOptions(path)
+			opt.Networks = map[string]string{tt.network: testAttachment}
+
+			record, err := Deploy(context.TODO(), fake, opt)
+
+			// The deploy goes ahead, because a mapping that matched
+			// nothing is not a refusal, and the record says the flag
+			// took no effect: nothing maps silently, and nothing that
+			// tried to map is silent either.
+			g.Expect(err).ToNot(gomega.HaveOccurred())
+			g.Expect(record.Requirements).To(gomega.Equal([]Requirement{
+				{
+					Kind: "network",
+					From: testMultusNetwork,
+					To:   testAttachment,
+					How:  "by name",
+				},
+				{
+					Kind: "network",
+					From: tt.network,
+					To:   testAttachment,
+					How:  "the bundle declares no such network",
+				},
+			}))
+			// The machine the bundle holds is created as ever.
+			g.Expect(fake.created).To(gomega.HaveLen(1))
+		})
+	}
+}
+
 func TestDeployReportsAContainerDiskImageAsARequirementItNeverMaps(t *testing.T) {
 	g := gomega.NewGomegaWithT(t)
 	path := writeContainerDiskFixtureBundle(t)

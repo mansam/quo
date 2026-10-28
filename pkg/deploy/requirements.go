@@ -3,6 +3,8 @@ package deploy
 import (
 	"context"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 
 	"github.com/mansam/quo/pkg/bundle"
@@ -158,6 +160,52 @@ func reportedContainerDisks(
 			Kind: KindContainerDisk,
 			From: required[i].Image,
 			How:  "the target has to be able to pull it",
+		})
+	}
+	return
+}
+
+// unmatchedMappings reports the mappings the command line named that no
+// requirement of the bundle's matched — a --network naming no network of
+// the machine, or a --storage-class naming a class no disk records.
+// Nothing is applied and nothing is refused for them, and the record
+// says so, because a flag that looks like it took effect is a quiet
+// mistake. The catch-all is not among them: it names no requirement of
+// its own.
+func unmatchedMappings(opt Options, manifest *bundle.Manifest) (unmatched []Requirement) {
+	recorded := make(map[string]bool, len(manifest.Requirements.Storage))
+	for i := range manifest.Requirements.Storage {
+		recorded[manifest.Requirements.Storage[i].StorageClass] = true
+	}
+	for _, source := range slices.Sorted(maps.Keys(opt.StorageClasses)) {
+		if source == catchAllClass || recorded[source] {
+			continue
+		}
+		unmatched = append(unmatched, Requirement{
+			Kind: KindStorageClass,
+			From: source,
+			To:   opt.StorageClasses[source],
+			How:  "the bundle records no such storage class",
+		})
+	}
+	declared := make(map[string]bool, len(manifest.Requirements.Networks))
+	for i := range manifest.Requirements.Networks {
+		if manifest.Requirements.Networks[i].Type != bundle.NetworkMultus {
+			// The pod network is never mapped, so a flag naming it has
+			// nothing to match.
+			continue
+		}
+		declared[manifest.Requirements.Networks[i].Name] = true
+	}
+	for _, network := range slices.Sorted(maps.Keys(opt.Networks)) {
+		if declared[network] {
+			continue
+		}
+		unmatched = append(unmatched, Requirement{
+			Kind: KindNetwork,
+			From: network,
+			To:   opt.Networks[network],
+			How:  "the bundle declares no such network",
 		})
 	}
 	return

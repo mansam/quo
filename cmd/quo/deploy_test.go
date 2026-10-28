@@ -293,6 +293,14 @@ func TestDeployPrintsTheRequirementsARecordCarries(t *testing.T) {
 				From: "quay.io/example/support-tools:6.0",
 				How:  "the target has to be able to pull it",
 			},
+			{
+				// A mapping the command line named that no requirement
+				// matched: said rather than silently ignored.
+				Kind: "network",
+				From: "office",
+				To:   "office-net",
+				How:  "the bundle declares no such network",
+			},
 		},
 	}
 	reported := &bytes.Buffer{}
@@ -303,7 +311,7 @@ func TestDeployPrintsTheRequirementsARecordCarries(t *testing.T) {
 	said := reported.String()
 	// Every requirement is printed with what it was mapped onto and how,
 	// and the unnamed class says it is unnamed.
-	g.Expect(said).To(gomega.ContainSubstring("Requirements (5)"))
+	g.Expect(said).To(gomega.ContainSubstring("Requirements (6)"))
 	g.Expect(said).To(gomega.ContainSubstring("storage class"))
 	g.Expect(said).To(gomega.ContainSubstring("fast-rbd -> fast-rbd"))
 	g.Expect(said).To(gomega.ContainSubstring("by name"))
@@ -316,6 +324,8 @@ func TestDeployPrintsTheRequirementsARecordCarries(t *testing.T) {
 	g.Expect(said).To(gomega.ContainSubstring("container disk"))
 	g.Expect(said).To(gomega.ContainSubstring("quay.io/example/support-tools:6.0"))
 	g.Expect(said).To(gomega.ContainSubstring("the target has to be able to pull it"))
+	g.Expect(said).To(gomega.ContainSubstring("office -> office-net"))
+	g.Expect(said).To(gomega.ContainSubstring("the bundle declares no such network"))
 }
 
 func TestDeployPrintsNothingForARunThatRefusedBeforeAttemptingAnything(t *testing.T) {

@@ -21,7 +21,8 @@ import (
 // storage class or a multus network maps automatically when the target
 // holds one of the requirement's own name, and Options names the rest.
 // Every mapping is reported in the record, because nothing maps
-// silently. The pod network is never mapped, and a container disk image
+// silently, and so is a mapping the options named that no requirement
+// matched. The pod network is never mapped, and a container disk image
 // is reported as a requirement and never pull-checked — quo holds no
 // registry credentials.
 //
@@ -131,11 +132,14 @@ func Deploy(ctx context.Context, t cluster.Target, opt Options) (record Record, 
 		ctx, t, expanded, step, opt, manifest.Provenance, identity, networks))
 	// Every requirement the bundle declared is reported with what it was
 	// mapped onto, or with what the target has to do for it: nothing
-	// maps silently, and what is only reported is said too.
+	// maps silently, and what is only reported is said too. A mapping
+	// the command line named that no requirement matched is said too,
+	// because a flag that took no effect is never silent either.
 	record.Requirements = append(record.Requirements, storage...)
 	record.Requirements = append(record.Requirements, networks...)
 	record.Requirements = append(
 		record.Requirements, reportedContainerDisks(manifest.Requirements.ContainerDisks)...)
+	record.Requirements = append(record.Requirements, unmatchedMappings(opt, manifest)...)
 	err = notCreated(record)
 	return
 }

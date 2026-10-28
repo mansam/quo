@@ -357,6 +357,73 @@ func TestDeployPlacesAnUnnamedClassOnlyThroughTheCatchAll(t *testing.T) {
 	}
 }
 
+func TestDeployReportsAStorageClassMappingThatMatchedNoClassTheBundleRecords(t *testing.T) {
+	tests := []struct {
+		name    string
+		mapping map[string]string
+		want    []Requirement
+	}{
+		{
+			name:    "a class no disk records",
+			mapping: map[string]string{testSlowStorageClass: testMappedStorageClass},
+			want: []Requirement{
+				{
+					Kind: "storage class",
+					From: testStorageClass,
+					To:   testStorageClass,
+					How:  "by name",
+				},
+				{
+					Kind: "storage class",
+					From: testSlowStorageClass,
+					To:   testMappedStorageClass,
+					How:  "the bundle records no such storage class",
+				},
+			},
+		},
+		{
+			// The catch-all names no requirement of its own, so one that
+			// matched nothing — every class matching by name — is not a
+			// mapping that went unsaid.
+			name:    "the catch-all, with every class matching by name",
+			mapping: map[string]string{"*": testMappedStorageClass},
+			want: []Requirement{
+				{
+					Kind: "storage class",
+					From: testStorageClass,
+					To:   testStorageClass,
+					How:  "by name",
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := gomega.NewGomegaWithT(t)
+			path := writeDisksFixtureBundle(t)
+			fake := storageTarget()
+			opt := testOptions(path)
+			opt.StorageClasses = tt.mapping
+
+			record, err := Deploy(context.TODO(), fake, opt)
+
+			// The deploy goes ahead and the disks land where the record
+			// says, with the mapping that matched nothing said too.
+			g.Expect(err).ToNot(gomega.HaveOccurred())
+			g.Expect(record.Requirements).To(gomega.Equal(tt.want))
+			for i := range fake.created {
+				if fake.created[i].GetKind() != cluster.KindDataVolume {
+					continue
+				}
+				class, _, _ := unstructured.NestedString(
+					fake.created[i].Object, "spec", "storage", "storageClassName")
+				g.Expect(class).To(gomega.Equal(testStorageClass))
+			}
+		})
+	}
+}
+
 func TestDeployRefusesAStorageClassThatMapsToNothing(t *testing.T) {
 	path := writeDisksFixtureBundle(t)
 	// A target with CDI but nothing else: no class the bundle records
