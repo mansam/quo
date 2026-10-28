@@ -133,6 +133,13 @@ type Step struct {
 	Reason string
 }
 
+// dryRunStep puts on a step what a dry run did with the object it stands
+// for: nothing is created, and the step still says created, because the
+// record a dry run returns is the record a real deploy would print.
+func dryRunStep(step *Step) {
+	step.Outcome = OutcomeCreated
+}
+
 // Requirement is one of the bundle's requirements as a deploy placed it
 // on the target: what the bundle asked for, what the target provides
 // for it, and how the two were put together. A requirement a deploy

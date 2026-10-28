@@ -288,10 +288,7 @@ func createVirtualMachine(
 	networks []Requirement) (finished Step) {
 	//
 	if opt.DryRun {
-		// Nothing is created. The step still says created, because the
-		// record a dry run returns is the record a real deploy would
-		// print.
-		step.Outcome = OutcomeCreated
+		dryRunStep(&step)
 		return step
 	}
 	vm := buildVirtualMachine(expanded, opt, provenance, identity, networks)

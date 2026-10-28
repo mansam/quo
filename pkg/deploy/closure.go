@@ -124,10 +124,7 @@ func createClosure(
 			continue
 		}
 		if opt.DryRun {
-			// Nothing is created. The step still says created, because
-			// the record a dry run returns is the record a real deploy
-			// would print.
-			closure[i].step.Outcome = OutcomeCreated
+			dryRunStep(&closure[i].step)
 			continue
 		}
 		object := buildClosureObject(closure[i].object, opt, identity)
