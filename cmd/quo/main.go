@@ -96,8 +96,12 @@ label, and nothing else — not another bundle's deployment, not anyone else's
 work. It does not wait for deletions to finish; a deletion that hangs is what
 kubectl is for. --dry-run says what it would delete and deletes nothing.
 
-A bundle contains plaintext Secrets from the source cluster. Treat it with the
-same care as the cluster it was captured from.
+A bundle contains plaintext Secrets from the source cluster, and a deploy
+writes them onto the target cluster as they are: the cluster you deploy onto
+is the trust boundary. Treat it with the same care as the cluster the bundle
+was captured from. Deploying one bundle twice produces two machines with the
+same identity — the same MAC addresses, firmware UUID and serial — which on a
+shared network is a duplicate machine.
 
 quo check creates no VirtualMachineExport and transfers no disk data, so
 permission to create one is the one thing it does not test.
