@@ -351,8 +351,8 @@ func TestExportCapturesTheControllerRevisionOfAnInstancetypeThatHasBeenDeleted(t
 
 	manifest := capturedManifest(t, content)
 	// The ControllerRevision is now the only complete record of what the
-	// VirtualMachine was created with, so the capture must not fail over the
-	// instancetype being gone.
+	// VirtualMachine was created with. The capture must therefore not
+	// fail over the instancetype being gone.
 	g.Expect(collected(manifest)).To(gomega.Equal(append(
 		[]cluster.ObjectRef{
 			ref(cluster.KindVirtualMachine, testName),
@@ -455,8 +455,8 @@ func TestExportSeeksNoVirtualMachineInstanceAndNoPod(t *testing.T) {
 
 	_, _ = captureWithDisks(t, c, testOptions())
 
-	// A stopped VirtualMachine has neither, so looking for them would report
-	// an absence that means nothing.
+	// A stopped VirtualMachine has neither, so a request for them would
+	// report an absence that means nothing.
 	var kinds []string
 	for _, requested := range c.requested {
 		kinds = append(kinds, requested.Kind)

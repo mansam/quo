@@ -12,9 +12,9 @@ import (
 	"github.com/mansam/quo/pkg/cluster"
 )
 
-// dryRunOptions deploys the bundle at path the way a dry run does: every
-// refusal still runs and the record says what a real deploy would do, and
-// nothing is created.
+// dryRunOptions deploys the bundle at path the way a dry run does.
+// Every refusal still runs, and the record says what a real deploy would
+// do. Nothing is created.
 func dryRunOptions(path string) (opt Options) {
 	opt = testOptions(path)
 	opt.DryRun = true
@@ -22,21 +22,22 @@ func dryRunOptions(path string) (opt Options) {
 }
 
 func TestDeployDryRunRunsEveryRefusalTheRealDeployRuns(t *testing.T) {
-	// The bundle refusals, in the shapes the real deploy's own tests give
-	// them: a later format version, and a bundle whose capture could not
-	// read the expansion.
+	// The bundle refusals, in the shapes the real deploy's own tests
+	// give them. One is a later format version. One is a bundle whose
+	// capture could not read the expansion.
 	laterFormat := writeBytes(t, "later-format.quo", bytes.ReplaceAll(
 		readFile(t, writeFixtureBundle(t, true)),
 		[]byte("formatVersion: "+bundle.FormatVersion),
 		[]byte("formatVersion: v9")))
-	// The disks bundle, for the refusals about placement; the closure
-	// bundle, for the collisions; the networks bundle, for the mapping.
+	// The disks bundle is for the refusals about placement. The closure
+	// bundle is for the collisions. The networks bundle is for the
+	// mapping.
 	disks := writeDisksFixtureBundle(t)
 	closureBundle := writeClosureFixtureBundle(t)
 	networks := writeNetworksFixtureBundle(t, testAttachment)
-	// Targets the refusals need: one with nothing on it at all; one with
-	// CDI and no storage class; one whose own account of the class rules
-	// out the root disk's volume mode.
+	// Targets the refusals need. One holds nothing at all. One holds
+	// CDI and no storage class. One keeps its own account of the class,
+	// which rules out the root disk's volume mode.
 	bare := target()
 	cdiOnly := target()
 	cdiOnly.hold(cluster.ObjectRef{Kind: cluster.KindCDIConfig, Name: cluster.CDIConfigName}, cdiConfig())
@@ -193,14 +194,15 @@ func TestDeployDryRunReportsWhatItWouldCreate(t *testing.T) {
 
 	record, err := Deploy(context.TODO(), fake, dryRunOptions(path))
 
-	// A dry run of a deploy that would be clean is a clean run: the
+	// A dry run of a deploy that would be clean is a clean run. The
 	// error is what says a real deploy would have created everything it
 	// tried to.
 	g.Expect(err).ToNot(gomega.HaveOccurred())
-	// The record is the one a real deploy would print: every object it
-	// would create, in the order it would create them — the DataVolumes,
-	// then the closure objects, then the VirtualMachine last — each said
-	// as created, because that is what a real deploy would do with each.
+	// The record is the one a real deploy would print. It holds every
+	// object it would create, in the order it would create them: the
+	// DataVolumes, then the closure objects, then the VirtualMachine
+	// last. Each is said as created, because that is what a real deploy
+	// would do with each.
 	g.Expect(record.Steps).To(gomega.Equal([]Step{
 		{
 			Kind:      cluster.KindDataVolume,
@@ -268,8 +270,8 @@ func TestDeployDryRunReportsWhatItWouldCreate(t *testing.T) {
 		},
 	}))
 	// And nothing touched the target: nothing was created, nothing was
-	// uploaded, and no labels landed anywhere, because the target holds
-	// none of what the record says a deploy would put there.
+	// uploaded, and no labels reached anything. The target holds none of
+	// what the record says a deploy would put there.
 	g.Expect(fake.created).To(gomega.BeEmpty())
 	g.Expect(fake.uploaded).To(gomega.BeEmpty())
 	g.Expect(fake.events).To(gomega.BeEmpty())
@@ -280,9 +282,9 @@ func TestDeployDryRunReportsWhatItWouldCreate(t *testing.T) {
 
 func TestDeployDryRunSaysWhatWouldNotBeCreated(t *testing.T) {
 	// The root disk's bytes changed in transit. The claim's name is in
-	// every line of the member's stand-in content, so replacing it keeps
-	// the tar the manifest indexes aligned while changing what the digest
-	// is computed over.
+	// every line of the member's stand-in content. Replacing it keeps
+	// the tar the manifest indexes aligned, while changing what the
+	// digest is computed over.
 	corruptedDisk := writeBytes(t, "corrupted-disk.quo", bytes.ReplaceAll(
 		readFile(t, writeDisksFixtureBundle(t)),
 		[]byte("disk of "+testRootClaim),
@@ -294,8 +296,9 @@ func TestDeployDryRunSaysWhatWouldNotBeCreated(t *testing.T) {
 		[]byte(sysprepAnswer),
 		[]byte(sysprepMangled)))
 	// One byte of the expansion changed in transit. The machine type
-	// sits in the expansion alone — the declaration names an instancetype
-	// instead — so its last occurrence in the bundle is in the member.
+	// sits in the expansion alone, because the declaration names an
+	// instancetype instead. Its last occurrence in the bundle is
+	// therefore in the member.
 	corruptedExpansion := bytes.Clone(readFile(t, writeClosureFixtureBundle(t)))
 	at := bytes.LastIndex(corruptedExpansion, []byte(testMachineType))
 	if at < 0 {
@@ -356,8 +359,8 @@ func TestDeployDryRunSaysWhatWouldNotBeCreated(t *testing.T) {
 
 			record, err := Deploy(context.TODO(), fake, dryRunOptions(tt.bundle))
 
-			// The skip lands in the record the dry run would print, and
-			// the error is the one a real deploy's would be: what the
+			// The skip sits in the record the dry run would print, and
+			// the error is the one a real deploy's would be. What the
 			// dry run describes is a partial deploy, and the exit code
 			// says so the same way.
 			g.Expect(err).To(gomega.MatchError(&NotCreatedError{}))
@@ -385,9 +388,9 @@ func TestDeployDryRunReportsTheMappingsItWouldApply(t *testing.T) {
 		name     string
 		networks map[string]string
 		// attachment and where say the NetworkAttachmentDefinition the
-		// mapping attaches to, and the namespace holding it: the
-		// deploy namespace for the mapping by name, outside it for the
-		// flag's qualified form.
+		// mapping attaches to, and the namespace holding it. The deploy
+		// namespace holds the mapping by name. A namespace outside it
+		// holds the flag's qualified form.
 		attachment string
 		where      string
 		want       []Requirement

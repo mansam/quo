@@ -14,12 +14,14 @@ import (
 // suite exists.
 //
 // quo traverses a VirtualMachine's closure itself rather than calling the
-// objectgraph subresource, because that subresource sits behind a feature
-// gate that is off by default and cannot be relied on. KubeVirt's
-// server-side implementation is the specification quo's traversal follows,
-// and nothing keeps the copy in step with the original. On a cluster where
-// the gate is on, the two can be asked the same question, and an object
-// KubeVirt follows and quo does not shows up here and nowhere else.
+// objectgraph subresource. That subresource sits behind a feature gate
+// that is off by default. So quo cannot rely on it. KubeVirt's
+// server-side implementation is the specification quo's traversal follows.
+// Nothing keeps the copy in step with the original.
+//
+// On a cluster where the gate is on, the two can be asked the same
+// question. An object KubeVirt follows and quo does not appears here and
+// nowhere else.
 func TestQuoFindsEveryMemberOfTheClosureKubeVirtsObjectGraphFinds(t *testing.T) {
 	g := gomega.NewGomegaWithT(t)
 	s := live(t)
@@ -28,8 +30,8 @@ func TestQuoFindsEveryMemberOfTheClosureKubeVirtsObjectGraphFinds(t *testing.T) 
 
 	root := graphOf(t, s)
 	graph := root.refs()
-	// A graph that decoded to nothing would make every comparison pass, so
-	// the suite would report agreement where it had asked nothing. The
+	// A graph that decoded to nothing would make every comparison pass.
+	// So the suite would report agreement where it asked nothing. The
 	// likeliest cause is a rename in KubeVirt's own type.
 	g.Expect(graph).ToNot(gomega.BeEmpty())
 
@@ -60,7 +62,7 @@ func TestTheObjectGraphNamesTheVirtualMachineItWasAskedAbout(t *testing.T) {
 // graphOf reads KubeVirt's object graph for the fixture VirtualMachine.
 //
 // A cluster that serves the subresource with the feature gate off answers
-// every request with a refusal, which is not a finding about quo, so the
+// every request with a refusal. That is not a finding about quo. So the
 // test skips and names the gate.
 func graphOf(t *testing.T, s *suite) (root graphNode) {
 	t.Helper()

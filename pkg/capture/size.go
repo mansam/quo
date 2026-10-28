@@ -6,8 +6,8 @@ import "fmt"
 // and the space a capture would need.
 //
 // It is here rather than in the CLI because quo reports sizes from more than
-// one place and a reader should not have to work out that two of them mean
-// the same thing.
+// one place. A reader should not have to discover that two of them mean the
+// same thing.
 func FormatSize(count int64) (rendered string) {
 	const unit = 1024
 	if count < unit {

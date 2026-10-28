@@ -30,8 +30,8 @@ const partTarget = "target"
 // How long the round trip waits for the cluster.
 const (
 	// claimGoneTimeout bounds the wait for the claim behind a deleted
-	// DataVolume to be collected, which the cluster's own garbage
-	// collection does rather than quo.
+	// DataVolume to be collected. The cluster's own garbage collection
+	// does that work, not quo.
 	claimGoneTimeout = 2 * time.Minute
 )
 
@@ -42,8 +42,9 @@ var claimResource = schema.GroupVersionResource{
 	Resource: "persistentvolumeclaims",
 }
 
-// gvrByKind is how the suite reads back what a deploy created, by kind: the
-// kinds a deploy can leave in a namespace, each at the resource serving it.
+// gvrByKind is how the suite reads back what a deploy created, by kind. It
+// holds the kinds a deploy can leave in a namespace. Each kind maps to
+// the resource serving it.
 var gvrByKind = map[string]schema.GroupVersionResource{
 	cluster.KindConfigMap:      configMapResource,
 	cluster.KindDataVolume:     dataVolumeResource,
@@ -70,8 +71,8 @@ func TestTheDeployedSetIsWhatTheBundleHoldsOfTheKindsADeployCreates(t *testing.T
 				{Kind: cluster.KindServiceAccount, Namespace: "support-cases", Name: "db-01-serviceaccount"},
 				{Kind: cluster.KindDataVolume, Namespace: "support-cases", Name: "db-01-root"},
 			},
-			// The bundle holds the root disk's DataVolume as a resource
-			// and its claim as a disk, and the set holds the DataVolume
+			// The bundle holds the root disk's DataVolume as a resource.
+			// It holds the claim as a disk. The set holds the DataVolume
 			// once.
 			disks: []bundle.Disk{{Claim: "db-01-root"}},
 			want: []cluster.ObjectRef{
@@ -83,11 +84,12 @@ func TestTheDeployedSetIsWhatTheBundleHoldsOfTheKindsADeployCreates(t *testing.T
 			},
 		},
 		{
-			// None of these lands on the target: the instancetype and the
-			// revision are folded into the expansion a deploy applies, the
-			// claim is created by CDI behind the DataVolume, the
-			// NetworkAttachmentDefinition is mapped rather than copied, and
-			// the storage class describes the source cluster.
+			// None of these lands on the target. The instancetype and
+			// the revision are folded into the expansion a deploy
+			// applies. The claim is created by CDI behind the
+			// DataVolume. The NetworkAttachmentDefinition is mapped
+			// rather than copied. The storage class describes the source
+			// cluster.
 			name: "a bundle holding only what a deploy reads",
 			resources: []bundle.Resource{
 				{Kind: cluster.KindVirtualMachineInstancetype, Namespace: "support-cases", Name: "standard-large"},
@@ -98,8 +100,8 @@ func TestTheDeployedSetIsWhatTheBundleHoldsOfTheKindsADeployCreates(t *testing.T
 			},
 		},
 		{
-			// A disk whose claim was made by hand, which the bundle holds
-			// as a claim alone: the deploy places it as a DataVolume of
+			// A disk whose claim was made by hand. The bundle holds it
+			// as a claim alone. The deploy places it as a DataVolume of
 			// its own, named after the claim.
 			name: "a disk whose claim the bundle holds with no DataVolume",
 			resources: []bundle.Resource{
@@ -229,16 +231,17 @@ func TestDifferencesNameWhereTwoResolutionsDisagree(t *testing.T) {
 	}
 }
 
-// deployedSet is what a deploy of the bundle puts into a namespace: every
-// object the bundle holds of a kind a deploy creates, under the name it was
-// captured with, and one DataVolume for each disk it places, named after
-// the claim the disk backs — a disk whose claim the bundle holds without
-// a DataVolume of its own is placed as one all the same. The round trip
-// compares the target against it, and the undeploy at the end of one
-// takes exactly it off again, so one list answers both directions.
+// deployedSet is what a deploy of the bundle puts into a namespace. It
+// holds every object the bundle holds of a kind a deploy creates, under
+// the name it was captured with. It holds one DataVolume for each disk it
+// places, named after the claim the disk backs. A disk whose claim the
+// bundle holds without a DataVolume of its own is placed as one all the
+// same. The round trip compares the target against the set. The undeploy
+// at the end of one takes exactly the set off again. So one list answers
+// both directions.
 //
-// The claim behind a disk is not among the kinds although the target ends
-// up holding one: CDI creates it behind the DataVolume, and the round trip
+// The claim behind a disk is not among the kinds, although the target ends
+// up holding one. CDI creates it behind the DataVolume. The round trip
 // checks it where it checks that the disk arrived populated.
 func deployedSet(manifest *bundle.Manifest, namespace string) (refs []cluster.ObjectRef) {
 	created := make(map[string]bool, len(cluster.DeployedKinds))
@@ -275,15 +278,15 @@ func deployedSet(manifest *bundle.Manifest, namespace string) (refs []cluster.Ob
 	return
 }
 
-// differences names where two objects disagree: one line per difference,
-// giving the path into the object, what the bundle's expansion holds there
-// and what the target's does.
+// differences names where two objects disagree. It gives one line per
+// difference. Each line gives the path into the object, what the bundle's
+// expansion holds there, and what the target's does.
 //
 // The round trip diffs the target's own expansion of the deployed machine
 // against the expansion the bundle holds. The two clusters resolving the
-// machine differently is information — the defaults one fills in and the
+// machine differently is information. The defaults one fills in and the
 // other does not are exactly what a support engineer wants to know about a
-// diagnostic cluster — so every difference is reported and none is a
+// diagnostic cluster. So every difference is reported, and none is a
 // failure.
 func differences(held, target map[string]any) (diffs []string) {
 	diffs = diffMaps("", held, target)
@@ -323,8 +326,8 @@ func diffMaps(at string, held, target map[string]any) (diffs []string) {
 }
 
 // diffValues compares what two values hold at one path. Two values are
-// taken to agree when they print the same, so a number one side decoded as
-// an integer and the other as a float is not reported as a difference.
+// taken to agree when they print the same. So a number one side decoded
+// as an integer and the other as a float is not reported as a difference.
 func diffValues(path string, held, target any) (diffs []string) {
 	switch heldValue := held.(type) {
 	case map[string]any:
@@ -345,7 +348,7 @@ func diffValues(path string, held, target any) (diffs []string) {
 }
 
 // diffLists compares two lists entry by entry, so that a difference names
-// the entry it is in, and reports the two lengths when they differ.
+// the entry it is in. It reports the two lengths when they differ.
 func diffLists(path string, held, target []any) (diffs []string) {
 	for i := 0; i < len(held) && i < len(target); i++ {
 		diffs = append(diffs, diffValues(fmt.Sprintf("%s[%d]", path, i), held[i], target[i])...)
@@ -364,31 +367,34 @@ func diffLists(path string, held, target []any) (diffs []string) {
 // TestDeployingTheCapturedBundleReproducesTheVirtualMachine is the question
 // phase 1 left open: does a bundle actually reproduce the VirtualMachine?
 //
-// The one capture the tests share is deployed into a second namespace on the
-// same cluster, through the library entry point with the real cluster
-// adapter, which is the first time anything drives a deploy against an API
-// server that can refuse it. Then the target is compared against the
-// fixture: an object the fixture has that the target lacks is a failure,
-// named, while the target's own expansion of the machine is diffed against
-// the expansion the bundle holds and the differences reported, because the
-// two clusters resolving differently is information.
+// The tests share one capture. The test deploys it into a second namespace
+// on the same cluster. The deploy goes through the library entry point with
+// the real cluster adapter. That is the first time anything drives a deploy
+// against an API server that can refuse it.
 //
-// Along the way the round trip settles three facts the design depends on:
-// whether the expansion carries the instancetype and preference matchers
-// (the applied machine names none whatever it carries), whether
+// The test then compares the target against the fixture. An object the
+// fixture has that the target lacks is a failure, named. The test also
+// diffs the target's own expansion of the machine against the expansion
+// the bundle holds. It reports the differences, because the two clusters
+// resolving differently is information.
+//
+// Along the way the round trip settles three facts the design depends on.
+// Does the expansion carry the instancetype and preference matchers (the
+// applied machine names none whatever it carries)? Do the
 // dataVolumeTemplates survive it (the applied machine carries none, and the
 // volume references that named them are satisfied unchanged by the
-// standalone DataVolumes), and whether CDI's upload accepts the bundle's
-// compressed bytes unchanged (the deployed disk arrives populated). The
-// tar.gz form is not taken around: the tar.gz the export produces of a
-// filesystem volume carries the volume's own root entry, which a CDI
-// running under OpenShift's restricted security context cannot untar into
-// the volume it lands in, so the gzip form is what the round trip covers
-// and the deploy suite's disk fixtures cover the tar.gz bytes'
+// standalone DataVolumes)? Does CDI's upload accept the bundle's compressed
+// bytes unchanged (the deployed disk arrives populated)?
+//
+// The round trip does not exercise the tar.gz form. The tar.gz the export
+// produces of a filesystem volume carries the volume's own root entry. A
+// CDI running under OpenShift's restricted security context cannot untar
+// that into the volume it lands in. So the gzip form is what the round
+// trip covers. The deploy suite's disk fixtures cover the tar.gz bytes'
 // pass-through.
 //
-// Everything the round trip creates is removed again however it ends: the
-// undeploy at the end takes the deployment off by its label, and the second
+// Everything the round trip creates is deleted again however it ends. The
+// undeploy at the end deletes the deployment by its label. The second
 // namespace is deleted after that, which is the sure end.
 func TestDeployingTheCapturedBundleReproducesTheVirtualMachine(t *testing.T) {
 	g := gomega.NewGomegaWithT(t)
@@ -403,17 +409,17 @@ func TestDeployingTheCapturedBundleReproducesTheVirtualMachine(t *testing.T) {
 	}
 	if s.fixture.attached != "" {
 		// The definition the machine's secondary network names lives in
-		// the fixture's namespace, so the deploy namespace holds nothing
-		// of that name for the network to map onto: the mapping names
-		// where it does live, qualified because that is outside the
-		// deploy namespace.
+		// the fixture's namespace. So the deploy namespace holds nothing
+		// of that name for the network to map onto. The mapping names
+		// where it does live. It is qualified because that is outside
+		// the deploy namespace.
 		opt.Networks = map[string]string{
 			networkSecondary: s.fixture.namespace + "/" + s.fixture.attached,
 		}
 	}
 	record, err := deploy.Deploy(ctx, s.quo, opt)
-	// A partial deploy is a failed round trip. The steps are checked first,
-	// so that the failure names the object that did not arrive and why.
+	// A partial deploy is a failed round trip. The steps are checked first.
+	// So the failure names the object that did not arrive and why.
 	for i := range record.Steps {
 		g.Expect(record.Steps[i].Outcome).To(gomega.Equal(deploy.OutcomeCreated),
 			stepOf(record.Steps[i]))
@@ -427,7 +433,7 @@ func TestDeployingTheCapturedBundleReproducesTheVirtualMachine(t *testing.T) {
 	}
 
 	// What the fixture has, the target holds. The reads go through the
-	// suite's own client, so that what checks quo never goes through quo.
+	// suite's own client. So what checks quo never goes through quo.
 	expected := deployedSet(manifest, target)
 	missing, err := s.missing(ctx, target, expected)
 	g.Expect(err).ToNot(gomega.HaveOccurred())
@@ -435,12 +441,12 @@ func TestDeployingTheCapturedBundleReproducesTheVirtualMachine(t *testing.T) {
 		"every object the fixture has of a kind a deploy creates should be on the target")
 
 	// The disks arrived populated. CDI's upload is what put the bundle's
-	// bytes on the target — the gzip or tar.gz form the export produced,
-	// streamed unchanged — and the import finishing is what says the
-	// upload was accepted: both ends being CDI is the design's bet, and
-	// this is where it is settled. What the target holds for a disk is
-	// asserted rather than read back: a claim, bound, at least as large
-	// as the size the capture recorded, in the volume mode it recorded.
+	// bytes on the target, streamed unchanged in the gzip or tar.gz form
+	// the export produced. The import finishing is what says the upload
+	// was accepted. Both ends being CDI is the design's bet, and this is
+	// where it is settled. What the target holds for a disk is asserted
+	// rather than read back. The claim is bound, at least as large as the
+	// size the capture recorded, in the volume mode the capture recorded.
 	for i := range manifest.Disks {
 		disk := manifest.Disks[i]
 		_, err = s.await(
@@ -453,9 +459,9 @@ func TestDeployingTheCapturedBundleReproducesTheVirtualMachine(t *testing.T) {
 			provisioned)
 		g.Expect(err).ToNot(gomega.HaveOccurred())
 		required := requirementOf(manifest, disk.Claim)
-		// Which form went round is said because the fixture produces one:
-		// whichever the export server offered the claim, and the other is
-		// covered by the deploy suite's disk fixtures.
+		// Which form went round is said because the fixture produces one.
+		// It is whichever the export server offered the claim. The other
+		// is covered by the deploy suite's disk fixtures.
 		t.Logf("the disk %q went round as %s", disk.Claim, disk.Format)
 		claim, readErr := s.writerFor(claimResource, target).Get(ctx, disk.Claim, meta.GetOptions{})
 		g.Expect(readErr).ToNot(gomega.HaveOccurred())
@@ -474,8 +480,9 @@ func TestDeployingTheCapturedBundleReproducesTheVirtualMachine(t *testing.T) {
 			fmt.Sprintf("the claim behind the deployed disk %q", disk.Claim))
 	}
 
-	// The machine the target holds is waited for until the cluster has
-	// accepted it as a stopped VirtualMachine, then read back once.
+	// The test waits for the machine the target holds until the cluster
+	// accepts it as a stopped VirtualMachine. Then the test reads the
+	// machine back once.
 	vmName := manifest.Provenance.VirtualMachine
 	deployed, err := s.await(
 		ctx,
@@ -488,8 +495,8 @@ func TestDeployingTheCapturedBundleReproducesTheVirtualMachine(t *testing.T) {
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 
 	// The applied machine names no instancetype or preference matcher,
-	// whatever the expansion carried: the resolution is what lands, so no
-	// ControllerRevision is created on the target and none is needed.
+	// whatever the expansion carried. The resolution is what lands. So no
+	// ControllerRevision is created on the target, and none is needed.
 	_, matched, _ := unstructured.NestedMap(deployed.Object, "spec", "instancetype")
 	g.Expect(matched).To(gomega.BeFalse(),
 		"the deployed VirtualMachine names an instancetype matcher")
@@ -497,8 +504,8 @@ func TestDeployingTheCapturedBundleReproducesTheVirtualMachine(t *testing.T) {
 	g.Expect(matched).To(gomega.BeFalse(),
 		"the deployed VirtualMachine names a preference matcher")
 
-	// The applied machine carries no dataVolumeTemplates: they became
-	// standalone DataVolumes ahead of it, and the volume stanzas that named
+	// The applied machine carries no dataVolumeTemplates. They became
+	// standalone DataVolumes ahead of it. The volume stanzas that named
 	// them are the expansion's own, satisfied unchanged.
 	_, declared, _ := unstructured.NestedSlice(deployed.Object, "spec", "dataVolumeTemplates")
 	g.Expect(declared).To(gomega.BeFalse(),
@@ -523,7 +530,7 @@ func TestDeployingTheCapturedBundleReproducesTheVirtualMachine(t *testing.T) {
 			fmt.Sprintf("the claim behind the deployed VirtualMachine's volume %q", claim))
 	}
 
-	// The identity the capture carried through arrives: any of these could
+	// The identity the capture carried through arrives. Any of these could
 	// be the thing causing the problem the bundle was captured for.
 	uuid, _, _ := unstructured.NestedString(
 		deployed.Object, "spec", "template", "spec", "domain", "firmware", "uuid")
@@ -533,15 +540,15 @@ func TestDeployingTheCapturedBundleReproducesTheVirtualMachine(t *testing.T) {
 	g.Expect(serial).To(gomega.Equal(fixtureSerial))
 
 	// What the expansion carried of the matchers and the templates is
-	// settled by observation and reported; the assertions above hold
+	// settled by observation and reported. The assertions above hold
 	// either way.
 	reportExpansion(t, heldExpansion)
 
-	// The target's own expansion of the deployed machine, diffed against
-	// the bundle's. The diff covers the spec, which is what the two
-	// clusters resolved the machine to, and leaves the metadata and the
-	// status alone: the deploy rewrites the metadata and each cluster
-	// keeps its own status, and neither of those is a resolution.
+	// The test diffs the target's own expansion of the deployed machine
+	// against the bundle's. The diff covers the spec, which is what the
+	// two clusters resolved the machine to. It leaves the metadata and
+	// the status alone. The deploy rewrites the metadata, and each
+	// cluster keeps its own status. Neither of those is a resolution.
 	// Differences are reported rather than failed, because the two
 	// clusters resolving differently is information.
 	expanded, err := s.quo.ExpandSpec(ctx, target, vmName)
@@ -556,10 +563,10 @@ func TestDeployingTheCapturedBundleReproducesTheVirtualMachine(t *testing.T) {
 		t.Log(diff)
 	}
 
-	// The deployment comes off by its label, which is the first time
-	// anything has selected one against a real API server. What the
-	// undeploy deleted is exactly what the deploy put there, and nothing
-	// else in the namespace.
+	// The undeploy deletes the deployment by its label. That is the first
+	// time anything has selected one against a real API server. What the
+	// undeploy deleted is exactly what the deploy put there. The undeploy
+	// deleted nothing else in the namespace.
 	deleted, err := deploy.Undeploy(ctx, s.quo, deploy.UndeployOptions{
 		Bundle:    s.capture.path,
 		Namespace: target,
@@ -567,9 +574,9 @@ func TestDeployingTheCapturedBundleReproducesTheVirtualMachine(t *testing.T) {
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	g.Expect(deletions(deleted)).To(gomega.ConsistOf(described(expected)))
 
-	// CDI owns the claim behind a DataVolume through an owner reference
-	// and removes it with the DataVolume. The round trip waits to see
-	// whether the cluster did, and says so either way: the namespace
+	// CDI owns the claim behind a DataVolume through an owner reference,
+	// and deletes it with the DataVolume. The round trip waits to see
+	// whether the cluster did, and says so either way. The namespace
 	// deletion behind the test is the sure end whatever happened.
 	for i := range manifest.Disks {
 		claim := manifest.Disks[i].Claim
@@ -581,13 +588,13 @@ func TestDeployingTheCapturedBundleReproducesTheVirtualMachine(t *testing.T) {
 	}
 }
 
-// targetNamespace creates the namespace the round trip deploys into, and
-// takes it down again however the test ends.
+// targetNamespace creates the namespace the round trip deploys into. It
+// deletes the namespace again however the test ends.
 //
-// A deploy refuses a namespace that is not there, and deploying into the
-// fixture's own would collide with the fixture's objects, so the round trip
-// needs a second one. Deleting it removes everything in it, which is the
-// sure end whether the undeploy ran or not.
+// A deploy refuses a namespace that is not there. Deploying into the
+// fixture's own would collide with the fixture's objects. So the round trip
+// needs a second one. Deleting the namespace deletes everything in it,
+// which is the sure end whether the undeploy ran or not.
 func (r *suite) targetNamespace(t *testing.T, ctx context.Context) (namespace string) {
 	t.Helper()
 	namespace = r.fixture.named(partTarget)
@@ -601,7 +608,7 @@ func (r *suite) targetNamespace(t *testing.T, ctx context.Context) (namespace st
 		meta.CreateOptions{})
 	if k8serr.IsForbidden(err) {
 		// A kubeconfig that may not create a namespace cannot host the
-		// round trip, which says nothing about quo: the capture side of
+		// round trip. That says nothing about quo. The capture side of
 		// the suite runs with an existing namespace, and this one cannot.
 		t.Skipf(
 			"the round trip needs a namespace of its own to deploy into, and this kubeconfig may not create one: %v",
@@ -612,7 +619,7 @@ func (r *suite) targetNamespace(t *testing.T, ctx context.Context) (namespace st
 	}
 	t.Cleanup(func() {
 		// The context is detached from the test's, because a test that
-		// was cancelled still has a namespace to take down.
+		// was cancelled still has a namespace to delete.
 		ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), deleteTimeout)
 		defer cancel()
 		err := r.writerFor(namespaceResource, "").Delete(ctx, namespace, meta.DeleteOptions{})
@@ -628,8 +635,8 @@ func (r *suite) targetNamespace(t *testing.T, ctx context.Context) (namespace st
 }
 
 // missing names every object the given namespace does not hold of the ones
-// given, read through the suite's own client so that what checks quo never
-// goes through quo.
+// given. The reads go through the suite's own client. So what checks quo
+// never goes through quo.
 func (r *suite) missing(
 	ctx context.Context,
 	namespace string,
@@ -650,8 +657,8 @@ func (r *suite) missing(
 	return
 }
 
-// awaitGone reads one object back until the cluster no longer holds it,
-// reporting whether it went within the timeout.
+// awaitGone reads one object back until the cluster no longer holds it. It
+// reports whether the object went within the timeout.
 func (r *suite) awaitGone(
 	ctx context.Context,
 	gvr schema.GroupVersionResource,
@@ -688,9 +695,9 @@ func (r *suite) claimBound(ctx context.Context, namespace, claim string) (bound 
 	return
 }
 
-// stopped reports a VirtualMachine the target cluster has taken and left
-// halted: the printable status is KubeVirt's own account of a machine it is
-// not running, which is what a deployed machine is meant to be.
+// stopped reports a VirtualMachine that the target cluster has taken and
+// left stopped. The printable status is KubeVirt's own account of a machine
+// it is not running. That is what a deployed machine is meant to be.
 func stopped(vm *unstructured.Unstructured) (done bool) {
 	status, _, _ := unstructured.NestedString(vm.Object, "status", "printableStatus")
 	done = status == capture.StatusStopped
@@ -698,10 +705,10 @@ func stopped(vm *unstructured.Unstructured) (done bool) {
 }
 
 // reportExpansion says what the bundle's expansion carries of the fields
-// whose survival the design left as open questions: the instancetype and
-// preference matchers, and the dataVolumeTemplates. The applied machine
-// names none of them however the expansion reads, so the answer is reported
-// rather than asserted.
+// whose survival the design left as open questions. Those fields are the
+// instancetype and preference matchers, and the dataVolumeTemplates. The
+// applied machine names none of them however the expansion reads. So the
+// answer is reported rather than asserted.
 func reportExpansion(t *testing.T, held *unstructured.Unstructured) {
 	t.Helper()
 	for _, matcher := range []string{"instancetype", "preference"} {
@@ -733,7 +740,7 @@ func requirementOf(manifest *bundle.Manifest, claim string) (required bundle.Sto
 
 // claimBehind is the claim one of the machine's volumes names, empty for a
 // volume backed by something other than storage. A DataVolume provisions a
-// claim of its own name, so both forms resolve to a claim.
+// claim of its own name. So both forms resolve to a claim.
 func claimBehind(volume map[string]any) (claim string) {
 	claim, _, _ = unstructured.NestedString(volume, "persistentVolumeClaim", "claimName")
 	if claim != "" {
@@ -766,7 +773,7 @@ func described(refs []cluster.ObjectRef) (names []string) {
 	return
 }
 
-// deletions names what an undeploy removed, the same way.
+// deletions names what an undeploy deleted, the same way.
 func deletions(deleted []deploy.Deletion) (names []string) {
 	for i := range deleted {
 		names = append(names, describe(cluster.ObjectRef{

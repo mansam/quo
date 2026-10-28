@@ -5,8 +5,8 @@ import "time"
 // Manifest is the first member of a bundle. It names the format version, where
 // the bundle came from, and indexes every other member.
 //
-// Fields carry JSON tags because the manifest is marshalled through the
-// Kubernetes YAML library, which encodes with JSON semantics.
+// Fields carry JSON tags because the Kubernetes YAML library marshals the
+// manifest. That library encodes with JSON semantics.
 type Manifest struct {
 	FormatVersion string        `json:"formatVersion"`
 	Provenance    Provenance    `json:"provenance"`
@@ -21,15 +21,15 @@ type Manifest struct {
 }
 
 // Requirements is what a bundle declares a target cluster would have to
-// provide for the VirtualMachine it carries: the networks it expects, what
-// each of its disks needs from storage, and the container images it is served
-// from. None of it is held in the bundle.
+// provide for the VirtualMachine it carries. It covers the networks the
+// VirtualMachine expects, what each of its disks needs from storage, and the
+// container images that serve it. None of it is held in the bundle.
 //
-// It is recorded at capture because every part of it is free to read while
-// connected to the source cluster and expensive to reconstruct afterwards. It
-// sits in the manifest, which is the first member of a bundle, so that a
-// support engineer can tell whether their cluster can satisfy a bundle before
-// committing to a transfer that may take hours.
+// The capture records it because every part of it is free to read while
+// connected to the source cluster. Reconstructing it afterwards is expensive.
+// It sits in the manifest, which is the first member of a bundle. A support
+// engineer can therefore tell whether their cluster can satisfy a bundle
+// before committing to a transfer that may take hours.
 type Requirements struct {
 	Networks       []NetworkRequirement       `json:"networks,omitempty"`
 	Storage        []StorageRequirement       `json:"storage,omitempty"`
@@ -56,30 +56,31 @@ type NetworkRequirement struct {
 	Name string `json:"name"`
 	// Type says what has to be provided.
 	Type NetworkType `json:"type"`
-	// Namespace and Attachment name the NetworkAttachmentDefinition a Multus
-	// network is backed by on the source cluster. Both are empty for a pod
-	// network.
+	// Namespace and Attachment name the NetworkAttachmentDefinition that
+	// backs a Multus network on the source cluster. Both are empty for a
+	// pod network.
 	Namespace  string `json:"namespace,omitempty"`
 	Attachment string `json:"attachment,omitempty"`
 }
 
 // StorageRequirement is what one of the VirtualMachine's disks needs from a
-// target's storage, so that a candidate storage class can be checked against
-// it rather than guessed at.
+// target's storage. A candidate storage class can be checked against it
+// rather than guessed at.
 //
 // Every field but the claim is empty when quo could not read the claim it
-// describes. The disk is still held in the bundle and a target still has to
-// find room for it, so the requirement is declared with what is known rather
-// than dropped.
+// describes. The bundle still holds the disk, and a target still has to find
+// room for it. The requirement is therefore declared with what is known
+// rather than dropped.
 type StorageRequirement struct {
 	// Claim is the PersistentVolumeClaim backing the disk, which is also how
 	// the bundle names the member holding the disk's content.
 	Claim string `json:"claim"`
-	// StorageClass is the class the claim was provisioned from. It is empty
-	// for a claim bound to a volume that was made by hand rather than
-	// provisioned, which names no class, and for a claim quo could not read.
-	// A claim that asked for no class in particular is not one of those: the
-	// cluster writes the default it chose into the claim.
+	// StorageClass is the class the claim was provisioned from. It is
+	// empty for a claim bound to a volume that was made by hand rather
+	// than provisioned. A volume made by hand names no class. It is empty
+	// as well for a claim quo could not read. A claim that asked for no
+	// class in particular is not one of those: the cluster writes the
+	// default it chose into the claim.
 	StorageClass string `json:"storageClass,omitempty"`
 	// Size is the capacity a target has to provide for this disk.
 	Size string `json:"size,omitempty"`
@@ -88,14 +89,13 @@ type StorageRequirement struct {
 	VolumeMode string `json:"volumeMode,omitempty"`
 }
 
-// ContainerDiskRequirement is a container image one of the VirtualMachine's
-// volumes is served from.
+// ContainerDiskRequirement is a container image that serves one of the
+// VirtualMachine's volumes.
 //
-// quo does not repackage container images, so the image is declared and never
-// held in a bundle: a target has to be able to pull it.
+// quo does not repackage container images. The image is declared and never
+// held in a bundle. A target has to be able to pull it.
 type ContainerDiskRequirement struct {
-	// Volume is the VirtualMachine's name for the volume served from the
-	// image.
+	// Volume is the VirtualMachine's name for the volume the image serves.
 	Volume string `json:"volume"`
 	// Image is the image reference exactly as the VirtualMachine gives it.
 	Image string `json:"image"`
@@ -105,14 +105,14 @@ type ContainerDiskRequirement struct {
 // each one, in the order they were attempted.
 //
 // It lives in the manifest so that it cannot be separated from the bundle it
-// describes, and it holds the objects quo could not collect as well as the
-// ones it could. An object missing from a bundle with no entry saying so
-// would leave a reader unable to tell an object that never existed from one
-// quo was not allowed to read.
+// describes. It holds the objects quo could not collect as well as the ones
+// it could. An object missing from a bundle needs an entry saying so.
+// Without one, a reader cannot tell an object that never existed from one quo
+// was not allowed to read.
 //
 // One object can appear twice under different outcomes, because the two
 // entries answer different questions. A StorageClass is collected and is also
-// something a target has to provide, and the second entry still holds when the
+// something a target has to provide. The second entry still holds when the
 // first says the read was forbidden.
 type CaptureRecord []Attempt
 
@@ -165,9 +165,9 @@ type Attempt struct {
 	Message string `json:"message,omitempty"`
 }
 
-// Resource names one object a bundle holds and where it sits, so that a
-// reader learns what a bundle holds from the manifest alone rather than by
-// untarring it and inferring kinds from member paths.
+// Resource names one object a bundle holds and where it sits. A reader
+// therefore learns what a bundle holds from the manifest alone. The reader
+// does not have to untar the bundle and infer kinds from member paths.
 type Resource struct {
 	Kind string `json:"kind"`
 	// Namespace is empty for a cluster-scoped object.
@@ -176,8 +176,8 @@ type Resource struct {
 	Path      string `json:"path"`
 }
 
-// Provenance is what a bundle records about where it came from, so that a
-// support engineer can tie it back to the case it was captured for.
+// Provenance is what a bundle records about where it came from. It lets a
+// support engineer connect the bundle to the case it was captured for.
 type Provenance struct {
 	SourceCluster     string    `json:"sourceCluster"`
 	Namespace         string    `json:"namespace"`
@@ -200,8 +200,8 @@ type Member struct {
 // holding their content.
 //
 // A disk is keyed by the PersistentVolumeClaim that backs it rather than by
-// volume name. A VirtualMachine's volumes are a named list and nothing stops
-// two of them referencing one claim, so keying by volume name would store the
+// volume name. A VirtualMachine's volumes are a named list, and nothing stops
+// two of them referencing one claim. Keying by volume name would store the
 // same bytes twice. Volumes is therefore a list: a member serving two volumes
 // records both.
 //

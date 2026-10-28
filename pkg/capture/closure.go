@@ -13,8 +13,9 @@ import (
 // were discovered and without duplicates.
 //
 // The traversal is quo's own rather than a call to KubeVirt's objectgraph
-// subresource, which sits behind an Alpha feature gate that is off by default.
-// KubeVirt's server-side implementation is what the traversal follows.
+// subresource. That subresource sits behind an Alpha feature gate that is
+// off by default. KubeVirt's server-side implementation is what the
+// traversal follows.
 type closure struct {
 	namespace string
 	refs      []cluster.ObjectRef
@@ -22,8 +23,10 @@ type closure struct {
 }
 
 // matcher is one of the two ways a VirtualMachine says what it was asked to
-// be: where its spec names the object, where its status records what that
-// resolved to, and the namespaced and cluster-scoped kinds the name can mean.
+// be. spec is where the VirtualMachine's spec names the object. status is
+// where its status records what that resolved to. namespaced and
+// clusterScoped are the namespaced and cluster-scoped kinds the name can
+// mean.
 type matcher struct {
 	spec          string
 	status        string
@@ -78,26 +81,26 @@ func collectVirtualMachine(co *collector, vm *unstructured.Unstructured) (err er
 	return
 }
 
-// collectReferenced reads the objects the VirtualMachine depends on, collects
-// what it can read into the bundle, and records what became of every one of
-// them.
+// collectReferenced reads the objects the VirtualMachine depends on. It
+// collects what it can read into the bundle, and records what became of
+// every one of them.
 //
 // It returns the PersistentVolumeClaims it read, because the reads about the
-// source cluster's storage are made from them: a claim names the StorageClass
-// it was provisioned from and the PersistentVolume it is bound to. A claim
-// quo could not read contributes nothing, which is why those reads follow the
-// claims that arrived rather than the ones referenced.
+// source cluster's storage are made from them. A claim names the
+// StorageClass it was provisioned from and the PersistentVolume it is bound
+// to. A claim quo could not read contributes nothing, which is why those
+// reads follow the claims that arrived rather than the ones referenced.
 //
 // Collection is best effort. The person capturing a bundle is frequently a
-// namespace owner without cluster read, and a capture that may have taken
-// hours should not fail over one object they were not allowed to read. An
-// object that was not read is recorded as skipped rather than left out,
-// because a reader who found it simply absent could not tell it from an
-// object that never existed.
+// namespace owner without cluster read. A capture that may have taken hours
+// should not fail over one object they were not allowed to read. An object
+// that was not read is recorded as skipped rather than omitted. A reader who
+// found it simply absent could not tell it from an object that never
+// existed.
 //
-// A capture that has been cancelled or has run out of time ends instead of
-// recording. The remaining objects were never asked for, so recording them as
-// unreadable would describe something that did not happen.
+// A capture that was cancelled, or whose deadline passed, ends instead of
+// recording. The remaining objects were never asked for, so recording them
+// as unreadable would describe something that did not happen.
 func collectReferenced(
 	ctx context.Context,
 	c cluster.Cluster,
@@ -140,9 +143,9 @@ func (r *closure) addClusterScoped(kind, name string) {
 }
 
 // addIn records an object in the given namespace. An empty name is a
-// reference the VirtualMachine does not make, and an object already recorded
-// is left alone, so something referred to from more than one place is
-// captured once.
+// reference the VirtualMachine does not make. An object already recorded is
+// left alone, so something referred to from more than one place is captured
+// once.
 func (r *closure) addIn(kind, namespace, name string) {
 	if name == "" {
 		return
@@ -169,9 +172,9 @@ func (r *closure) addMatchers(vm *unstructured.Unstructured) {
 
 // addMatcher follows one instancetype or preference reference: the object it
 // names and the ControllerRevision the VirtualMachine was pinned to. A spec
-// matcher names the revision as revisionName and a resolved status reference
-// names it under controllerRevisionRef; both are followed, because either may
-// be the only one present.
+// matcher names the revision as revisionName. A resolved status reference
+// names it under controllerRevisionRef. Both are followed, because either
+// may be the only one present.
 func (r *closure) addMatcher(named map[string]any, m matcher) {
 	if named == nil {
 		return

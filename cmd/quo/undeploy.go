@@ -13,22 +13,22 @@ import (
 	"github.com/mansam/quo/pkg/deploy"
 )
 
-// undeployArgs is an undeploy command line, once parsed.
+// undeployArgs is the parsed form of an undeploy command line.
 type undeployArgs struct {
 	opt        deploy.UndeployOptions
 	kubeconfig string
 }
 
-// runUndeploy removes one deployment from a cluster: what a deploy of the
-// bundle put into the namespace.
+// runUndeploy deletes one deployment from a cluster. The deployment is what
+// a deploy of the bundle put into the namespace.
 //
-// What was deleted is printed however the run ended, so that what the
-// namespace holds is the last thing said, and the error is what makes
-// the exit code non-zero when anything was not deleted.
+// runUndeploy prints what was deleted however the run ended. So what the
+// namespace holds is the last thing said. The error is what makes the exit
+// code non-zero when anything was not deleted.
 //
-// There is no signal wiring here, unlike a deploy: an undeploy has
-// nothing long-running to interrupt — each deletion is one call, and
-// none of them is waited on.
+// Unlike a deploy, runUndeploy wires no signals. An undeploy has nothing
+// long-running to interrupt. Each deletion is one call, and an undeploy
+// does not wait for any of them.
 func runUndeploy(args []string) (err error) {
 	parsed, err := parseUndeployArgs(args)
 	if err != nil {
@@ -47,13 +47,13 @@ func runUndeploy(args []string) (err error) {
 	return
 }
 
-// printDeletions writes what an undeploy deleted — or, on a dry run,
-// what it would delete. A deletion the cluster refused is named with why
-// the object is still there, so that what the namespace holds is the
+// printDeletions writes what an undeploy deleted. On a dry run, it writes
+// what the undeploy would delete. A deletion the cluster refused is named
+// with why the object is still there. So what the namespace holds is the
 // last thing said.
 //
-// Write errors are discarded per line because tabwriter reports them
-// again from Flush, which is checked.
+// Write errors are discarded per line. tabwriter reports them again from
+// Flush. printDeletions checks that error.
 func printDeletions(out io.Writer, deleted []deploy.Deletion, dryRun bool) (err error) {
 	if len(deleted) == 0 {
 		return
@@ -96,8 +96,8 @@ func printDeletions(out io.Writer, deleted []deploy.Deletion, dryRun bool) (err 
 	return
 }
 
-// parseUndeployArgs parses and validates an undeploy command line. It
-// contacts nothing, so the whole command line is testable without a
+// parseUndeployArgs parses and checks an undeploy command line. It
+// contacts nothing. So the whole command line is testable without a
 // cluster.
 func parseUndeployArgs(args []string) (parsed undeployArgs, err error) {
 	fs := flag.NewFlagSet("undeploy", flag.ContinueOnError)
@@ -118,11 +118,11 @@ func parseUndeployArgs(args []string) (parsed undeployArgs, err error) {
 	return
 }
 
-// validateUndeploy checks an undeploy command line names a namespace to
-// undeploy from. The rule is the deploy's own, and for the same reason:
-// quo never falls back to the kubeconfig's current namespace, because
-// removing objects from someone's default namespace by accident is a
-// quiet mistake.
+// validateUndeploy checks that an undeploy command line names a namespace
+// to undeploy from. The rule is the deploy's own, and the reason is the
+// same. quo never takes the kubeconfig's current namespace instead,
+// because deleting objects from someone's default namespace by accident
+// is a quiet mistake.
 func validateUndeploy(opt deploy.UndeployOptions) (err error) {
 	if opt.Namespace == "" {
 		err = errors.New("a namespace is required: -n <namespace>")

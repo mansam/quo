@@ -23,16 +23,16 @@ type environment struct {
 }
 
 // captureEnvironment collects what the bundle records about the source
-// cluster: the storage behind each PersistentVolumeClaim, KubeVirt's own
-// configuration, and the form the source cluster expands the VirtualMachine
+// cluster. That is the storage behind each PersistentVolumeClaim, KubeVirt's
+// own configuration, and the form the source cluster expands the VirtualMachine
 // to.
 //
-// Almost all of it is cluster-scoped, which is exactly where a capture run by
-// a namespace owner runs out of permission, so a read that failed is recorded
-// and the capture goes on. A capture that has been cancelled or has run out of
-// time ends there instead, for the same reason the reference traversal does: a
-// record saying each object was unreadable would describe something that did
-// not happen.
+// Almost all of it is cluster-scoped. That is exactly where a capture run by
+// a namespace owner no longer has permission. A read that failed is recorded
+// and the capture continues. A capture that was cancelled, or whose deadline
+// passed, ends there instead. It ends for the same reason the reference
+// traversal does. A record saying each object was unreadable would describe
+// something that did not happen.
 func captureEnvironment(
 	ctx context.Context,
 	c cluster.Cluster,
@@ -59,11 +59,13 @@ func captureEnvironment(
 	return
 }
 
-// addStorage collects what the cluster put behind one PersistentVolumeClaim:
-// the StorageClass it was provisioned from, the CDI StorageProfile that
-// decided the volume mode and access modes the disk actually got, and the
-// PersistentVolume it is bound to, which holds the real capacity, CSI driver
-// and volume attributes rather than what was asked for.
+// addStorage collects what the cluster put behind one
+// PersistentVolumeClaim. It collects the StorageClass the claim was
+// provisioned from. It collects the CDI StorageProfile, which decided the
+// volume mode and access modes the disk actually got. It also collects the
+// PersistentVolume the claim is bound to. That object holds the real
+// capacity, CSI driver and volume attributes rather than what was asked
+// for.
 //
 // A StorageProfile carries the name of the StorageClass it describes, so the
 // two are read under one name.
@@ -83,13 +85,13 @@ func (r *environment) addStorage(ctx context.Context, claim *unstructured.Unstru
 }
 
 // addKubeVirt collects KubeVirt's own configuration, above all the feature
-// gates it has enabled, which is what accounts for behaviour a target cluster
+// gates it has enabled. Those gates account for behaviour a target cluster
 // does not reproduce.
 //
 // KubeVirt is a singleton whose namespace and name differ between
-// installations, so quo does not know what to call it until it has read it:
-// the reference names the kind alone, and collect fills the rest in from the
-// object that arrives.
+// installations. quo therefore does not know what to call it until it has
+// read it. The reference names the kind alone, and collect completes the
+// name from the object that arrives.
 func (r *environment) addKubeVirt(ctx context.Context) (err error) {
 	err = r.collect(
 		ctx,
@@ -105,14 +107,14 @@ func (r *environment) addKubeVirt(ctx context.Context) (err error) {
 // VirtualMachine to.
 //
 // quo does not use it to rewrite the VirtualMachine. It is captured because
-// KubeVirt applies the source cluster's own defaults while expanding — the
-// machine type, the architecture, the CPU topology — and those come from a
-// KubeVirt configuration a namespace owner is often not allowed to read. The
-// subresource is namespaced, so for that capture this is the only record of
-// them.
+// KubeVirt applies the source cluster's own defaults while expanding. Those
+// defaults are the machine type, the architecture, and the CPU topology.
+// They come from a KubeVirt configuration a namespace owner is often not
+// allowed to read. The subresource is namespaced, so for that capture this
+// is the only record of them.
 //
-// It is stored as a member of its own rather than among the resources,
-// because nothing on the cluster has that name and nothing applies it to a
+// It is stored as a member of its own rather than among the resources.
+// Nothing on the cluster has that name, and nothing applies it to a
 // target. The read is best effort for the same reason the rest of this file
 // is: a capture without it is still useful.
 func (r *environment) addExpandedForm(ctx context.Context, vm *unstructured.Unstructured) (err error) {
@@ -136,10 +138,10 @@ func (r *environment) addExpandedForm(ctx context.Context, vm *unstructured.Unst
 
 // add reads the object a reference names and collects it.
 //
-// An empty name is a reference the cluster does not make — a claim provisioned
-// without a storage class names none, and an unbound claim names no volume —
-// and an object already collected is left alone, so a StorageClass two claims
-// share is captured once.
+// An empty name is a reference the cluster does not make. A claim
+// provisioned without a storage class names none, and an unbound claim
+// names no volume. An object already collected is left alone, so a
+// StorageClass two claims share is captured once.
 func (r *environment) add(ctx context.Context, ref cluster.ObjectRef) (err error) {
 	if ref.Name == "" {
 		return
@@ -162,15 +164,15 @@ func (r *environment) add(ctx context.Context, ref cluster.ObjectRef) (err error
 // reference quo could not name in advance is named from the object once it has
 // arrived.
 //
-// A read that failed is recorded and the capture goes on. The person running
-// a capture is frequently not entitled to read these objects, and a capture
-// that may have taken hours should not fail over one of them; leaving it out
-// without saying so would be worse, because the reader could not tell it from
-// an object that was never there.
+// A read that failed is recorded and the capture continues. The person
+// running a capture is frequently not entitled to read these objects. A
+// capture that may have taken hours should not fail over one of them.
+// Leaving it out without saying so would be worse, because the reader could
+// not tell it from an object that was never there.
 //
-// A capture that has been cancelled or has run out of time ends instead of
-// recording. The remaining objects were never asked for, so recording them as
-// unreadable would describe something that did not happen.
+// A capture that was cancelled, or whose deadline passed, ends instead of
+// recording. The remaining objects were never asked for, so recording them
+// as unreadable would describe something that did not happen.
 func (r *environment) collect(
 	ctx context.Context,
 	ref cluster.ObjectRef,

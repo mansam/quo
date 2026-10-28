@@ -12,18 +12,18 @@ import (
 )
 
 // attachNetworks attaches each multus network the bundle declares to a
-// NetworkAttachmentDefinition of the target's, so that the applied
-// VirtualMachine names where its networks attach on the target, and
-// refuses — naming the network and what was tried — when one maps to
-// nothing, because the machine is not created whose networks cannot be
-// attached.
+// NetworkAttachmentDefinition of the target's. The applied
+// VirtualMachine then names where its networks attach on the target.
+// attachNetworks refuses, naming the network and what was tried, when
+// one maps to nothing. The machine is not created whose networks cannot
+// be attached.
 //
 // A network maps automatically when the deploy namespace holds a
-// NetworkAttachmentDefinition of the attachment's name, which is the
-// mapping a deploy makes on its own, and explicitly when the options name
-// one for it, which overrides whatever the deploy namespace holds. The
-// pod network is the cluster's own — every target has one — and is never
-// mapped.
+// NetworkAttachmentDefinition of the attachment's name. That is the
+// mapping a deploy makes on its own. A network maps explicitly when the
+// options name one for it. That mapping overrides whatever the deploy
+// namespace holds. The pod network is the cluster's own, and every
+// target has one. The pod network is never mapped.
 func attachNetworks(
 	ctx context.Context,
 	t cluster.Target,
@@ -59,10 +59,10 @@ func attachNetworks(
 // NetworkAttachmentDefinition the command line named for it.
 //
 // The name may carry a namespace, for a definition outside the deploy
-// namespace. What the mapping names — and what the applied
-// VirtualMachine's networkName carries — is qualified only when the
-// definition lives there, because an unqualified name means the
-// namespace of the VirtualMachine itself.
+// namespace. What the mapping names, and what the applied
+// VirtualMachine's networkName carries, is namespace-qualified only when
+// the definition lives outside the deploy namespace. An unqualified name
+// means the namespace of the VirtualMachine itself.
 func attachNetwork(
 	ctx context.Context,
 	t cluster.Target,
@@ -101,10 +101,10 @@ func attachNetwork(
 
 // attachNetworkByName attaches one of the machine's networks to the
 // NetworkAttachmentDefinition of the attachment's name in the deploy
-// namespace, which is the mapping a deploy makes on its own. A network
+// namespace. That is the mapping a deploy makes on its own. A network
 // that names no attachment, or one the deploy namespace holds no
-// definition of, maps to nothing unless the command line mapped it,
-// which is a refusal: the machine is not created whose networks cannot
+// definition of, maps to nothing unless the command line mapped it.
+// That is a refusal: the machine is not created whose networks cannot
 // be attached.
 func attachNetworkByName(
 	ctx context.Context,
@@ -149,9 +149,9 @@ func attachNetworkByName(
 }
 
 // reportedContainerDisks states the container disk images the bundle's
-// volumes are served from. Each one is a requirement of the target's — it
-// has to be able to pull the image — and quo neither maps it onto
-// anything nor pull-checks it, because it holds no registry credentials.
+// volumes are served from. Each one is a requirement of the target's: it
+// has to be able to pull the image. quo neither maps it onto anything
+// nor pull-checks it, because it holds no registry credentials.
 func reportedContainerDisks(
 	required []bundle.ContainerDiskRequirement) (reported []Requirement) {
 	//
@@ -166,12 +166,12 @@ func reportedContainerDisks(
 }
 
 // unmatchedMappings reports the mappings the command line named that no
-// requirement of the bundle's matched — a --network naming no network of
-// the machine, or a --storage-class naming a class no disk records.
-// Nothing is applied and nothing is refused for them, and the record
-// says so, because a flag that looks like it took effect is a quiet
-// mistake. The catch-all is not among them: it names no requirement of
-// its own.
+// requirement of the bundle's matched. A --network naming no network of
+// the machine is one. A --storage-class naming a class no disk records
+// is another. Nothing is applied and nothing is refused for them. The
+// record says so, because a flag that looks like it took effect is
+// a quiet mistake. The catch-all is not among them: it names no
+// requirement of its own.
 func unmatchedMappings(opt Options, manifest *bundle.Manifest) (unmatched []Requirement) {
 	recorded := make(map[string]bool, len(manifest.Requirements.Storage))
 	for i := range manifest.Requirements.Storage {

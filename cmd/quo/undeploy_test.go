@@ -160,8 +160,8 @@ func TestUndeployPrintsTheOneThatWasNotDeleted(t *testing.T) {
 
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	said := reported.String()
-	// The count says the undeploy was a partial one, and the entry says
-	// why the object is still there.
+	// The count says the undeploy was a partial one. The entry says why
+	// the object is still there.
 	g.Expect(said).To(gomega.ContainSubstring("Deleted 1 of 2 objects:"))
 	g.Expect(said).To(gomega.ContainSubstring("not deleted: the API server went away"))
 }

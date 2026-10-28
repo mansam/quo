@@ -1,7 +1,8 @@
 // Command quo captures a stopped KubeVirt VirtualMachine as a diagnostic
-// bundle, says what a capture would collect before one is run, inspects
-// bundles it has captured, puts a bundle onto a cluster as a stopped
-// VirtualMachine, and takes a bundle's deployment off a cluster again.
+// bundle. It says what a capture would collect before one is run. It
+// inspects bundles it has captured. It puts a bundle onto a cluster as a
+// stopped VirtualMachine. It removes a bundle's deployment from a cluster
+// again.
 package main
 
 import (

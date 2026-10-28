@@ -1,11 +1,11 @@
 // Package capture turns a stopped VirtualMachine on a cluster into a bundle.
 //
 // Export is the library entry point. The CLI only parses a command line and
-// calls it, and tests call it directly: given a fake cluster and somewhere to
-// write, a test gets back the bundle a real capture would have produced.
+// calls it. Tests call it directly. Given a fake cluster and somewhere to
+// write, a test receives the bundle a real capture would have produced.
 package capture
 
-// Options names the VirtualMachine to capture and how to go about it.
+// Options names the VirtualMachine to capture and how to capture it.
 type Options struct {
 	Namespace string
 	Name      string
@@ -13,14 +13,14 @@ type Options struct {
 	// system temporary directory. Only one disk is ever staged at a time, so
 	// it needs room for the largest single compressed disk.
 	Scratch string
-	// Progress, when set, is called while a disk transfers, so that a capture
-	// that takes hours can be told apart from one that has hung.
+	// Progress, when set, is called while a disk transfers. The caller can
+	// then tell a capture that takes hours from one that has hung.
 	Progress func(p Progress)
 }
 
 // Progress describes how far a disk transfer has got.
 type Progress struct {
-	// Claim is the PersistentVolumeClaim being transferred.
+	// Claim is the PersistentVolumeClaim the capture is transferring.
 	Claim string
 	// Volumes names the volumes the disk serves.
 	Volumes []string
@@ -38,6 +38,6 @@ type Progress struct {
 const (
 	// StatusStopped is the only printable status quo will capture. KubeVirt
 	// reports many others, and all of them mean the disks could change while
-	// they are being read.
+	// the capture reads them.
 	StatusStopped = "Stopped"
 )

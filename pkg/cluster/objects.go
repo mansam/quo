@@ -10,8 +10,8 @@ type resource struct {
 }
 
 // resourceByKind maps every kind quo reads by reference onto the API resource
-// that serves it. A kind missing from this table is one quo cannot read, which
-// is reported rather than guessed at.
+// that serves it. A kind missing from this table is one quo cannot read. quo
+// reports such a kind rather than guessing at a resource for it.
 var resourceByKind = map[string]resource{
 	KindConfigMap: {
 		gvr: schema.GroupVersionResource{Version: "v1", Resource: "configmaps"},

@@ -17,7 +17,7 @@ const (
 	testFilesystemSize  = "10Gi"
 )
 
-// The container image a fixture VirtualMachine is served from.
+// The container image that serves a fixture VirtualMachine.
 const testContainerImage = "quay.io/example/fedora:41"
 
 func TestExportDeclaresTheNetworksTheVirtualMachineExpects(t *testing.T) {
@@ -41,9 +41,9 @@ func TestExportDeclaresTheNetworksTheVirtualMachineExpects(t *testing.T) {
 
 	manifest := capturedManifest(t, content)
 	// Every cluster has a pod network, so that one names nothing. The two
-	// secondary networks name the attachments the source cluster backed them
-	// with, which is what a target has to be able to offer something
-	// equivalent to.
+	// secondary networks name the attachments the source cluster backed
+	// them with. A target has to be able to offer something equivalent to
+	// those.
 	g.Expect(manifest.Requirements.Networks).To(gomega.Equal([]bundle.NetworkRequirement{
 		{Name: "default", Type: bundle.NetworkPod},
 		{
@@ -64,9 +64,10 @@ func TestExportDeclaresTheNetworksTheVirtualMachineExpects(t *testing.T) {
 func TestExportDoesNotReportASecondaryNetworkAsOneEveryClusterAlreadyHas(t *testing.T) {
 	g := gomega.NewGomegaWithT(t)
 	c := stoppedCluster(t)
-	// A Multus network naming no attachment. KubeVirt would not accept this
-	// VirtualMachine, but reading it as the pod network would tell a reader
-	// their cluster needs nothing when quo has no idea what it needs.
+	// A Multus network naming no attachment. KubeVirt would not accept
+	// this VirtualMachine. Reading it as the pod network would tell a
+	// reader their cluster needs nothing when quo has no idea what it
+	// needs.
 	setField(t, c.vm, []any{
 		map[string]any{"name": "secondary", "multus": map[string]any{}},
 	}, "spec", "template", "spec", "networks")
@@ -88,8 +89,8 @@ func TestExportDeclaresWhatEachDiskNeedsFromStorage(t *testing.T) {
 
 	manifest := capturedManifest(t, content)
 	// A target that can only offer one volume mode cannot run this
-	// VirtualMachine as captured, so each disk says which one it needs rather
-	// than leaving it to be guessed at.
+	// VirtualMachine as captured. Each disk therefore says which one it
+	// needs rather than leaving it to be guessed at.
 	g.Expect(manifest.Requirements.Storage).To(gomega.Equal([]bundle.StorageRequirement{
 		{
 			Claim:        rootClaim,
@@ -104,8 +105,9 @@ func TestExportDeclaresWhatEachDiskNeedsFromStorage(t *testing.T) {
 			VolumeMode:   "Filesystem",
 		},
 	}))
-	// One requirement per disk member, so nothing the bundle carries arrives
-	// without a target having been told what it would take to put it back.
+	// One requirement per disk member. Nothing the bundle carries arrives
+	// without a target having been told what it would take to restore
+	// it.
 	g.Expect(manifest.Disks).To(gomega.HaveLen(len(manifest.Requirements.Storage)))
 }
 
@@ -172,7 +174,7 @@ func TestExportDeclaresStorageRequirementsWhateverItCouldCollect(t *testing.T) {
 	_, content := captureWithDisks(t, c, testOptions())
 
 	manifest := capturedManifest(t, content)
-	// Requirements come off the VirtualMachine and its claims, so a capture
+	// Requirements come off the VirtualMachine and its claims. A capture
 	// that could collect nothing about the source cluster's storage still
 	// says what a target would need.
 	g.Expect(collected(manifest)).To(gomega.Equal(append(
@@ -239,7 +241,7 @@ func TestExportCreatesNoExportForAVirtualMachineServedOnlyFromAContainerImage(t 
 	_, content := captureWithDisks(t, c, testOptions())
 
 	manifest := capturedManifest(t, content)
-	// Nothing a cluster could hand back as a disk, so nothing is asked for.
+	// Nothing a cluster could return as a disk, so nothing is asked for.
 	g.Expect(c.export.created).To(gomega.Equal(0))
 	g.Expect(manifest.Disks).To(gomega.BeEmpty())
 	g.Expect(manifest.Requirements.Storage).To(gomega.BeEmpty())
@@ -306,9 +308,9 @@ func TestExportRecordsNoRequirementForWhatEveryClusterAlreadyHas(t *testing.T) {
 	_, content := captureWithDisks(t, c, testOptions())
 
 	manifest := capturedManifest(t, content)
-	// The pod network is still declared, because a reader has to know the
-	// VirtualMachine expects one, but it names no object a target has to go
-	// and find.
+	// The pod network is still declared, because a reader has to know
+	// the VirtualMachine expects one. It names no object a target has to
+	// go and find.
 	g.Expect(manifest.Requirements.Networks).To(gomega.Equal([]bundle.NetworkRequirement{
 		{Name: "default", Type: bundle.NetworkPod},
 	}))
@@ -316,8 +318,8 @@ func TestExportRecordsNoRequirementForWhatEveryClusterAlreadyHas(t *testing.T) {
 }
 
 // requiringCluster builds a cluster whose stopped VirtualMachine has two
-// disks provisioned differently: one block volume and one filesystem volume,
-// of different sizes and from different storage classes.
+// disks provisioned differently. One is a block volume and one is a
+// filesystem volume, of different sizes and from different storage classes.
 func requiringCluster(t *testing.T) (c *fakeCluster) {
 	t.Helper()
 	c = stoppedCluster(t)

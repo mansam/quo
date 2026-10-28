@@ -9,9 +9,9 @@ import (
 
 // NoExpandedSpecError reports a bundle whose capture could not read the
 // source cluster's expansion of the VirtualMachine. The expansion is what
-// a deploy applies — the captured VirtualMachine object stays the
-// declaration of record — so a bundle holding none cannot be deployed at
-// all, and quo refuses rather than deploy half of one.
+// a deploy applies. The captured VirtualMachine object stays the
+// declaration of record. A bundle holding no expansion cannot be deployed
+// at all. quo refuses rather than deploy half of one.
 type NoExpandedSpecError struct {
 	Bundle string
 }
@@ -84,8 +84,8 @@ func (r *AlreadyExistsError) Is(err error) (matched bool) {
 }
 
 // NotCreatedError reports a deploy that ran but did not create everything
-// it tried to. The deploy record names each object and what became of it;
-// this error is what makes the exit code non-zero, so that a script can
+// it tried to. The deploy record names each object and what became of it.
+// This error is what makes the exit code non-zero, so that a script can
 // tell a complete deploy from a partial one.
 type NotCreatedError struct {
 	NotCreated int
@@ -108,7 +108,7 @@ func (r *NotCreatedError) Is(err error) (matched bool) {
 
 // NotDeletedError reports an undeploy that ran but did not delete
 // everything it tried to. What the undeploy deleted names each object
-// and what became of it; this error is what makes the exit code
+// and what became of it. This error is what makes the exit code
 // non-zero, so that a script can tell a complete undeploy from a
 // partial one.
 type NotDeletedError struct {
@@ -131,9 +131,9 @@ func (r *NotDeletedError) Is(err error) (matched bool) {
 }
 
 // NoCDIError reports a target cluster with no CDI, from a bundle that
-// holds disks to upload. A disk goes back onto a cluster only through
-// CDI's upload, so there is no way past this but installing it: failing
-// disk by disk for an hour is what refusing up front avoids.
+// holds disks to upload. A disk returns to a cluster only through CDI's
+// upload, so installing CDI is the only way past this error. Refusing at
+// once avoids failing disk by disk for an hour.
 type NoCDIError struct {
 	// Disks is how many disks the bundle holds to upload.
 	Disks int
@@ -159,7 +159,7 @@ func (r *NoCDIError) Is(err error) (matched bool) {
 // UnmappedRequirementError reports a requirement of the bundle's that
 // mapped to nothing on the target cluster. The disks are not uploaded
 // and the machine is not created for a bundle whose needs cannot be
-// placed; the error says what was tried, so the mapping that is missing
+// placed. The error says what was tried, so the mapping that is missing
 // can be named on the command line.
 type UnmappedRequirementError struct {
 	// Kind is the sort of thing the requirement asks the target for: a

@@ -65,13 +65,13 @@ var (
 )
 
 // attachmentGroupVersion is where Multus serves
-// NetworkAttachmentDefinitions, which an installation without Multus does
-// not serve at all.
+// NetworkAttachmentDefinitions. An installation without Multus does not
+// serve them at all.
 const attachmentGroupVersion = "k8s.cni.cncf.io/v1"
 
 // Parts of the fixture. Each one names an object the VirtualMachine refers
-// to, so that a reference type quo's traversal follows is exercised against a
-// real cluster rather than only against the fake.
+// to. So a reference type quo's traversal follows is exercised against a
+// real cluster, not only against the fake.
 const (
 	partNamespace    = "ns"
 	partVM           = "vm"
@@ -113,23 +113,23 @@ const (
 
 // What the fixture is made of.
 const (
-	// fixtureDiskSize is what the fixture disk asks for. It is blank and so
-	// almost entirely sparse, which means it compresses to very little on the
-	// way into a bundle, but it has to be large enough that any provisioner
-	// will take it.
+	// fixtureDiskSize is what the fixture disk asks for. It is blank. So it
+	// is almost entirely sparse. That means it compresses to very little on
+	// the way into a bundle. But it has to be large enough that any
+	// provisioner will take it.
 	fixtureDiskSize = "1Gi"
 	// fixtureImage is the container image one volume is served from. Nothing
-	// ever pulls it: the VirtualMachine is never started, and quo declares a
+	// ever pulls it. The VirtualMachine is never started, and quo declares a
 	// container disk as a requirement rather than carrying it.
 	fixtureImage = "quay.io/kubevirt/cirros-container-disk-demo:latest"
 	// bindImmediately tells CDI to provision the fixture disk at once rather
 	// than waiting for something to consume it.
 	//
 	// A storage class that binds on first consumer leaves a DataVolume
-	// waiting in WaitForFirstConsumer until a pod mounts the claim behind it,
-	// and the fixture VirtualMachine is deliberately never started, so
-	// nothing ever would. The annotation has CDI schedule a worker of its own
-	// and bind, which is what it is for.
+	// waiting in WaitForFirstConsumer until a pod mounts the claim behind it.
+	// The fixture VirtualMachine is deliberately never started. So nothing
+	// would ever mount the claim. The annotation has CDI schedule a worker
+	// of its own and bind, which is what it is for.
 	bindImmediately = "cdi.kubevirt.io/storage.bind.immediate.requested"
 	// Identity values a bundle must carry through untouched, which the export
 	// test reads back out of the bundle.
@@ -144,7 +144,7 @@ const (
 	// settleTimeout bounds the wait for KubeVirt to finish filling in the
 	// VirtualMachine it has just been given.
 	settleTimeout = 5 * time.Minute
-	// deleteTimeout bounds taking the fixture down again.
+	// deleteTimeout bounds the wait to delete the fixture again.
 	deleteTimeout = 5 * time.Minute
 	// pollInterval is how often the fixture reads back what it waits for.
 	pollInterval = 2 * time.Second
@@ -153,30 +153,30 @@ const (
 // fixture is the VirtualMachine the suite captures and everything it refers
 // to.
 //
-// It is built rather than found, so that a run accounts for every reference
-// type quo follows and a failure names a shape the suite put there on
-// purpose. Every name is derived from one random suffix, so that two runs
-// sharing a namespace do not collide.
+// The suite builds the fixture rather than finding it. So a run exercises
+// every reference type quo follows. A failure names a shape the suite put
+// there on purpose. The fixture derives every name from one random suffix,
+// so that two runs sharing a namespace do not collide.
 type fixture struct {
 	namespace string
 	suffix    string
 	// attached names the NetworkAttachmentDefinition the VirtualMachine's
 	// secondary network points at, empty where Multus is not installed.
 	attached string
-	// created is everything the fixture created, removed in the reverse order.
+	// created is everything the fixture created, deleted in the reverse order.
 	created []created
 }
 
-// created is one object the fixture created, so that everything it created
-// is taken down again whether or not the rest of the build succeeded.
+// created is one object the fixture created. The fixture deletes it all
+// again, whether or not the rest of the build succeeded.
 type created struct {
 	gvr       schema.GroupVersionResource
 	namespace string
 	name      string
 }
 
-// newFixture names the objects a run will create. Nothing is created yet: a
-// fixture is named before the cluster is known to be usable.
+// newFixture names the objects a run will create. Nothing is created yet.
+// A fixture is named before the cluster is known to be usable.
 func newFixture() (f *fixture) {
 	f = &fixture{
 		namespace: os.Getenv(envNamespace),
@@ -203,11 +203,12 @@ func (r *fixture) ref(kind, part string) (ref cluster.ObjectRef) {
 
 // create builds the fixture on the cluster and waits for it to settle.
 //
-// The disk is provisioned before the VirtualMachine is created, and the
-// VirtualMachine is waited for until KubeVirt has resolved its instancetype,
-// so that both traversals read a VirtualMachine that has stopped changing. A
-// VirtualMachine still being filled in would have the two reading different
-// objects and disagreeing over something neither implementation got wrong.
+// The disk is provisioned before the VirtualMachine is created. create
+// waits for the VirtualMachine until KubeVirt resolves its instancetype.
+// So both traversals read a VirtualMachine that has stopped changing. If a
+// VirtualMachine were still being filled in, the two traversals would read
+// different objects. They would disagree over something neither
+// implementation got wrong.
 func (r *fixture) create(ctx context.Context, s *suite) (err error) {
 	err = r.createNamespace(ctx, s)
 	if err != nil {
@@ -225,13 +226,13 @@ func (r *fixture) create(ctx context.Context, s *suite) (err error) {
 	return
 }
 
-// delete takes down everything the fixture created, in the reverse of the
-// order it created it, which leaves a namespace the fixture made until last.
+// delete undoes everything the fixture created, in the reverse of the
+// order it created it. That leaves a namespace the fixture made until last.
 //
-// A removal that fails is reported and does not stop the rest. Leaving one
-// object behind is a nuisance; stopping would leave the others behind too.
-// The context is detached from the one the run used, because a run that was
-// cancelled still has a fixture to take down.
+// delete reports a removal that fails. The failure does not stop the rest.
+// Leaving one object in place is a nuisance. Stopping would leave the
+// others in place too. delete detaches the context from the one the run
+// used, because a run that was cancelled still has a fixture to delete.
 func (r *fixture) delete(ctx context.Context, s *suite) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), deleteTimeout)
 	defer cancel()
@@ -322,9 +323,9 @@ func (r *fixture) createReferenced(ctx context.Context, s *suite) (err error) {
 // createAttachment creates the NetworkAttachmentDefinition the
 // VirtualMachine's secondary network points at.
 //
-// Multus is optional and a cluster without it serves no such kind. That is
-// not a reason to skip the suite: the VirtualMachine is built without a
-// secondary network instead, and the comparison covers one reference type
+// Multus is optional, and a cluster without it serves no such kind. That
+// is not a reason to skip the suite. The VirtualMachine is built without a
+// secondary network instead. The comparison then covers one reference type
 // fewer.
 func (r *fixture) createAttachment(ctx context.Context, s *suite) (err error) {
 	if !s.serves(attachmentGroupVersion, attachmentResource.Resource) {
@@ -349,9 +350,9 @@ func (r *fixture) createAttachment(ctx context.Context, s *suite) (err error) {
 	return
 }
 
-// createDisk creates the DataVolume behind the VirtualMachine's root disk and
-// waits for CDI to provision it, so that the claim exists and is bound before
-// anything tries to export it.
+// createDisk creates the DataVolume behind the VirtualMachine's root disk.
+// It waits for CDI to provision it. So the claim exists and is bound
+// before anything tries to export it.
 func (r *fixture) createDisk(ctx context.Context, s *suite) (err error) {
 	dv := r.buildObject(
 		"cdi.kubevirt.io/v1beta1",
@@ -380,14 +381,16 @@ func (r *fixture) createDisk(ctx context.Context, s *suite) (err error) {
 }
 
 // diskStorage is what the fixture asks of the cluster's storage for its
-// disk: fixtureDiskSize on the class the environment named, or on
-// whichever class the cluster defaults to, as a block device. The volume
-// mode is asked for by name rather than left to the class's default,
-// because the export offers a block device as a gzip and a filesystem
-// volume as a tar.gz, and the tar.gz the export produces is not a form
-// every cluster's CDI takes back — the round trip runs on the gzip form,
-// and the deploy suite's disk fixtures cover the tar.gz bytes'
-// pass-through.
+// disk. It asks for fixtureDiskSize, as a block device, on the class the
+// environment named. If the environment named no class, it uses whichever
+// class the cluster defaults to.
+//
+// The export offers a block device as a gzip and a filesystem volume as a
+// tar.gz. The tar.gz the export produces is not a form every cluster's CDI
+// accepts. For those two reasons, the fixture asks for the volume mode by
+// name rather than leaving it to the class's default. So the round trip
+// uses the gzip form. The deploy suite's disk fixtures cover the tar.gz
+// bytes' pass-through.
 func diskStorage() (storage map[string]any) {
 	storage = map[string]any{
 		"resources": map[string]any{
@@ -404,10 +407,11 @@ func diskStorage() (storage map[string]any) {
 
 // createVirtualMachine creates the VirtualMachine the suite captures.
 //
-// It is halted and never started. quo refuses a VirtualMachine that is not
-// stopped, and a stopped one is also what makes the comparison meaningful:
-// the VirtualMachineInstance and virt-launcher Pod KubeVirt's graph would
-// otherwise name are the objects quo deliberately does not follow.
+// It is created stopped, and it is never started. quo refuses a
+// VirtualMachine that is not stopped. A stopped one is also what makes the
+// comparison meaningful. The VirtualMachineInstance and virt-launcher Pod
+// that KubeVirt's graph would otherwise name are the objects quo
+// deliberately does not follow.
 func (r *fixture) createVirtualMachine(ctx context.Context, s *suite) (err error) {
 	err = r.submit(ctx, s, virtualMachineResource, r.buildObject(
 		"kubevirt.io/v1",
@@ -430,18 +434,18 @@ func (r *fixture) createVirtualMachine(ctx context.Context, s *suite) (err error
 
 // buildVirtualMachineSpec returns the fixture VirtualMachine's spec. Every
 // volume, matcher and network on it is a reference type quo's traversal
-// follows, so that the comparison against KubeVirt's graph has something to
+// follows. So the comparison against KubeVirt's graph has something to
 // compare.
 func (r *fixture) buildVirtualMachineSpec() (spec map[string]any) {
 	spec = map[string]any{
 		"runStrategy": "Halted",
 		// The template declares the root disk the way a machine that ran
-		// once and was stopped does: KubeVirt provisions a template's
-		// DataVolume when the machine starts and leaves it behind when it
-		// stops. The fixture never starts the machine, so it creates the
-		// DataVolume itself, and the template and the volume name one and
-		// the same disk — which is what gives the round trip a template to
-		// hoist onto a standalone DataVolume.
+		// once and was stopped does. KubeVirt provisions a template's
+		// DataVolume when the machine starts and leaves it in place when
+		// the machine stops. The fixture never starts the machine. So the
+		// fixture creates the DataVolume itself. The template and the
+		// volume name one and the same disk. That is what gives the round
+		// trip a template to transfer to a standalone DataVolume.
 		"dataVolumeTemplates": []any{r.buildDataVolumeTemplate()},
 		"instancetype": map[string]any{
 			"kind": "VirtualMachineInstancetype",
@@ -489,8 +493,8 @@ func (r *fixture) buildVirtualMachineSpec() (spec map[string]any) {
 }
 
 // buildDataVolumeTemplate returns the template stanza declaring the root
-// disk: the same name, source and storage as the DataVolume the fixture
-// creates for it.
+// disk. It uses the same name, source and storage as the DataVolume the
+// fixture creates for it.
 func (r *fixture) buildDataVolumeTemplate() (template map[string]any) {
 	template = map[string]any{
 		"metadata": map[string]any{"name": r.named(partDisk)},
@@ -502,9 +506,10 @@ func (r *fixture) buildDataVolumeTemplate() (template map[string]any) {
 	return
 }
 
-// buildVolumes returns the fixture VirtualMachine's volumes: one backed by a
-// DataVolume, one served from a container image, and one each for the
-// ConfigMap, the cloud-init Secret and the ServiceAccount.
+// buildVolumes returns the fixture VirtualMachine's volumes. One volume is
+// backed by a DataVolume. One is served from a container image. One volume
+// is for the ConfigMap, one for the cloud-init Secret, and one for the
+// ServiceAccount.
 func (r *fixture) buildVolumes() (volumes []any) {
 	volumes = []any{
 		map[string]any{
@@ -544,9 +549,9 @@ func (r *fixture) buildDisks() (disks []any) {
 	return
 }
 
-// buildNetworks returns the pod network every VirtualMachine has and, where
-// Multus is installed, a secondary network naming the fixture's
-// NetworkAttachmentDefinition.
+// buildNetworks returns the pod network every VirtualMachine has. Where
+// Multus is installed, it also returns a secondary network. That network
+// names the fixture's NetworkAttachmentDefinition.
 func (r *fixture) buildNetworks() (networks []any) {
 	networks = []any{
 		map[string]any{"name": networkPod, "pod": map[string]any{}},
@@ -561,8 +566,8 @@ func (r *fixture) buildNetworks() (networks []any) {
 	return
 }
 
-// buildInterfaces returns the interfaces binding the VirtualMachine to its
-// networks, one interface each.
+// buildInterfaces returns the interfaces that bind the VirtualMachine to
+// its networks. It returns one interface for each network.
 func (r *fixture) buildInterfaces() (interfaces []any) {
 	interfaces = []any{
 		map[string]any{"name": networkPod, "masquerade": map[string]any{}},
@@ -577,8 +582,8 @@ func (r *fixture) buildInterfaces() (interfaces []any) {
 	return
 }
 
-// buildObject returns one fixture object, carrying whatever fields beyond its
-// kind and name the thing being tested needs.
+// buildObject returns one fixture object. The object carries the fields
+// that the thing being tested needs, beyond its kind and name.
 func (r *fixture) buildObject(
 	apiVersion, kind, part string,
 	fields map[string]any) (object map[string]any) {
@@ -608,9 +613,9 @@ func annotate(object map[string]any, name, value string) {
 	annotations[name] = value
 }
 
-// submit sends one object to the cluster and records it, so that everything
-// the fixture created is taken down again whether or not the rest of the
-// build succeeds.
+// submit sends one object to the cluster and records it. So everything the
+// fixture created is deleted again whether or not the rest of the build
+// succeeds.
 func (r *fixture) submit(
 	ctx context.Context,
 	s *suite,
@@ -632,7 +637,7 @@ func (r *fixture) submit(
 	return
 }
 
-// provisioned reports a DataVolume CDI has finished importing, which is when
+// provisioned reports a DataVolume CDI has finished importing. That is when
 // the claim behind it exists and holds the blank image.
 func provisioned(dv *unstructured.Unstructured) (done bool) {
 	phase, _, _ := unstructured.NestedString(dv.Object, "status", "phase")
@@ -640,14 +645,15 @@ func provisioned(dv *unstructured.Unstructured) (done bool) {
 	return
 }
 
-// settled reports a VirtualMachine KubeVirt has finished filling in: it is
-// stopped, and both the instancetype and the preference it was asked for
-// have been pinned to a ControllerRevision.
+// settled reports a VirtualMachine that KubeVirt has finished filling in.
+// The VirtualMachine is stopped. KubeVirt has pinned both the instancetype
+// and the preference it was asked for to a ControllerRevision.
 //
-// Both traversals read the VirtualMachine separately. One still being filled
-// in would have them read different objects and disagree over a
-// ControllerRevision that simply did not exist yet for one of them, which is
-// a failure naming an object neither implementation got wrong.
+// Both traversals read the VirtualMachine separately. If the
+// VirtualMachine were still being filled in, the two would read different
+// objects. They would disagree over a ControllerRevision that simply did
+// not exist yet for one of them. That failure would name an object neither
+// implementation got wrong.
 func settled(vm *unstructured.Unstructured) (done bool) {
 	status, _, _ := unstructured.NestedString(vm.Object, "status", "printableStatus")
 	if status != capture.StatusStopped {

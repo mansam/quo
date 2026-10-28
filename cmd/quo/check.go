@@ -9,17 +9,17 @@ import (
 	"github.com/mansam/quo/pkg/cluster"
 )
 
-// checkArgs is a check command line, once parsed.
+// checkArgs is the parsed form of a check command line.
 type checkArgs struct {
 	opt        capture.Options
 	kubeconfig string
 }
 
-// runCheck says what a capture would collect and what it would skip, without
-// transferring anything.
+// runCheck says what a capture would collect and what it would skip. It
+// transfers nothing.
 //
-// Finding objects a capture would skip is what a check is for, so a check
-// that finds some still succeeds. A non-zero exit means the check could not
+// A check exists to find the objects a capture would skip. So a check that
+// finds some still succeeds. A non-zero exit means the check could not
 // report at all.
 func runCheck(args []string) (err error) {
 	parsed, err := parseCheckArgs(args)
@@ -34,8 +34,8 @@ func runCheck(args []string) (err error) {
 	return
 }
 
-// parseCheckArgs parses and validates a check command line. It contacts
-// nothing, so the whole command line is testable without a cluster.
+// parseCheckArgs parses and checks a check command line. It contacts
+// nothing. So the whole command line is testable without a cluster.
 func parseCheckArgs(args []string) (parsed checkArgs, err error) {
 	fs := flag.NewFlagSet("check", flag.ContinueOnError)
 	fs.StringVar(&parsed.opt.Namespace, "n", "", "namespace of the VirtualMachine")
@@ -50,7 +50,7 @@ func parseCheckArgs(args []string) (parsed checkArgs, err error) {
 	if err != nil {
 		return
 	}
-	// A check writes no bundle, so it needs nowhere to put one.
+	// A check writes no bundle. So it needs nowhere to put one.
 	err = validateVirtualMachine(parsed.opt)
 	return
 }

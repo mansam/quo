@@ -12,15 +12,16 @@ import (
 	"github.com/mansam/quo/pkg/cluster"
 )
 
-// collector puts objects somewhere and builds the capture record as it goes,
-// so that an object quo asked for is accounted for whether or not it arrived.
+// collector puts objects somewhere and builds the capture record as it goes.
+// An object quo asked for is therefore accounted for whether or not it
+// arrived.
 type collector struct {
 	sink   sink
 	record bundle.CaptureRecord
 }
 
-// sink is where a collector puts the objects it reads. A capture puts them in
-// a bundle; a check puts them nowhere, because it reports what a capture
+// sink is where a collector puts the objects it reads. A capture puts them
+// in a bundle. A check puts them nowhere, because it reports what a capture
 // would collect and keeps none of it.
 type sink interface {
 	// Collect takes one resource the bundle holds.
@@ -35,9 +36,9 @@ type sink interface {
 // what a target would have to provide, which is derived from the referenced
 // resources and recorded as it is derived.
 //
-// A capture and a check both go through here, so that the two cannot come to
-// account for different objects. What they do differ in is where the objects
-// go, which is the collector's sink.
+// A capture and a check both use this path, so that the two cannot account
+// for different objects. What they differ in is where the objects go, which
+// is the collector's sink.
 func (r *collector) collect(
 	ctx context.Context,
 	c cluster.Cluster,
@@ -78,9 +79,9 @@ func (r *collector) add(ref cluster.ObjectRef, object *unstructured.Unstructured
 // addExpandedSpec puts the source cluster's expansion of the VirtualMachine
 // into the bundle as a member of its own.
 //
-// It is recorded under its own kind rather than the VirtualMachine's, because
-// the expansion carries the same kind and name as the VirtualMachine the
-// bundle collected and the two would otherwise be one entry repeated.
+// It is recorded under its own kind rather than the VirtualMachine's. The
+// expansion carries the same kind and name as the VirtualMachine the bundle
+// collected, so the two would otherwise be one entry repeated.
 func (r *collector) addExpandedSpec(
 	ref cluster.ObjectRef,
 	expanded *unstructured.Unstructured) (err error) {
@@ -96,7 +97,7 @@ func (r *collector) addExpandedSpec(
 
 // skip records an object quo tried to read and could not. The reason is what
 // lets a reader tell an object that was never there from one quo was not
-// allowed to look at, and the message carries what the cluster said, which is
+// allowed to look at. The message carries what the cluster said, which is
 // where a detail such as the missing permission appears.
 func (r *collector) skip(ref cluster.ObjectRef, failed error) {
 	r.record = append(r.record, bundle.Attempt{

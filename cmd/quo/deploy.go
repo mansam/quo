@@ -19,7 +19,7 @@ import (
 	"github.com/mansam/quo/pkg/deploy"
 )
 
-// deployArgs is a deploy command line, once parsed.
+// deployArgs is the parsed form of a deploy command line.
 type deployArgs struct {
 	opt        deploy.Options
 	kubeconfig string
@@ -27,9 +27,9 @@ type deployArgs struct {
 
 // runDeploy puts a bundle onto a cluster as a stopped VirtualMachine.
 //
-// The deploy record is printed however the run ended, so that what the
-// target holds is the last thing said, and the error is what makes the
-// exit code non-zero when anything failed.
+// runDeploy prints the deploy record however the run ended. So what the
+// target holds is the last thing said. The error is what makes the exit
+// code non-zero when anything failed.
 func runDeploy(args []string) (err error) {
 	parsed, err := parseDeployArgs(args)
 	if err != nil {
@@ -41,8 +41,8 @@ func runDeploy(args []string) (err error) {
 	}
 	parsed.opt.Progress = newUploadReporter(os.Stderr)
 	// Ctrl-C stops the deploy where it stands. What was created stays
-	// where it is, because a deploy never rolls back, and the record
-	// prints all the same, so what the target holds is still said.
+	// where it is, because a deploy never rolls back. The record prints
+	// all the same. So what the target holds is still said.
 	ctx, stop := signal.NotifyContext(context.TODO(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	record, deployErr := deploy.Deploy(ctx, t, parsed.opt)
@@ -54,19 +54,19 @@ func runDeploy(args []string) (err error) {
 	return
 }
 
-// newUploadReporter returns the progress reporter the deploy uses. It
-// rewrites one line of out while a disk uploads and starts a new line once
-// the disk has finished, so that a deploy taking hours can be told apart
-// from one that has stopped making progress.
+// newUploadReporter returns the progress reporter the deploy uses. The
+// reporter rewrites one line of out while a disk uploads. It starts a new
+// line when the disk finishes. So a person can tell a deploy that takes
+// hours from one that stopped making progress.
 //
-// Progress goes to standard error so that standard output stays the result
-// of the command.
+// Progress goes to standard error. So standard output stays the result of
+// the command.
 func newUploadReporter(out io.Writer) (report func(p deploy.Progress)) {
-	// Width of the line last written, so that a shorter line can be padded
-	// over the one it replaces. A carriage return moves the cursor back to
-	// the start of the line without removing what is already there, so
-	// that "1023.5 MiB" followed by "1.1 GiB" would otherwise read
-	// "1.1 GiBMiB".
+	// written is the width of the line last written, so that a shorter line
+	// can be padded over the one it replaces. A carriage return moves the
+	// cursor back to the start of the line. It removes nothing that is
+	// already there. So "1023.5 MiB" followed by "1.1 GiB" would read
+	// "1.1 GiBMiB" without the padding.
 	written := 0
 	report = func(p deploy.Progress) {
 		line := fmt.Sprintf(
@@ -91,23 +91,24 @@ func newUploadReporter(out io.Writer) (report func(p deploy.Progress)) {
 	return
 }
 
-// printRecord writes the deploy record: every object a deploy attempted
-// and what became of each one, and every requirement it mapped onto the
-// target's resources. A run that refused before attempting anything has
-// no record, so nothing is printed for one.
+// printRecord writes the deploy record. The record holds every object a
+// deploy attempted and what became of each one. It also holds every
+// requirement the deploy mapped onto the target's resources. A run that
+// refused before attempting anything has no record. So printRecord prints
+// nothing for one.
 //
-// A dry run prints the record the real deploy would print — the steps say
-// created, because that is what a real deploy would do with each object —
-// behind one line saying that none of it happened, so the steps cannot be
+// A dry run prints the record the real deploy would print. The steps say
+// created, because that is what a real deploy would do with each object.
+// One line in front says that none of it happened. So the steps cannot be
 // read as actions.
 //
-// The record ends with the undeploy command for what exists, so that the
-// way to take the deployment off again is the last thing said. It is
-// printed only when something was created: a deploy that put nothing on
+// The record ends with the undeploy command for what exists. So the way to
+// remove the deployment again is the last thing said. printRecord prints
+// the command only when something was created. A deploy that put nothing on
 // the target leaves nothing to point an undeploy at.
 //
-// Write errors are discarded per line because tabwriter reports them
-// again from Flush, which is checked.
+// Write errors are discarded per line. tabwriter reports them again from
+// Flush. printRecord checks that error.
 func printRecord(out io.Writer, record deploy.Record, opt deploy.Options) (err error) {
 	if len(record.Steps) == 0 && len(record.Requirements) == 0 {
 		return
@@ -162,8 +163,8 @@ func printRecord(out io.Writer, record deploy.Record, opt deploy.Options) (err e
 	if !created {
 		return
 	}
-	// A dry run points the command at what a real deploy would put
-	// there, which is not there yet; a real one at what is.
+	// A dry run points the command at what a real deploy would put there.
+	// That is not there yet. A real deploy points the command at what is.
 	lead := "Remove it again with:"
 	if opt.DryRun {
 		lead = "Remove what it would create with:"
@@ -181,7 +182,7 @@ func printRecord(out io.Writer, record deploy.Record, opt deploy.Options) (err e
 	return
 }
 
-// named renders an object with its namespace, dropping it for a
+// named renders an object with its namespace. It drops the namespace for a
 // cluster-scoped object.
 func named(namespace, name string) (rendered string) {
 	rendered = name
@@ -191,13 +192,13 @@ func named(namespace, name string) (rendered string) {
 	return
 }
 
-// mappingFlag is a repeatable flag that names mappings: each occurrence
-// gives one <left>=<right> pair, collected into a map from left to
-// right. The flag package has no repeatable string flag of its own, so
-// this is one. A repeated left side keeps the last right side, the way
-// a repeated plain flag keeps its last value.
+// mappingFlag is a repeatable flag that names mappings. Each occurrence
+// gives one <left>=<right> pair. mappingFlag holds the pairs in a map from
+// left to right. The flag package has no repeatable string flag of its own.
+// So mappingFlag is one. A repeated left side keeps the last right side,
+// the way a repeated plain flag keeps its last value.
 type mappingFlag struct {
-	// pairs is every pair the command line gave.
+	// pairs holds every pair the command line gave.
 	pairs map[string]string
 	// want says what a well-formed value looks like, for the error a
 	// malformed one produces.
@@ -218,8 +219,8 @@ func (f *mappingFlag) Set(value string) (err error) {
 	return
 }
 
-// String renders the pairs the flag has collected, so that a flag with a
-// default can say what it is. The zero flag has none.
+// String renders the pairs the flag holds, so that a flag with a default
+// can say what it is. The zero flag has none.
 func (f *mappingFlag) String() (rendered string) {
 	lefts := slices.Sorted(maps.Keys(f.pairs))
 	pairs := make([]string, 0, len(lefts))
@@ -229,8 +230,8 @@ func (f *mappingFlag) String() (rendered string) {
 	return strings.Join(pairs, ", ")
 }
 
-// parseDeployArgs parses and validates a deploy command line. It contacts
-// nothing, so the whole command line is testable without a cluster.
+// parseDeployArgs parses and checks a deploy command line. It contacts
+// nothing. So the whole command line is testable without a cluster.
 func parseDeployArgs(args []string) (parsed deployArgs, err error) {
 	fs := flag.NewFlagSet("deploy", flag.ContinueOnError)
 	fs.StringVar(&parsed.opt.Namespace, "n", "", "namespace to deploy into")
@@ -263,10 +264,10 @@ func parseDeployArgs(args []string) (parsed deployArgs, err error) {
 	return
 }
 
-// validateDeploy checks a deploy command line names a namespace to deploy
-// into. The namespace is required and quo never falls back to the
-// kubeconfig's current namespace, because a diagnostic VirtualMachine
-// landing in someone's default namespace by accident is a quiet mistake.
+// validateDeploy checks that a deploy command line names a namespace to
+// deploy into. The namespace is required. quo never takes the kubeconfig's
+// current namespace instead, because a diagnostic VirtualMachine that lands
+// in someone's default namespace by accident is a quiet mistake.
 func validateDeploy(opt deploy.Options) (err error) {
 	if opt.Namespace == "" {
 		err = errors.New("a namespace is required: -n <namespace>")

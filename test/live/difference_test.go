@@ -15,27 +15,29 @@ import (
 
 // Outcomes that mean quo's traversal found the object.
 //
-// A skipped object was found and then could not be read. Leaving it out
-// would report quo as having missed something it looked for and was refused,
-// which is a different problem with a different fix.
+// A skipped object was found and then could not be read. Leaving the
+// skipped outcome out would say that quo missed an object. quo found that
+// object, and the read was refused. That is a different problem with a
+// different fix.
 var traversal = map[bundle.Outcome]bool{
 	bundle.OutcomeCollected: true,
 	bundle.OutcomeSkipped:   true,
 }
 
 // Kinds quo reads for reasons of its own rather than because the
-// VirtualMachine refers to them. KubeVirt's graph has no opinion about any of
-// them, so comparing them would report a disagreement that is not one.
+// VirtualMachine refers to them. KubeVirt's graph has no opinion about any
+// of them. So comparing them would report a disagreement that is not one.
 //
-// This is a list of what to leave out rather than a list of what to compare,
-// so that a kind neither side knows about today still shows up tomorrow.
-// Comparing against a list of known kinds would filter the new kind off both
-// sides and report agreement, which is the one answer this suite must never
-// give wrongly.
+// This is a list of what to leave out, not a list of what to compare. So
+// a kind that neither side knows about today still appears tomorrow. A
+// list of known kinds would remove the new kind from both sides. The
+// comparison would then report agreement. Agreement is the one answer this
+// suite must never give wrongly.
 //
 // The capture record does not mark these apart from the objects the
-// traversal reached, so this list is the only thing separating them: a kind
-// added to the reads about the source cluster has to be added here too.
+// traversal reached. So this list is the only thing separating them. A
+// kind added to the reads about the source cluster has to be added here
+// too.
 var untraversedKinds = map[string]bool{
 	cluster.KindKubeVirt:         true,
 	cluster.KindPersistentVolume: true,
@@ -47,7 +49,7 @@ var untraversedKinds = map[string]bool{
 // difference is what one traversal found and the other did not.
 type difference struct {
 	// missed is what KubeVirt's graph found and quo's traversal did not.
-	// Each one is a member of the closure a bundle would leave behind.
+	// Each one is a member of the closure that a bundle would not carry.
 	missed []cluster.ObjectRef
 	// extra is what quo's traversal found and KubeVirt's graph did not.
 	extra []cluster.ObjectRef
@@ -56,9 +58,9 @@ type difference struct {
 // traversed returns the objects quo's closure traversal found, from the
 // record of what a capture attempted.
 //
-// Requirements take no part: a network or a container disk image is
-// something a target has to provide rather than an object quo read. Nor do
-// the kinds quo reads for reasons of its own.
+// Requirements take no part. A network or a container disk image is
+// something a target has to provide, not an object quo read. The kinds quo
+// reads for reasons of its own take no part either.
 func traversed(record bundle.CaptureRecord) (refs []cluster.ObjectRef) {
 	seen := map[cluster.ObjectRef]bool{}
 	for i := range record {
@@ -90,21 +92,22 @@ func compare(quo, graph []cluster.ObjectRef) (d difference) {
 	return
 }
 
-// diverged reports a difference that means quo is wrong: KubeVirt's graph
-// names a member of the closure quo's traversal did not find, so a bundle
-// would not carry it.
+// diverged reports a difference that means quo is wrong. KubeVirt's graph
+// names a member of the closure that quo's traversal did not find. So a
+// bundle would not carry it.
 //
 // Objects quo found and the graph did not are not divergence. quo follows
-// references KubeVirt's graph does not — a sysprep volume, an ephemeral
-// volume's claim, a memory dump, the Secret a container disk is pulled with
-// — and finding more than the graph does is the traversal working.
+// references that KubeVirt's graph does not follow. Examples are a sysprep
+// volume, an ephemeral volume's claim, a memory dump, and the Secret a
+// container disk is pulled with. Finding more than the graph does is the
+// traversal working.
 func (r difference) diverged() (wrong bool) {
 	wrong = len(r.missed) > 0
 	return
 }
 
-// report renders the difference so that a failure names the objects on each
-// side rather than only saying that the two disagree.
+// report renders the difference. So a failure names the objects on each
+// side, rather than only saying that the two disagree.
 func (r difference) report(namespace, name string) (report string) {
 	out := &strings.Builder{}
 	_, _ = fmt.Fprintf(
@@ -125,7 +128,7 @@ func (r difference) report(namespace, name string) (report string) {
 	return out.String()
 }
 
-// describeSide writes one side of the difference under a heading, and writes
+// describeSide writes one side of the difference under a heading. It writes
 // nothing at all for a side with nothing on it.
 func describeSide(out *strings.Builder, refs []cluster.ObjectRef, heading string) {
 	if len(refs) == 0 {
@@ -153,7 +156,7 @@ func subtract(these, those []cluster.ObjectRef) (only []cluster.ObjectRef) {
 	return
 }
 
-// describe names one object the way a reader would go looking for it. A
+// describe names one object the way a reader would search for it. A
 // cluster-scoped object is named without a namespace, because it has none.
 func describe(ref cluster.ObjectRef) (described string) {
 	described = ref.Kind + " " + ref.Name
@@ -208,8 +211,8 @@ func TestComparisonReportsWhatEachTraversalFoundAndTheOtherDidNot(t *testing.T) 
 			extra: []cluster.ObjectRef{collectedSecret},
 		},
 		{
-			// One name can mean a namespaced object or a cluster-scoped one,
-			// and the two are different objects.
+			// One name can mean a namespaced object or a cluster-scoped
+			// one. The two are different objects.
 			name:   "one name under two scopes",
 			quo:    []cluster.ObjectRef{clusterInstancetype},
 			graph:  []cluster.ObjectRef{{Kind: clusterInstancetype.Kind, Namespace: "support-cases", Name: clusterInstancetype.Name}},
@@ -284,8 +287,8 @@ func TestTheTraversalIsReadFromWhatACaptureCollectedAndWhatItCouldNotRead(t *tes
 			want: []cluster.ObjectRef{collectedClaim},
 		},
 		{
-			// The traversal found it. That the capture was then refused the
-			// read is a different problem with a different fix.
+			// The traversal found it. The capture was then refused the
+			// read. That is a different problem with a different fix.
 			name: "an object the capture found and was not allowed to read",
 			record: bundle.CaptureRecord{
 				attempt(collectedSecret, bundle.OutcomeSkipped),
@@ -320,9 +323,9 @@ func TestTheTraversalIsReadFromWhatACaptureCollectedAndWhatItCouldNotRead(t *tes
 			want: []cluster.ObjectRef{collectedClaim},
 		},
 		{
-			// The expansion is recorded under a kind of its own. KubeVirt's
-			// graph names nothing of that kind, so counting it would report a
-			// disagreement that is not one.
+			// The expansion is recorded under a kind of its own.
+			// KubeVirt's graph names nothing of that kind. So counting it
+			// would report a disagreement that is not one.
 			name: "the VirtualMachine and the source cluster's expansion of it",
 			record: bundle.CaptureRecord{
 				attempt(virtualMachineRef, bundle.OutcomeCollected),
@@ -353,9 +356,9 @@ func TestTheTraversalIsReadFromWhatACaptureCollectedAndWhatItCouldNotRead(t *tes
 	}
 }
 
-// virtualMachineRef is the VirtualMachine a capture collects, and
-// expandedSpecRef is the source cluster's expansion of it, which the capture
-// record names under a kind of its own.
+// virtualMachineRef is the VirtualMachine a capture collects.
+// expandedSpecRef is the source cluster's expansion of it. The capture
+// record names that expansion under a kind of its own.
 var (
 	virtualMachineRef = cluster.ObjectRef{
 		Kind:      cluster.KindVirtualMachine,

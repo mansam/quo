@@ -24,19 +24,20 @@ func TestExportRecordsWhatBecameOfEveryObjectItAttempted(t *testing.T) {
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	_, content := readBundle(t, captured)
 	manifest := capturedManifest(t, content)
-	// The VirtualMachine the capture had already read, then every object it
-	// went to the cluster for in the order it asked, then what describes the
-	// source cluster and is not addressed by reference at all, and last what
-	// the bundle needs a target to provide.
+	// The record begins with the VirtualMachine the capture had already
+	// read. Then comes every object it went to the cluster for, in the
+	// order it asked. Then comes what describes the source cluster and is
+	// not addressed by reference at all. Last comes what the bundle needs
+	// a target to provide.
 	g.Expect(attempted(manifest)).To(gomega.Equal(append(
 		append([]cluster.ObjectRef{ref(cluster.KindVirtualMachine, testName)}, c.requested...),
 		refIn(cluster.KindKubeVirt, testKubeVirtNamespace, testKubeVirtName),
 		ref(bundle.KindExpandedSpec, testName),
 		ref(cluster.KindNetworkAttachmentDefinition, testNetwork))))
-	// Everything the capture read was collected, and the network the
-	// VirtualMachine expects is a requirement as well: the bundle holds the
-	// attachment to be read, and a target still has to offer a network of its
-	// own.
+	// Everything the capture read was collected. The network the
+	// VirtualMachine expects is a requirement as well. The bundle holds
+	// the attachment to be read, and a target still has to offer a network
+	// of its own.
 	countOf := map[bundle.Outcome]int{}
 	for i := range manifest.CaptureRecord {
 		countOf[manifest.CaptureRecord[i].Outcome]++
@@ -90,7 +91,7 @@ func TestExportContinuesWhenAnObjectCannotBeRead(t *testing.T) {
 			// One object quo could not read is not worth failing a capture
 			// that may have taken hours over.
 			g.Expect(err).ToNot(gomega.HaveOccurred())
-			// The bundle that came out is whole: every member matches the
+			// The resulting bundle is whole. Every member matches the
 			// digest the manifest records for it, and nothing is indexed
 			// that the bundle does not hold.
 			manifest, readErr := bundle.Read(bytes.NewReader(captured))
@@ -223,8 +224,8 @@ func partlyReadableCluster(t *testing.T, failed error) (c *fakeCluster) {
 	return
 }
 
-// refusal builds the error a cluster reports for an object it will not hand
-// over, shaped the way the real adapter shapes one.
+// refusal builds the error a cluster reports when it denies an object to
+// the caller, shaped the way the real adapter shapes one.
 func refusal(kind, name string, reason error) (err error) {
 	err = fmt.Errorf("%s %q: %w", kind, name, reason)
 	return

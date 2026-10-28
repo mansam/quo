@@ -25,15 +25,16 @@ var (
 		Version:  "v1",
 		Resource: "virtualmachines",
 	}
-	// namespaceResource serves namespaces, which a deploy reads to refuse
-	// before creating anything when the namespace it was told to deploy
-	// into is not there.
+	// namespaceResource serves namespaces. A deploy reads a namespace
+	// through it before creating anything. The deploy can then refuse
+	// when the namespace it was told to deploy into is not there.
 	namespaceResource = schema.GroupVersionResource{
 		Version:  "v1",
 		Resource: "namespaces",
 	}
-	// dataVolumeResource serves DataVolumes, which a deploy creates to
-	// receive a bundle's disks and reads back while CDI prepares them.
+	// dataVolumeResource serves DataVolumes. A deploy creates DataVolumes
+	// to receive a bundle's disks. The deploy reads them back while CDI
+	// prepares them.
 	dataVolumeResource = schema.GroupVersionResource{
 		Group:    "cdi.kubevirt.io",
 		Version:  "v1beta1",
@@ -57,35 +58,36 @@ const (
 	// expandSpec is the subresource returning a VirtualMachine's resolved
 	// form.
 	expandSpec = "expand-spec"
-	// expandSpecName is how discovery lists that subresource. A subresource is
-	// named for the resource it belongs to as well as for itself, and the
-	// subresource group lists no bare virtualmachines resource at all, so
-	// looking for one would report expand-spec as absent from every cluster.
+	// expandSpecName is how discovery lists that subresource. A subresource
+	// takes its name from the resource it belongs to as well as from
+	// itself. The subresource group lists no bare virtualmachines resource
+	// at all. Looking for one would report expand-spec as absent from
+	// every cluster.
 	expandSpecName = "virtualmachines/" + expandSpec
 )
 
 // KubeVirt is the adapter over a real cluster, serving both directions quo
-// works in: it is a Cluster, for reading one, and a Target, for putting a
-// deployment onto one. It adapts the Kubernetes client and holds no logic
-// of its own.
+// works in. It is a Cluster, for reading a cluster. It is a Target, for
+// putting a deployment onto one. It adapts the Kubernetes client and holds
+// no logic of its own.
 //
-// Objects are read as unstructured so that every field survives the round trip
-// into a bundle, including fields this build of quo does not know about.
-// Decoding into a typed struct would silently drop them, and fidelity does not
-// allow that.
+// quo reads objects as unstructured so that every field survives the round
+// trip into a bundle. That includes fields this build of quo does not know
+// about. Decoding into a typed struct would silently drop them. Fidelity
+// does not allow that.
 type KubeVirt struct {
 	dynamic   dynamic.Interface
 	discovery discovery.DiscoveryInterface
 	core      kubernetes.Interface
 	config    *rest.Config
 	host      string
-	// mapper finds the resource serving an object's kind, so that a
-	// deploy can create what a bundle holds without quo having to name
-	// the resource itself.
+	// mapper finds the resource serving an object's kind. A deploy can
+	// then create what a bundle holds, without quo having to name the
+	// resource itself.
 	mapper apimeta.RESTMapper
 }
 
-// NewKubeVirt builds a Cluster from a kubeconfig. An empty path uses the
+// NewKubeVirt builds a Cluster from a kubeconfig. An empty path means the
 // ambient configuration the Kubernetes tooling would use.
 func NewKubeVirt(kubeconfig string) (c *KubeVirt, err error) {
 	rules := clientcmd.NewDefaultClientConfigLoadingRules()
@@ -110,7 +112,7 @@ func NewKubeVirt(kubeconfig string) (c *KubeVirt, err error) {
 		return
 	}
 	// The mapper reads discovery lazily and reloads it when a mapping
-	// misses, so it needs a client that caches between the two.
+	// misses. It therefore needs a client that caches between the two.
 	discoveryClient := k8scached.NewMemCacheClient(plainDiscovery)
 	coreClient, err := kubernetes.NewForConfig(config)
 	if err != nil {
@@ -144,9 +146,9 @@ func (r *KubeVirt) GetVirtualMachine(ctx context.Context, namespace, name string
 
 // GetObject returns the object the reference names.
 //
-// A read that failed is reported as one of this package's own errors, because
-// none of them is a reason to abandon a capture and each is recorded
-// differently in the capture record.
+// GetObject reports a failed read as one of this package's own errors.
+// None of them is a reason to abandon a capture. The capture record
+// records each one differently.
 func (r *KubeVirt) GetObject(ctx context.Context, ref ObjectRef) (object *unstructured.Unstructured, err error) {
 	served, known := resourceByKind[ref.Kind]
 	if !known {
@@ -170,9 +172,10 @@ func (r *KubeVirt) GetObject(ctx context.Context, ref ObjectRef) (object *unstru
 // GetKubeVirt returns KubeVirt's own configuration.
 //
 // KubeVirt is a singleton whose namespace and name differ between
-// installations, so it is listed rather than read by name. A read that failed
-// is reported as one of this package's own errors, because the resource is
-// cluster-scoped and commonly forbidden to the person capturing a bundle.
+// installations, so GetKubeVirt lists it rather than reading it by name.
+// GetKubeVirt reports a failed read as one of this package's own errors.
+// The resource is cluster-scoped and commonly forbidden to the person
+// capturing a bundle.
 func (r *KubeVirt) GetKubeVirt(ctx context.Context) (kv *unstructured.Unstructured, err error) {
 	list, err := r.dynamic.
 		Resource(kubeVirtResource).
@@ -193,9 +196,9 @@ func (r *KubeVirt) GetKubeVirt(ctx context.Context) (kv *unstructured.Unstructur
 // ExpandSpec returns the form this cluster resolves the named VirtualMachine
 // to.
 //
-// The subresource is served by virt-api rather than by the API server itself,
-// so it is read through its own resource rather than as a field of the
-// VirtualMachine.
+// virt-api serves the subresource, not the API server itself. ExpandSpec
+// therefore reads it through its own resource, rather than as a field of
+// the VirtualMachine.
 func (r *KubeVirt) ExpandSpec(
 	ctx context.Context,
 	namespace, name string) (expanded *unstructured.Unstructured, err error) {
@@ -215,9 +218,9 @@ func (r *KubeVirt) ExpandSpec(
 
 // GetInfo returns what a bundle records about this cluster.
 //
-// The versions are best effort. Both are read from places a namespace owner is
-// often not allowed to reach, and losing a version string is not a reason to
-// abandon a capture that may take hours.
+// The versions are best effort. GetInfo reads both from places a namespace
+// owner is often not allowed to reach. Losing a version string is not a
+// reason to abandon a capture that may take hours.
 func (r *KubeVirt) GetInfo(ctx context.Context) (info Info, err error) {
 	info = Info{
 		SourceCluster:     r.host,
@@ -236,7 +239,7 @@ func (r *KubeVirt) ExportDisks(ctx context.Context, namespace, name string) (exp
 	}
 	err = created.start(ctx)
 	if err != nil {
-		// Anything created before the failure is removed again.
+		// ExportDisks deletes anything created before the failure.
 		_ = created.Close()
 		return
 	}
@@ -247,13 +250,15 @@ func (r *KubeVirt) ExportDisks(ctx context.Context, namespace, name string) (exp
 // mapReadError maps a failure to read an object onto the error a capture acts
 // on and records.
 //
-// A kind no resource serves reads back from the API as the object simply not
-// being there, so a not-found is confirmed against discovery before it is
-// reported as one. The two are not interchangeable to a reader: an object
-// that was deleted is part of the VirtualMachine's history, while a component
-// that was never installed says something about the cluster.
-// The name is the one discovery lists for the resource, which the caller
-// supplies because a subresource is not named for itself alone.
+// A kind no resource serves reads back from the API as the object simply
+// not being there. mapReadError therefore confirms a not-found against
+// discovery before it reports one. The two are not interchangeable to a
+// reader. An object that was deleted is part of the VirtualMachine's
+// history. A component that was never installed says something about the
+// cluster.
+//
+// The name is the one discovery lists for the resource. The caller supplies
+// it, because a subresource is not named for itself alone.
 func (r *KubeVirt) mapReadError(
 	ref ObjectRef,
 	gv schema.GroupVersion,
@@ -274,13 +279,13 @@ func (r *KubeVirt) mapReadError(
 	return
 }
 
-// mapListError maps a failure to list the KubeVirt singleton onto the error a
-// capture acts on and records. A list names no object, so neither does the
-// error it produces.
+// mapListError maps a failure to list the KubeVirt singleton onto the error
+// a capture acts on and records. A list names no object, so neither does
+// the error it produces.
 //
-// A not-found needs no confirming against discovery the way a read does: a
-// list of a resource the cluster serves returns an empty list rather than a
-// not-found, so a not-found here already means the resource is not served.
+// A not-found needs no confirming against discovery the way a read does. A
+// list of a resource the cluster serves returns an empty list rather than
+// a not-found. A not-found here already means the resource is not served.
 func (r *KubeVirt) mapListError(err error) (mapped error) {
 	switch {
 	case k8serr.IsForbidden(err):
@@ -293,12 +298,13 @@ func (r *KubeVirt) mapListError(err error) (mapped error) {
 	return
 }
 
-// serves reports whether the cluster has the named resource at all. The name
-// is the one discovery lists, which for a subresource includes the resource it
-// belongs to.
+// serves reports whether the cluster has the named resource at all. The
+// name is the one discovery lists. For a subresource, that name includes
+// the resource it belongs to.
 //
-// Discovery that cannot be read is taken as the resource being served, so that
-// an answer quo does not have is never reported as a component being absent.
+// When discovery cannot be read, serves treats the resource as served. An
+// answer quo does not have is then never reported as a component being
+// absent.
 func (r *KubeVirt) serves(gv schema.GroupVersion, name string) (served bool) {
 	list, err := r.discovery.ServerResourcesForGroupVersion(gv.String())
 	if err != nil {

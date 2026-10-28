@@ -19,31 +19,32 @@ import (
 // what became of each one.
 //
 // It refuses a VirtualMachine that is not stopped, before writing anything.
-// The VirtualMachine is collected exactly as the cluster returned it: quo
+// The VirtualMachine is collected exactly as the cluster returned it. quo
 // normalises nothing, so MAC addresses, firmware UUID, serial and chassis
 // values are stored exactly as they were read.
 //
 // Alongside the resources the VirtualMachine refers to, the bundle holds what
-// describes the cluster it came from: the storage behind each of its claims,
-// KubeVirt's own configuration, and the form the source cluster expands it to.
+// describes the cluster it came from. That is the storage behind each of its
+// claims, KubeVirt's own configuration, and the form the source cluster
+// expands it to.
 //
 // The manifest also declares what a target cluster would have to provide and
-// the bundle does not hold: the networks the VirtualMachine expects, what
-// each of its disks needs from storage, and the container images it is served
-// from. Nothing in this phase consumes those records. They are written at
+// the bundle does not hold. These are the networks the VirtualMachine expects,
+// what each of its disks needs from storage, and the container images that
+// serve it. Nothing in this phase consumes those records. They are written at
 // capture because the information is free while connected to the source
 // cluster and expensive to reconstruct afterwards.
 //
 // Reading a referenced object is best effort and a failure to read one is
 // recorded rather than fatal. Three failures are still fatal, because each
-// one leaves a bundle nobody could use: the VirtualMachine itself being
-// unreadable, a destination that cannot be written, or a disk that cannot be
-// collected.
+// one leaves a bundle nobody could use. They are the VirtualMachine itself
+// being unreadable, a destination that cannot be written, or a disk that
+// cannot be collected.
 //
 // The destination is seekable because the manifest is the first member of a
-// bundle and indexes every other one, including disks whose size and digest
-// are only known once they have arrived. The writer reserves room for the
-// manifest at the front and fills it in at the end.
+// bundle and indexes every other one. That includes disks whose size and
+// digest are only known once they have arrived. The writer reserves room for
+// the manifest at the front and writes the manifest into it at the end.
 func Export(
 	ctx context.Context,
 	c cluster.Cluster,
@@ -75,9 +76,9 @@ func Export(
 	}
 	writer.Require(required)
 	// The record is complete once the closure has been read and the
-	// requirements derived from it, and the manifest has to hold both before
-	// the bundle is opened: the room reserved for the manifest is sized from
-	// what it holds.
+	// requirements derived from it. The manifest has to hold both before
+	// the bundle is opened. The room reserved for the manifest is sized
+	// from what it holds.
 	record = co.record
 	writer.Record(record)
 	provenance := bundle.Provenance{
@@ -100,11 +101,11 @@ func Export(
 		return
 	}
 	defer func() {
-		// A capture that has just spent hours transferring disks is not worth
-		// failing over an export that outlives it, and the export expires on
-		// its own. This is not a capture record entry: the record names the
-		// objects quo tried to collect, and the manifest holding it has
-		// already been written by the time this runs.
+		// A capture that has just spent hours transferring disks is not
+		// worth failing over an export that outlives it. The export also
+		// expires on its own. This is not a capture record entry. The
+		// record names the objects quo tried to collect, and the manifest
+		// holding it has already been written by the time this runs.
 		_ = export.Close()
 	}()
 	transfers, err := planTransfers(backing, export, opt)
@@ -117,11 +118,11 @@ func Export(
 
 // ExportToFile captures into the file at dest.
 //
-// The bundle is written beside dest under a temporary name and moved into
-// place only once the capture has succeeded, so a capture that fails part-way
-// leaves no bundle behind to be mistaken for a whole one. Disks are staged
-// beside it too, because the directory the user chose for the bundle is the
-// one they chose for having room.
+// The bundle is written beside dest under a temporary name, and moves into
+// place only once the capture has succeeded. A capture that fails part-way
+// therefore leaves no bundle behind to be mistaken for a whole one. Disks
+// are staged beside it too, because the directory the user chose for the
+// bundle is the one they chose for having room.
 func ExportToFile(
 	ctx context.Context,
 	c cluster.Cluster,

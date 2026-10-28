@@ -15,8 +15,8 @@ func TestUndeployDeletesExactlyTheOneBundlesDeployment(t *testing.T) {
 	g := gomega.NewGomegaWithT(t)
 	// Two bundles deployed side by side in the namespace: one holding
 	// only a VirtualMachine, one holding the disk fixture's machine.
-	// Their manifests differ, so their identities differ, which is what
-	// makes an undeploy remove exactly one deployment. The disk
+	// Their manifests differ, so their identities differ. That is what
+	// makes an undeploy delete exactly one deployment. The disk
 	// fixture's machine is deployed under a name of its own, because a
 	// namespace cannot hold two VirtualMachines of the same name.
 	machine := writeFixtureBundle(t, true)
@@ -77,9 +77,9 @@ func TestUndeployTakesADataVolumesClaimWithIt(t *testing.T) {
 
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	// The claims are not in what was deleted: each went with the
-	// DataVolume that owns it, which is the cluster's doing — CDI
-	// removes the claim through the owner reference it gave it — and
-	// not something quo asked for.
+	// DataVolume that owns it. That is the cluster's doing, and not
+	// something quo asked for. CDI deletes the claim through the owner
+	// reference it gave it.
 	g.Expect(deleted).To(gomega.Equal([]Deletion{
 		{
 			Kind:      cluster.KindDataVolume,

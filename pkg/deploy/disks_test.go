@@ -21,9 +21,9 @@ func TestDeployPutsEveryDiskBackAsAnUploadDataVolume(t *testing.T) {
 	record, err := Deploy(context.TODO(), fake, testOptions(path))
 
 	g.Expect(err).ToNot(gomega.HaveOccurred())
-	// The record says what the run did: one DataVolume per disk the bundle
-	// holds, in the order the machine's volumes reference their claims,
-	// and the VirtualMachine last.
+	// The record says what the run did. It holds one DataVolume per disk
+	// the bundle holds, in the order the machine's volumes reference
+	// their claims, and the VirtualMachine last.
 	g.Expect(record.Steps).To(gomega.Equal([]Step{
 		{
 			Kind:      cluster.KindDataVolume,
@@ -69,8 +69,8 @@ func TestDeployPutsEveryDiskBackAsAnUploadDataVolume(t *testing.T) {
 	g.Expect(fake.created[3].GetName()).To(gomega.Equal(testThinClaim))
 	// The bytes that arrived are the bundle's, streamed unchanged: what
 	// the target received is the member's content, at its recorded size.
-	// The tar.gz form passes through as it is, with the DataVolume's
-	// content type saying what it holds.
+	// The tar.gz form arrives as it is, with the DataVolume's content
+	// type saying what it holds.
 	g.Expect(fake.uploaded).To(gomega.HaveLen(4))
 	for i, claim := range []string{testRootClaim, testDataClaim, testGapClaim, testThinClaim} {
 		format := bundle.DiskGzip
@@ -83,12 +83,12 @@ func TestDeployPutsEveryDiskBackAsAnUploadDataVolume(t *testing.T) {
 		g.Expect(fake.uploaded[i].content).To(gomega.Equal(member))
 		g.Expect(fake.uploaded[i].size).To(gomega.BeEquivalentTo(len(member)))
 	}
-	// The VirtualMachine that landed is the expanded spec carrying the
-	// forced rewrites, with the dataVolumeTemplates removed — they became
-	// standalone DataVolumes — and the volume stanzas unchanged, so a
-	// volume referencing a claim by name finds the claim the DataVolume
-	// creates and a volume of type dataVolume names the DataVolume
-	// directly.
+	// The VirtualMachine that arrived is the expanded spec carrying the
+	// forced rewrites, with the dataVolumeTemplates removed and the volume
+	// stanzas unchanged. The templates became standalone DataVolumes. A
+	// volume referencing a claim by name therefore finds the claim the
+	// DataVolume creates, and a volume of type dataVolume names the
+	// DataVolume directly.
 	created := fake.created[4]
 	g.Expect(created.GetKind()).To(gomega.Equal(cluster.KindVirtualMachine))
 	_, found, _ := unstructured.NestedFieldNoCopy(created.Object, "spec", "dataVolumeTemplates")
@@ -118,7 +118,7 @@ func TestDeployReportsAStorageClassMatchedByName(t *testing.T) {
 			How:  "by name",
 		},
 	}))
-	// The disks landed on the class of the same name.
+	// The disks sit on the class of the same name.
 	for i := range fake.created {
 		if fake.created[i].GetKind() != cluster.KindDataVolume {
 			continue
@@ -176,7 +176,7 @@ func TestDeployPlacesTheDisksOfOneClassWhereAMappingSays(t *testing.T) {
 					How:  "by --storage-class",
 				},
 			}))
-			// Every disk landed on the class the mapping names, whatever
+			// Every disk sits on the class the mapping names, whatever
 			// the target holds under the class the bundle records.
 			g.Expect(fake.created).To(gomega.HaveLen(5))
 			for i := range fake.created {
@@ -193,8 +193,8 @@ func TestDeployPlacesTheDisksOfOneClassWhereAMappingSays(t *testing.T) {
 
 func TestDeployCatchesTheStorageClassesThatDoNotMatchByName(t *testing.T) {
 	g := gomega.NewGomegaWithT(t)
-	// One disk of a class the target holds and one of a class it does
-	// not, which is what a machine whose disks were provisioned from
+	// One disk of a class the target holds, and one of a class it does
+	// not. That is what a machine whose disks were provisioned from
 	// more than one class looks like.
 	path := writeStorageFixtureBundle(t,
 		bundle.StorageRequirement{
@@ -220,7 +220,7 @@ func TestDeployCatchesTheStorageClassesThatDoNotMatchByName(t *testing.T) {
 		storageClassNamed(testMappedStorageClass))
 	opt := testOptions(path)
 	// The catch-all names where the classes that do not match by name
-	// go; it does not take the ones that do.
+	// go. It does not take the ones that do.
 	opt.StorageClasses = map[string]string{"*": testMappedStorageClass}
 
 	record, err := Deploy(context.TODO(), fake, opt)
@@ -240,8 +240,8 @@ func TestDeployCatchesTheStorageClassesThatDoNotMatchByName(t *testing.T) {
 			How:  "by --storage-class *",
 		},
 	}))
-	// The disk of the held class stayed on it; the disk of the other
-	// one landed on the catch-all's class.
+	// The disk of the held class stayed on it. The disk of the other
+	// one went to the catch-all's class.
 	classOf := func(at int) string {
 		class, _, _ := unstructured.NestedString(
 			fake.created[at].Object, "spec", "storage", "storageClassName")
@@ -286,8 +286,8 @@ func TestDeployCatchesEveryClassWhenNoneMatchByName(t *testing.T) {
 }
 
 func TestDeployPlacesAnUnnamedClassOnlyThroughTheCatchAll(t *testing.T) {
-	// One disk whose requirement records a size but no class, which is
-	// what a claim bound to a volume made by hand leaves behind: the
+	// One disk whose requirement records a size but no class. That is
+	// what a claim bound to a volume made by hand leaves behind. The
 	// bytes are held and their size is known, but nothing says what
 	// provisioned them.
 	path := writeStorageFixtureBundle(t, bundle.StorageRequirement{
@@ -327,8 +327,8 @@ func TestDeployPlacesAnUnnamedClassOnlyThroughTheCatchAll(t *testing.T) {
 
 			if tt.catchUp == "" {
 				// A disk with no class recorded and no catch-all given
-				// creates nothing: the gap is recorded and the run goes
-				// on to the machine.
+				// creates nothing: the gap is recorded and the run
+				// continues to the machine.
 				g.Expect(err).To(gomega.MatchError(&NotCreatedError{}))
 				g.Expect(record.Steps).To(gomega.HaveLen(2))
 				g.Expect(record.Steps[0].Name).To(gomega.Equal(testThinClaim))
@@ -382,9 +382,9 @@ func TestDeployReportsAStorageClassMappingThatMatchedNoClassTheBundleRecords(t *
 			},
 		},
 		{
-			// The catch-all names no requirement of its own, so one that
-			// matched nothing — every class matching by name — is not a
-			// mapping that went unsaid.
+			// The catch-all names no requirement of its own. A
+			// catch-all that matched nothing, with every class matching
+			// by name, is therefore not a mapping that went unsaid.
 			name:    "the catch-all, with every class matching by name",
 			mapping: map[string]string{"*": testMappedStorageClass},
 			want: []Requirement{
@@ -408,8 +408,8 @@ func TestDeployReportsAStorageClassMappingThatMatchedNoClassTheBundleRecords(t *
 
 			record, err := Deploy(context.TODO(), fake, opt)
 
-			// The deploy goes ahead and the disks land where the record
-			// says, with the mapping that matched nothing said too.
+			// The deploy proceeds and the disks sit where the record
+			// says. The mapping that matched nothing is said too.
 			g.Expect(err).ToNot(gomega.HaveOccurred())
 			g.Expect(record.Requirements).To(gomega.Equal(tt.want))
 			for i := range fake.created {
@@ -531,7 +531,7 @@ func TestDeployCreatesTheDataVolumesThenUploadsThenTheVirtualMachineLast(t *test
 
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	// Nothing in the namespace looks like a VirtualMachine until its
-	// disks are in place: every DataVolume is created, then every disk is
+	// disks are in place. Every DataVolume is created, then every disk is
 	// uploaded, then the machine. Disks upload one at a time.
 	g.Expect(fake.events).To(gomega.Equal([]string{
 		"create DataVolume " + testDeployNamespace + "/" + testRootClaim,
@@ -554,8 +554,8 @@ func TestDeployRecordsADiskTheBundleHoldsNoBytesFor(t *testing.T) {
 	record, err := Deploy(context.TODO(), fake, testOptions(path))
 
 	// A disk the bundle holds no bytes for creates nothing, the gap is
-	// recorded, and the run continues past it: the machine and the disks
-	// that were held all arrive, and the error is what says the deploy was
+	// recorded, and the run continues past it. The machine and the disks
+	// that were held all arrive. The error is what says the deploy was
 	// a partial one.
 	g.Expect(err).To(gomega.MatchError(&NotCreatedError{}))
 	g.Expect(err.Error()).To(gomega.ContainSubstring("4 of the 5 objects"))
@@ -576,7 +576,7 @@ func TestDeployRecordsADiskTheBundleCannotSize(t *testing.T) {
 	record, err := Deploy(context.TODO(), fake, testOptions(path))
 
 	// The bytes are held but nothing says how big a target has to make
-	// them, and quo will not guess: the disk creates nothing, the gap is
+	// them, and quo will not guess. The disk creates nothing, the gap is
 	// recorded, and the run continues to the machine.
 	g.Expect(err).To(gomega.MatchError(&NotCreatedError{}))
 	g.Expect(err.Error()).To(gomega.ContainSubstring("1 of the 2 objects"))
@@ -653,9 +653,9 @@ func TestDeployRefusesATargetThatCannotTakeTheDisks(t *testing.T) {
 func TestDeployRecordsADiskThatFailsItsDigestAndGoesOn(t *testing.T) {
 	g := gomega.NewGomegaWithT(t)
 	// The root disk's bytes changed in transit. The claim's name is in
-	// every line of the member's stand-in content, so replacing it keeps
-	// the tar the manifest indexes aligned while changing what the digest
-	// is computed over.
+	// every line of the member's stand-in content. Replacing it keeps
+	// the tar the manifest indexes aligned, while changing what the
+	// digest is computed over.
 	corrupted := bytes.ReplaceAll(
 		readFile(t, writeDisksFixtureBundle(t)),
 		[]byte("disk of "+testRootClaim),
@@ -673,7 +673,7 @@ func TestDeployRecordsADiskThatFailsItsDigestAndGoesOn(t *testing.T) {
 	// The corrupted disk is skipped and recorded: what was deployed for
 	// it is not what the bundle holds. The VirtualMachine is created too,
 	// because a member that fails its digest is a recorded gap rather
-	// than a refusal — the expansion itself arrived whole.
+	// than a refusal. The expansion itself arrived whole.
 	g.Expect(record.Steps[0].Name).To(gomega.Equal(testRootClaim))
 	g.Expect(record.Steps[0].Outcome).To(gomega.Equal(OutcomeSkipped))
 	g.Expect(record.Steps[0].Reason).To(gomega.ContainSubstring("does not match its digest"))
@@ -696,7 +696,7 @@ func TestDeployRecordsAnUploadThatFailedAndGoesOn(t *testing.T) {
 	g.Expect(err.Error()).To(gomega.ContainSubstring("4 of the 5 objects"))
 	g.Expect(record.Steps).To(gomega.HaveLen(5))
 	// The failed upload is recorded with its reason, and the DataVolume
-	// step says failed rather than created: the target holds the
+	// step says failed rather than created. The target holds the
 	// DataVolume, but it does not hold the disk.
 	g.Expect(record.Steps[0].Name).To(gomega.Equal(testRootClaim))
 	g.Expect(record.Steps[0].Outcome).To(gomega.Equal(OutcomeFailed))
@@ -723,8 +723,8 @@ func TestDeployReportsTheProgressOfEachUpload(t *testing.T) {
 
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	// Each uploaded disk is reported as started and as finished, with the
-	// volumes it serves and its position among the disks of the deploy —
-	// the same numbering the deploy record uses.
+	// volumes it serves and its position among the disks of the deploy.
+	// That numbering is the same one the deploy record uses.
 	done := 0
 	for i := range reported {
 		if !reported[i].Done {
@@ -762,10 +762,11 @@ var errUploadRefused = errors.New(
 	"write tcp 127.0.0.1:44321->127.0.0.1:8443: connection reset by peer")
 
 // expectedDataVolume states what the target should hold for one of the
-// disk fixtures' claims: the DataVolume that receives the disk, built from
-// the requirement the bundle records. The rewrites are stated here as
-// literal values rather than by calling the code under test, so this is an
-// independent statement of the contract rather than a restatement of it.
+// disk fixtures' claims. It is the DataVolume that receives the disk,
+// built from the requirement the bundle records. The rewrites are stated here as
+// literal values rather than by calling the code under test. This is
+// therefore an independent statement of the contract rather than a
+// restatement of it.
 func expectedDataVolume(
 	t *testing.T,
 	path, claim, size, volumeMode, contentType string) (expected *unstructured.Unstructured) {
@@ -795,8 +796,8 @@ func expectedDataVolume(
 		"quo.mansam.dev/bundle":        bundleLabelOf(t, path),
 	})
 	// The machine is deployed stopped, so nothing will ever be the first
-	// consumer a WaitForFirstConsumer class waits for, and the upload
-	// cannot start until the claim is bound.
+	// consumer a WaitForFirstConsumer class waits for. The upload cannot
+	// start until the claim is bound.
 	expected.SetAnnotations(map[string]string{
 		"quo.mansam.dev/bundle-file":                       path,
 		"cdi.kubevirt.io/storage.bind.immediate.requested": "",

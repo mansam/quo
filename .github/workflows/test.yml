@@ -22,15 +22,15 @@ jobs:
       - run: go build ./...
       - run: go vet ./...
       - run: go test ./...
-      # The live suite is excluded from the default run, so it is vetted and
-      # built here to catch a change that stops it compiling. Its tests that
-      # need a cluster skip and say so; the ones that do not still run.
+      # The default run excludes the live suite. So these steps vet and
+      # build it, to catch a change that stops it compiling. Its tests that
+      # need a cluster skip and say so. The ones that do not still run.
       - run: go vet -tags live ./...
       - run: go test -tags live ./test/live/...
 
   # Whether this repository has credentials for a cluster the live suite can
-  # use. A job-level `if` cannot read the secrets context, so the answer is
-  # worked out here and passed on as an output.
+  # use. A job-level `if` cannot read the secrets context. So this job finds
+  # the answer and reports it as an output.
   cluster:
     runs-on: ubuntu-latest
     outputs:
@@ -46,10 +46,10 @@ jobs:
             echo 'available=false' >> "$GITHUB_OUTPUT"
           fi
 
-  # The live suite, which needs a KubeVirt cluster with the ObjectGraph
-  # feature gate enabled. See docs/testing-against-a-cluster.md for what the
-  # cluster must have. Where there is one, this job has to pass. Where there
-  # is not, it does not run.
+  # The live suite needs a KubeVirt cluster with the ObjectGraph feature
+  # gate enabled. See docs/testing-against-a-cluster.md for what the cluster
+  # must have. Where there is a cluster, this job has to pass. Where there
+  # is no cluster, it does not run.
   live:
     needs: cluster
     if: needs.cluster.outputs.available == 'true'

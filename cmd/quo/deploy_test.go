@@ -309,8 +309,8 @@ func TestDeployPrintsTheRequirementsARecordCarries(t *testing.T) {
 
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	said := reported.String()
-	// Every requirement is printed with what it was mapped onto and how,
-	// and the unnamed class says it is unnamed.
+	// Every requirement is printed with what it was mapped onto and how.
+	// The unnamed class says it is unnamed.
 	g.Expect(said).To(gomega.ContainSubstring("Requirements (6)"))
 	g.Expect(said).To(gomega.ContainSubstring("storage class"))
 	g.Expect(said).To(gomega.ContainSubstring("fast-rbd -> fast-rbd"))
@@ -364,9 +364,9 @@ func TestDeployRecordEndsWithTheUndeployCommandForWhatExists(t *testing.T) {
 		deploy.Options{Bundle: "db-01.quo", Namespace: "diagnostics"})
 
 	g.Expect(err).ToNot(gomega.HaveOccurred())
-	// The last thing said is the command that removes what the deploy
-	// put there: the exact bundle path and namespace, so it can be run
-	// as it reads.
+	// The last thing said is the command that removes what the deploy put
+	// there. It gives the exact bundle path and namespace. So it can be
+	// run as it reads.
 	said := reported.String()
 	g.Expect(said).To(gomega.ContainSubstring("Remove it again with:"))
 	g.Expect(said).To(gomega.ContainSubstring("quo undeploy db-01.quo -n diagnostics"))
@@ -436,9 +436,9 @@ func TestDeployDryRunPrintsTheRecordItWouldPrint(t *testing.T) {
 
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	said := reported.String()
-	// The first thing said is that nothing happened: the steps below say
-	// created, because the record is the one a real deploy would print,
-	// and this line keeps them from being read as actions.
+	// The first thing said is that nothing happened. The steps below say
+	// created, because the record is the one a real deploy would print.
+	// This line keeps them from being read as actions.
 	lines := strings.Split(said, "\n")
 	g.Expect(lines[0]).To(gomega.Equal("Dry run: nothing is created, nothing is uploaded."))
 	g.Expect(said).To(gomega.ContainSubstring("Deploy record (2)"))
@@ -449,7 +449,8 @@ func TestDeployDryRunPrintsTheRecordItWouldPrint(t *testing.T) {
 	g.Expect(said).To(gomega.ContainSubstring("fast-rbd -> fast-rbd"))
 	g.Expect(said).To(gomega.ContainSubstring("by name"))
 	// The last thing said is the command that removes what a real deploy
-	// of this bundle would put there, saying it as the dry run's own.
+	// of this bundle would put there. The dry run gives that command as
+	// its own.
 	g.Expect(said).To(gomega.ContainSubstring("Remove what it would create with:"))
 	lines = strings.Split(strings.TrimRight(said, "\n"), "\n")
 	g.Expect(lines[len(lines)-1]).To(gomega.Equal("  quo undeploy db-01.quo -n diagnostics"))

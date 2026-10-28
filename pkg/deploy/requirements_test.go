@@ -34,10 +34,10 @@ func TestDeployMapsANetworkOntoTheAttachmentOfItsName(t *testing.T) {
 			How:  "by name",
 		},
 	}))
-	// The applied VirtualMachine's networkName carries the mapping: the
+	// The applied VirtualMachine's networkName carries the mapping. The
 	// source cluster's own qualified form is replaced by the
 	// attachment's name, bare because its definition lives in the deploy
-	// namespace, where an unqualified name means the namespace of the
+	// namespace. An unqualified name there means the namespace of the
 	// VirtualMachine itself. The pod network stanza is carried through
 	// untouched, because the pod network is never mapped.
 	created := fake.created[0]
@@ -124,7 +124,7 @@ func TestDeployAttachesANetworkToTheAttachmentAMappingNames(t *testing.T) {
 }
 
 // networkNameOf returns what the created VirtualMachine's networkName
-// names for one of its networks, which is where a mapping lands.
+// names for one of its networks. That is where a mapping takes effect.
 func networkNameOf(t *testing.T, vm *unstructured.Unstructured, network string) (attached string) {
 	t.Helper()
 	declared, _, _ := unstructured.NestedSlice(vm.Object, "spec", "template", "spec", "networks")
@@ -225,9 +225,9 @@ func TestDeployReportsANetworkMappingThatMatchedNoNetworkOfTheMachine(t *testing
 
 			record, err := Deploy(context.TODO(), fake, opt)
 
-			// The deploy goes ahead, because a mapping that matched
-			// nothing is not a refusal, and the record says the flag
-			// took no effect: nothing maps silently, and nothing that
+			// The deploy proceeds, because a mapping that matched
+			// nothing is not a refusal. The record says the flag took
+			// no effect: nothing maps silently, and nothing that
 			// tried to map is silent either.
 			g.Expect(err).ToNot(gomega.HaveOccurred())
 			g.Expect(record.Requirements).To(gomega.Equal([]Requirement{
@@ -253,7 +253,7 @@ func TestDeployReportsANetworkMappingThatMatchedNoNetworkOfTheMachine(t *testing
 func TestDeployReportsAContainerDiskImageAsARequirementItNeverMaps(t *testing.T) {
 	g := gomega.NewGomegaWithT(t)
 	path := writeContainerDiskFixtureBundle(t)
-	// A target that holds nothing at all: the image is never mapped onto
+	// A target that holds nothing at all. The image is never mapped onto
 	// anything and never pull-checked, so nothing needs to be there for
 	// the deploy to succeed.
 	fake := target()
@@ -261,7 +261,7 @@ func TestDeployReportsAContainerDiskImageAsARequirementItNeverMaps(t *testing.T)
 	record, err := Deploy(context.TODO(), fake, testOptions(path))
 
 	g.Expect(err).ToNot(gomega.HaveOccurred())
-	// The image is reported as a requirement with nothing mapped onto it:
+	// The image is reported as a requirement with nothing mapped onto it.
 	// quo holds no registry credentials, so the entry says what the
 	// target has to be able to do for itself.
 	g.Expect(record.Requirements).To(gomega.Equal([]Requirement{

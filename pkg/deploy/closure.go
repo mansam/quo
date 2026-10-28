@@ -13,21 +13,21 @@ import (
 )
 
 // appliedKinds is the by-kind table's applied half: the kinds of resource
-// a deploy creates as the bundle holds them, because the VirtualMachine
-// refers to them by name and the references have to resolve on the target.
-// Everything else a bundle holds is read-only — the instancetypes,
+// a deploy creates as the bundle holds them. The VirtualMachine refers to
+// them by name, and the references have to resolve on the target.
+// Everything else a bundle holds is read-only. The instancetypes,
 // preferences and ControllerRevisions are folded into the expansion the
-// deploy applies, and the rest describes the source cluster — so it is
-// never created.
+// deploy applies. The rest describes the source cluster. Nothing else is
+// ever created.
 var appliedKinds = map[string]bool{
 	cluster.KindConfigMap:      true,
 	cluster.KindSecret:         true,
 	cluster.KindServiceAccount: true,
 }
 
-// plannedClosure is one of the bundle's closure objects as a deploy goes
-// about applying it: what the manifest says about the member, the member
-// decoded once it is read, and the deploy record's entry for it.
+// plannedClosure is one of the bundle's closure objects as a deploy
+// applies it. It holds what the manifest says about the member, the
+// member decoded once it is read, and the deploy record's entry for it.
 type plannedClosure struct {
 	// resource is what the manifest says about the member: its kind, its
 	// namespace and name on the source cluster, and where it sits.
@@ -35,15 +35,15 @@ type plannedClosure struct {
 	// object is the member decoded, nil until it is read and nil for good
 	// when the member failed its digest.
 	object *unstructured.Unstructured
-	// step is the deploy record's entry, which the phases fill in as the
+	// step is the deploy record's entry, which the phases update as the
 	// object proceeds.
 	step Step
 }
 
-// planClosure picks out the closure objects a deploy applies, in the order
+// planClosure picks the closure objects a deploy applies, in the order
 // the bundle holds them. A bundle is written with its resources in the
-// order they were collected, so what comes back is the order a capture
-// walked the machine's references.
+// order they were collected. What planClosure returns is therefore the
+// order in which a capture read the machine's references.
 func planClosure(manifest *bundle.Manifest, opt Options) (closure []plannedClosure) {
 	for i := range manifest.Resources {
 		resource := manifest.Resources[i]
@@ -63,16 +63,16 @@ func planClosure(manifest *bundle.Manifest, opt Options) (closure []plannedClosu
 }
 
 // readClosure reads and decodes the closure members a deploy applies. It
-// runs before the expansion is asked for: a bundle is written with its
-// resources first and the expansion after them, and the reader walks
-// forward only, so asking for the expansion first would walk past every
-// resource member and leave these unreadable.
+// runs before the expansion is asked for. A bundle is written with its
+// resources first and the expansion after them. The reader moves forward
+// only. Asking for the expansion first would move past every resource
+// member and leave these unreadable.
 //
-// A member that fails its digest is a skipped step rather than an error —
-// the run records the gap and goes on — while a member that does not
-// decode, or never arrived, is a refusal, as it is for the expansion: a
-// bundle whose member cannot be read as an object is not a bundle a
-// capture of quo produces.
+// A member that fails its digest is a skipped step rather than an error.
+// The run records the gap and continues. A member that does not decode,
+// or never arrived, is a refusal, as it is for the expansion. A bundle
+// whose member cannot be read as an object is not a bundle a capture of
+// quo produces.
 func readClosure(reader *bundle.Reader, closure []plannedClosure) (err error) {
 	for i := range closure {
 		content, readErr := reader.Read(closure[i].resource.Path)
@@ -83,7 +83,7 @@ func readClosure(reader *bundle.Reader, closure []plannedClosure) (err error) {
 				return
 			}
 			// A member that fails its digest never reaches the target.
-			// The object is skipped, recorded, and the run goes on.
+			// The object is skipped and recorded, and the run continues.
 			closure[i].step.Outcome = OutcomeSkipped
 			closure[i].step.Reason = readErr.Error()
 			continue
@@ -103,13 +103,14 @@ func readClosure(reader *bundle.Reader, closure []plannedClosure) (err error) {
 }
 
 // createClosure applies the closure objects a deploy read, each carrying
-// the forced rewrites that apply to every created object. They go on after
-// the uploads and before the VirtualMachine, so that the machine's
-// cloud-init, sysprep and access credentials are present when it is
-// examined. An object that was skipped when it was read creates nothing;
-// a create that fails is recorded and the run continues to the objects
-// behind it and the machine. A dry run applies none of them and still
-// says each one as created, which is what a real deploy would do with it.
+// the forced rewrites that apply to every created object. createClosure
+// applies them after the uploads and before the VirtualMachine. The
+// machine's cloud-init, sysprep and access credentials are then present
+// when it is examined. An object that was skipped when it was read
+// creates nothing. A create that fails is recorded, and the run continues
+// to the objects behind it and the machine. A dry run applies none of
+// them and still says each one as created, which is what a real deploy
+// would do with it.
 func createClosure(
 	ctx context.Context,
 	t cluster.Target,
@@ -120,7 +121,7 @@ func createClosure(
 	for i := range closure {
 		if closure[i].step.Outcome == OutcomeSkipped {
 			// An object that creates nothing was decided when its member
-			// was read; the record already says why.
+			// was read. The record already says why.
 			continue
 		}
 		if opt.DryRun {

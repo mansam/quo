@@ -15,51 +15,53 @@ import (
 
 // UndeployOptions is an undeploy once the command line is parsed.
 type UndeployOptions struct {
-	// Bundle is the path of the bundle whose deployment is being
-	// removed, exactly as the command line named it. The bundle is read
-	// for its identity — the label value every object of its deployment
-	// carries — and for nothing else: an undeploy puts nothing on the
+	// Bundle is the path of the bundle whose deployment the undeploy
+	// deletes, exactly as the command line named it. The bundle is read
+	// for its identity, the label value every object of its deployment
+	// carries, and for nothing else. An undeploy puts nothing on the
 	// cluster, so it needs none of what the bundle holds.
 	Bundle string
 	// Namespace is the namespace the deployment sits in. It is required,
-	// the same rule a deploy's namespace obeys: quo never falls back to
-	// the kubeconfig's current namespace, because removing objects from
-	// someone's default namespace by accident is a quiet mistake.
+	// the same rule a deploy's namespace obeys. quo never uses the
+	// kubeconfig's current namespace in its place, because deleting
+	// objects from someone's default namespace by accident is a quiet
+	// mistake.
 	Namespace string
 	// DryRun lists what the undeploy would delete and deletes nothing.
 	DryRun bool
 }
 
-// Deletion is one object an undeploy removed from the cluster, or on a
-// dry run one it would remove. A deletion the cluster refused leaves
+// Deletion is one object an undeploy deleted from the cluster, or on a
+// dry run one it would delete. A deletion the cluster refused leaves
 // the entry with Err set, saying why the object is still there.
 type Deletion struct {
 	Kind      string
 	Namespace string
 	Name      string
 	// Err is why the object is still on the cluster. It is nil for an
-	// object the undeploy removed, and for every entry of a dry run,
+	// object the undeploy deleted, and for every entry of a dry run,
 	// which attempts nothing.
 	Err error
 }
 
-// Undeploy removes one deployment from the cluster behind t: the objects
-// carrying the bundle's label in the namespace, which is everything a
-// deploy of that bundle put there. A deployment of another bundle
-// carries a different label and is untouched, which is what makes an
-// undeploy remove exactly one deployment.
+// Undeploy deletes one deployment from the cluster behind t. The
+// deployment is the objects carrying the bundle's label in the
+// namespace. That is everything a deploy of that bundle put there. A
+// deployment of another bundle carries a different label and is
+// untouched. That is what makes an undeploy delete exactly one
+// deployment.
 //
 // The bundle is opened and its manifest read, because the manifest's own
-// bytes are what the label was computed from; a bundle that cannot be
+// bytes are what the label was computed from. A bundle that cannot be
 // read is an error naming it.
 //
-// An undeploy is best-effort, like a deploy: a deletion the cluster
-// refuses is recorded and the run continues, and the error is non-nil
-// when anything was not deleted, so that a caller can tell a complete
+// An undeploy is best-effort, like a deploy. A deletion the cluster
+// refuses is recorded and the run continues. The error is non-nil when
+// anything was not deleted, so that a caller can tell a complete
 // undeploy from a partial one. Each deletion returns once the API server
-// accepts it. Whether an object is gone yet is the cluster's business —
-// a finalizer can hold one for as long as it likes — and an undeploy
-// does not wait: a deletion that hangs is what kubectl is for.
+// accepts it. Whether an object is gone yet is the cluster's business:
+// a finalizer can hold one for as long as it likes. An undeploy does
+// not wait. A deletion that hangs is what kubectl is for.
 func Undeploy(
 	ctx context.Context,
 	t cluster.Target,
@@ -82,7 +84,7 @@ func Undeploy(
 	if err != nil {
 		return
 	}
-	// The order is fixed — by kind, then name — so that what an undeploy
+	// The order is fixed, by kind then name, so that what an undeploy
 	// says it deleted reads the same from run to run.
 	slices.SortFunc(held, func(a, b *unstructured.Unstructured) (order int) {
 		order = cmp.Compare(a.GetKind(), b.GetKind())
@@ -118,9 +120,9 @@ func deletionOf(object *unstructured.Unstructured) (entry Deletion) {
 	return
 }
 
-// notDeleted returns the error that says an undeploy did not remove
+// notDeleted returns the error that says an undeploy did not delete
 // everything it tried to, nil when it did. What the undeploy deleted
-// names each object and what became of it; this error is what makes the
+// names each object and what became of it. This error is what makes the
 // exit code non-zero, so that a script can tell a complete undeploy from
 // a partial one.
 func notDeleted(deleted []Deletion) (err error) {

@@ -157,7 +157,7 @@ func TestExportWarnsThatABundleWithoutAnExpandedSpecCannotBeDeployed(t *testing.
 
 	err := warnUndeployable(reported, record)
 
-	// The capture has still succeeded, so the warning is said plainly
+	// The capture has still succeeded. So the warning is said plainly
 	// rather than as a failure. It names why the read failed, because the
 	// missing permission is what a person capturing the bundle can fix
 	// before running it again.
@@ -178,7 +178,7 @@ func TestExportSaysNothingAboutDeployingWhenTheCaptureReadTheExpandedSpec(t *tes
 		},
 		{
 			// A skipped object of any other kind says nothing about
-			// deploying: only the expansion is what a deploy applies.
+			// deploying. Only the expansion is what a deploy applies.
 			Kind:    "Secret",
 			Name:    "db-01-cloudinit",
 			Outcome: bundle.OutcomeSkipped,

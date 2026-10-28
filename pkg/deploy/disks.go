@@ -13,18 +13,19 @@ import (
 	"github.com/mansam/quo/pkg/cluster"
 )
 
-// progressInterval is how often an upload in progress is reported.
+// progressInterval is how often the run reports an upload in progress.
 const progressInterval = 2 * time.Second
 
 // catchAllClass is the --storage-class key that covers every storage
-// class that does not match by name — the classes the target does not
-// hold under the requirement's own name, and the unnamed class, which
-// names nothing to match.
+// class that does not match by name. Those are the classes the target
+// does not hold under the requirement's own name, and the unnamed class,
+// which names nothing to match.
 const catchAllClass = "*"
 
-// plannedDisk is one of the VirtualMachine's disks as a deploy goes about
-// putting it back: what the bundle holds of it, what the bundle says it
-// needs from storage, and the deploy record's entry for it.
+// plannedDisk is one of the VirtualMachine's disks as a deploy returns it
+// to a cluster. It holds what the bundle holds of the disk, what the
+// bundle says it needs from storage, and the deploy record's entry for
+// it.
 type plannedDisk struct {
 	// held is the disk member the bundle carries, zero when it carries
 	// none.
@@ -33,27 +34,28 @@ type plannedDisk struct {
 	// field but the claim is empty when the capture could not read the
 	// claim behind it.
 	required bundle.StorageRequirement
-	// storageClass is the target's class the disk lands on: the class of
-	// the requirement's own name when the target holds one, or the class
-	// a mapping places it on.
+	// storageClass is the target's class that receives the disk. It is
+	// the class of the requirement's own name when the target holds one,
+	// or the class a mapping places the disk on.
 	storageClass string
-	// step is the deploy record's entry, which the phases fill in as the
+	// step is the deploy record's entry, which the phases update as the
 	// disk proceeds.
 	step Step
 }
 
 // planDisks pairs each storage requirement the bundle declares with the
-// disk member it names, and records up front the disks that create
+// disk member it names. It records in advance the disks that create
 // nothing.
 //
-// A requirement with no member — the claim was forbidden, or never existed
-// — creates nothing, because there are no bytes to put anywhere. A member
-// whose requirement records no size creates nothing either: quo will not
-// guess at what the target should provide, because a disk placed by
-// guesswork is not the disk the machine ran on. A requirement that records
-// no class is placed by the catch-all mapping when one is given, and
-// creates nothing without one, for the same reason. Every gap is
-// recorded, so the run says what it left out.
+// A requirement with no member creates nothing, because there are no
+// bytes to put anywhere. The claim was forbidden, or never existed. A
+// member whose requirement records no size creates nothing either. quo
+// will not guess at what the target should provide, because a disk placed
+// by guesswork is not the disk the machine ran on.
+//
+// A requirement that records no class is placed by the catch-all mapping
+// when one is given, and creates nothing without one, for the same
+// reason. Every gap is recorded, so the run says what it skipped.
 func planDisks(manifest *bundle.Manifest, opt Options) (disks []plannedDisk) {
 	//
 	heldByClaim := make(map[string]bundle.Disk, len(manifest.Disks))
@@ -94,7 +96,7 @@ func planDisks(manifest *bundle.Manifest, opt Options) (disks []plannedDisk) {
 			continue
 		}
 		// A member with no requirement is a bundle no capture of quo
-		// produces, because a capture records one for every claim it
+		// produces. A capture records one requirement for every claim it
 		// holds a disk of. What it means is the same as a requirement
 		// that could say nothing: there is nothing to place the disk by.
 		disks = append(disks, plannedDisk{
@@ -112,16 +114,16 @@ func planDisks(manifest *bundle.Manifest, opt Options) (disks []plannedDisk) {
 }
 
 // placeDisks places the bundle's disks on the target's storage classes,
-// and refuses — naming what it found — when a disk cannot be placed on
-// the target.
+// and refuses, naming what it found, when a disk cannot be placed on the
+// target.
 //
-// CDI has to be there, because a disk goes back onto a cluster only
-// through its upload. Each class the bundle records is placed once and
-// reported, because nothing maps silently, and the target's own account
-// of the class the disks land on — its StorageProfile — must not rule out
-// the volume mode they need. A profile that says nothing about the class
-// is not a refusal: CDI falls back to its own defaults when the claim is
-// created, and the create is what answers.
+// CDI has to be there, because a disk returns to a cluster only through
+// its upload. Each class the bundle records is placed once and reported,
+// because nothing maps silently. The target keeps its own account of the
+// class the disks are placed on, its StorageProfile. That account must
+// not rule out the volume mode the disks need. A profile that says
+// nothing about the class is not a refusal. CDI uses its own defaults
+// when the claim is created, and the create is what answers.
 func placeDisks(
 	ctx context.Context,
 	t cluster.Target,
@@ -179,15 +181,18 @@ func placeDisks(
 }
 
 // placeStorageClass says where the disks of one of the bundle's storage
-// classes land, as the requirement the deploy record holds for the class:
-// what the bundle asked for, the target's class its disks land on, and how
-// the choice was made. An explicit --storage-class overrides whatever the
-// target holds under the requirement's own name; short of that, the
-// target's class of that name is the mapping a deploy makes on its own,
-// and the catch-all covers what does not match by name — a class the
-// target does not hold, and the unnamed class, which names nothing to
-// match. A class that maps to nothing is a refusal, because the disks
-// are not uploaded that cannot be placed.
+// classes go, as the requirement the deploy record holds for the class.
+// The requirement says what the bundle asked for, the target's class that
+// receives the disks, and how the choice was made.
+//
+// An explicit --storage-class overrides whatever the target holds under
+// the requirement's own name. Short of that, the target's class of that
+// name is the mapping a deploy makes on its own. The catch-all covers
+// what does not match by name: a class the target does not hold, and the
+// unnamed class, which names nothing to match.
+//
+// A class that maps to nothing is a refusal, because the disks are not
+// uploaded that cannot be placed.
 func placeStorageClass(
 	ctx context.Context,
 	t cluster.Target,
@@ -239,7 +244,7 @@ func placeStorageClass(
 }
 
 // verifyStorageClass refuses a mapping that names a storage class the
-// target does not hold, because the disks land on the class it names.
+// target does not hold, because the class it names receives the disks.
 // named says the mapping as the command line gives it.
 func verifyStorageClass(
 	ctx context.Context,
@@ -267,8 +272,8 @@ func verifyStorageClass(
 
 // holds says whether the target cluster holds the object the reference
 // names. A kind the target has not installed holds nothing, the same as
-// a name it has no object under: both leave a mapping nothing to point
-// at, and only a read that failed for another reason is an error.
+// a name it has no object under. Both leave a mapping with nothing to
+// point at. Only a read that failed for another reason is an error.
 func holds(ctx context.Context, t cluster.Target, ref cluster.ObjectRef) (held bool, err error) {
 	_, err = t.GetObject(ctx, ref)
 	if errors.Is(err, cluster.ErrNotFound) || errors.Is(err, cluster.ErrNotInstalled) {
@@ -319,11 +324,12 @@ func checkVolumeMode(ctx context.Context, t cluster.Target, disk plannedDisk) (e
 }
 
 // createDataVolumes puts one DataVolume onto the target for each disk the
-// bundle holds that can be placed, named after the claim it backs. They
-// are created before anything uploads and before the VirtualMachine, so
-// that nothing in the namespace looks like a VirtualMachine until its
-// disks are in place. A dry run creates none of them and still says each
-// one as created, which is what a real deploy would do with it.
+// bundle holds that can be placed, named after the claim it backs. The
+// DataVolumes are created before anything uploads and before the
+// VirtualMachine. Nothing in the namespace then looks like a
+// VirtualMachine until its disks are in place. A dry run creates none of
+// them and still says each one as created, which is what a real deploy
+// would do with it.
 func createDataVolumes(
 	ctx context.Context,
 	t cluster.Target,
@@ -334,7 +340,7 @@ func createDataVolumes(
 	for i := range disks {
 		if disks[i].step.Outcome == OutcomeSkipped {
 			// A disk that creates nothing was decided when it was
-			// planned; the record already says why.
+			// planned. The record already says why.
 			continue
 		}
 		if opt.DryRun {
@@ -352,11 +358,11 @@ func createDataVolumes(
 	}
 }
 
-// uploadDisks streams each held disk's bytes into its DataVolume, one at a
-// time, and finishes the deploy record's entry for it. A disk whose
-// DataVolume was not created is not uploaded, and a disk that fails does
-// not stop the ones behind it. A dry run sends nothing: it reads each
-// member to its end instead, for the verdict on its bytes.
+// uploadDisks streams each held disk's bytes into its DataVolume, one at
+// a time, and finishes the deploy record's entry for it. A disk whose
+// DataVolume was not created is not uploaded. A disk that fails does not
+// stop the ones behind it. A dry run sends nothing: it reads each member
+// to its end instead, for the verdict on its bytes.
 func uploadDisks(
 	ctx context.Context,
 	t cluster.Target,
@@ -373,11 +379,11 @@ func uploadDisks(
 }
 
 // upload streams one disk's member into its DataVolume through the
-// progress reporter, and records what became of it: created only when the
-// bytes the bundle holds arrived whole, skipped when they were not the
-// bytes the manifest recorded, failed when the upload itself failed. A
-// dry run sends nothing and only reads the member, for the verdict on its
-// bytes.
+// progress reporter, and records what became of it. The outcome is
+// created only when the bytes the bundle holds arrived whole. The outcome
+// is skipped when they were not the bytes the manifest recorded. The
+// outcome is failed when the upload itself failed. A dry run sends
+// nothing and only reads the member, for the verdict on its bytes.
 func upload(
 	ctx context.Context,
 	t cluster.Target,
@@ -390,17 +396,17 @@ func upload(
 	stream, err := reader.OpenStream(disk.held.Path)
 	if err != nil {
 		// The member is indexed but the bundle does not carry it as far
-		// as this reader has read, which is what a transfer that stopped
+		// as this reader has read. That is what a transfer that stopped
 		// looks like. Nothing was uploaded from it.
 		disk.step.Outcome = OutcomeSkipped
 		disk.step.Reason = err.Error()
 		return
 	}
 	if opt.DryRun {
-		// Nothing is sent anywhere, but the member is read to its end,
-		// because its digest is the one thing about the bytes a dry run
-		// can still vouch for: a member that fails it is a skip in the
-		// record, exactly as a real deploy records one.
+		// Nothing is sent anywhere, but the member is read to its end.
+		// Its digest is the one thing about the bytes a dry run can
+		// still vouch for. A member that fails the digest is a skip in
+		// the record, exactly as a real deploy records one.
 		_, readErr := io.Copy(io.Discard, stream)
 		if mismatch := stream.Mismatch(); mismatch != nil {
 			disk.step.Outcome = OutcomeSkipped
@@ -422,9 +428,9 @@ func upload(
 	err = t.UploadDisk(ctx, opt.Namespace, disk.held.Claim, sent, stream.Size())
 	if mismatch := stream.Mismatch(); mismatch != nil {
 		// The bytes that left the bundle were not the bytes the manifest
-		// recorded, so what the target holds is not the disk the machine
-		// ran on. The step is skipped rather than failed: what was
-		// deployed is not what the bundle holds.
+		// recorded. What the target holds is therefore not the disk the
+		// machine ran on. The step is skipped rather than failed: what
+		// was deployed is not what the bundle holds.
 		disk.step.Outcome = OutcomeSkipped
 		disk.step.Reason = mismatch.Error()
 		return
@@ -460,11 +466,11 @@ func newReporter(opt Options, disks []plannedDisk, at int) (report func(sent int
 	return
 }
 
-// progressReader reports how much of a disk has been sent while it is
-// being read. Reports are spaced out in time, because a disk is read in
-// small pieces and a report per piece would be too many. The reader that
-// wraps the member starts the clock, so a disk that arrives quickly is
-// reported only as started and as finished.
+// progressReader reports how much of a disk is sent while it is read.
+// Reports are spaced in time, because a disk is read in small pieces and
+// a report per piece would be too many. The reader that wraps the member
+// starts the clock, so a disk that arrives quickly is reported only as
+// started and as finished.
 type progressReader struct {
 	in       io.Reader
 	report   func(sent int64, done bool)
@@ -472,7 +478,8 @@ type progressReader struct {
 	reported time.Time
 }
 
-// Read passes the read through and reports what has been sent so far.
+// Read reads from the stream it wraps and reports how much is sent so
+// far.
 func (r *progressReader) Read(b []byte) (n int, err error) {
 	n, err = r.in.Read(b)
 	r.sent += int64(n)
