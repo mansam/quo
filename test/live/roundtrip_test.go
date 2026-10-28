@@ -56,6 +56,7 @@ func TestTheDeployedSetIsWhatTheBundleHoldsOfTheKindsADeployCreates(t *testing.T
 	tests := []struct {
 		name      string
 		resources []bundle.Resource
+		disks     []bundle.Disk
 		want      []cluster.ObjectRef
 	}{
 		{
@@ -69,6 +70,10 @@ func TestTheDeployedSetIsWhatTheBundleHoldsOfTheKindsADeployCreates(t *testing.T
 				{Kind: cluster.KindServiceAccount, Namespace: "support-cases", Name: "db-01-serviceaccount"},
 				{Kind: cluster.KindDataVolume, Namespace: "support-cases", Name: "db-01-root"},
 			},
+			// The bundle holds the root disk's DataVolume as a resource
+			// and its claim as a disk, and the set holds the DataVolume
+			// once.
+			disks: []bundle.Disk{{Claim: "db-01-root"}},
 			want: []cluster.ObjectRef{
 				{Kind: cluster.KindVirtualMachine, Namespace: "diagnostics", Name: "db-01"},
 				{Kind: cluster.KindConfigMap, Namespace: "diagnostics", Name: "db-01-sysprep"},
@@ -93,6 +98,21 @@ func TestTheDeployedSetIsWhatTheBundleHoldsOfTheKindsADeployCreates(t *testing.T
 			},
 		},
 		{
+			// A disk whose claim was made by hand, which the bundle holds
+			// as a claim alone: the deploy places it as a DataVolume of
+			// its own, named after the claim.
+			name: "a disk whose claim the bundle holds with no DataVolume",
+			resources: []bundle.Resource{
+				{Kind: cluster.KindVirtualMachine, Namespace: "support-cases", Name: "db-01"},
+				{Kind: cluster.KindPersistentVolumeClaim, Namespace: "support-cases", Name: "db-01-scratch"},
+			},
+			disks: []bundle.Disk{{Claim: "db-01-scratch"}},
+			want: []cluster.ObjectRef{
+				{Kind: cluster.KindVirtualMachine, Namespace: "diagnostics", Name: "db-01"},
+				{Kind: cluster.KindDataVolume, Namespace: "diagnostics", Name: "db-01-scratch"},
+			},
+		},
+		{
 			name:      "a bundle holding nothing at all",
 			resources: nil,
 		},
@@ -102,7 +122,7 @@ func TestTheDeployedSetIsWhatTheBundleHoldsOfTheKindsADeployCreates(t *testing.T
 		t.Run(tt.name, func(t *testing.T) {
 			g := gomega.NewGomegaWithT(t)
 
-			manifest := &bundle.Manifest{Resources: tt.resources}
+			manifest := &bundle.Manifest{Resources: tt.resources, Disks: tt.disks}
 
 			g.Expect(deployedSet(manifest, "diagnostics")).To(gomega.Equal(tt.want))
 		})
@@ -211,9 +231,11 @@ func TestDifferencesNameWhereTwoResolutionsDisagree(t *testing.T) {
 
 // deployedSet is what a deploy of the bundle puts into a namespace: every
 // object the bundle holds of a kind a deploy creates, under the name it was
-// captured with, in the namespace given. The round trip compares the target
-// against it, and the undeploy at the end of one takes exactly it off
-// again, so one list answers both directions.
+// captured with, and one DataVolume for each disk it places, named after
+// the claim the disk backs — a disk whose claim the bundle holds without
+// a DataVolume of its own is placed as one all the same. The round trip
+// compares the target against it, and the undeploy at the end of one
+// takes exactly it off again, so one list answers both directions.
 //
 // The claim behind a disk is not among the kinds although the target ends
 // up holding one: CDI creates it behind the DataVolume, and the round trip
@@ -223,15 +245,32 @@ func deployedSet(manifest *bundle.Manifest, namespace string) (refs []cluster.Ob
 	for _, kind := range cluster.DeployedKinds {
 		created[kind] = true
 	}
+	seen := map[cluster.ObjectRef]bool{}
 	for i := range manifest.Resources {
-		if !created[manifest.Resources[i].Kind] {
-			continue
-		}
-		refs = append(refs, cluster.ObjectRef{
+		ref := cluster.ObjectRef{
 			Kind:      manifest.Resources[i].Kind,
 			Namespace: namespace,
 			Name:      manifest.Resources[i].Name,
-		})
+		}
+		if !created[ref.Kind] || seen[ref] {
+			continue
+		}
+		seen[ref] = true
+		refs = append(refs, ref)
+	}
+	// A disk the bundle holds as a DataVolume names the same object here,
+	// which the set holds once.
+	for i := range manifest.Disks {
+		ref := cluster.ObjectRef{
+			Kind:      cluster.KindDataVolume,
+			Namespace: namespace,
+			Name:      manifest.Disks[i].Claim,
+		}
+		if seen[ref] {
+			continue
+		}
+		seen[ref] = true
+		refs = append(refs, ref)
 	}
 	return
 }
@@ -340,7 +379,13 @@ func diffLists(path string, held, target []any) (diffs []string) {
 // dataVolumeTemplates survive it (the applied machine carries none, and the
 // volume references that named them are satisfied unchanged by the
 // standalone DataVolumes), and whether CDI's upload accepts the bundle's
-// gzip and tar.gz bytes unchanged (the deployed disks arrive populated).
+// compressed bytes unchanged (the deployed disk arrives populated). The
+// tar.gz form is not taken around: the tar.gz the export produces of a
+// filesystem volume carries the volume's own root entry, which a CDI
+// running under OpenShift's restricted security context cannot untar into
+// the volume it lands in, so the gzip form is what the round trip covers
+// and the deploy suite's disk fixtures cover the tar.gz bytes'
+// pass-through.
 //
 // Everything the round trip creates is removed again however it ends: the
 // undeploy at the end takes the deployment off by its label, and the second

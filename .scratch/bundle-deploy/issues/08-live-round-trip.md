@@ -96,8 +96,39 @@ How the pieces landed:
     behind it was Bound at the recorded size in the recorded volume mode.
     The fixture's disk went round as gzip on this cluster (the log line
     says which form each run checked); the tar.gz form's pass-through is
-    covered by the deploy suite's disk fixtures, and only a fixture whose
-    claim holds files would exercise it live.
+    covered by the deploy suite's disk fixtures. A review after the
+    tickets merged tried to take the tar.gz form around live too, and the
+    attempt is recorded here for what it found. Two things a fixture
+    needs for the form were established on the way: a filesystem-mode
+    claim a DataVolume provisions carries CDI's kubevirt content type, so
+    the export offers even a filesystem-mode one of those as a gzip — the
+    claim has to be a PersistentVolumeClaim made by hand — and CDI's
+    upload reads the first 512 bytes of whatever it is offered to tell
+    what it is, so the tar.gz of an empty filesystem, which is smaller
+    than that, is refused before the archive is ever read — the claim has
+    to hold real files. With both in place the round trip still fails,
+    and not in quo: the export server tars the volume's mount point, so
+    every tar.gz it produces carries the mount root's own entry, and
+    CDI's upload untars with --preserve-permissions into the target
+    volume's mount root, where the uploadserver container — non-root
+    under OpenShift's restricted security context — cannot apply that
+    entry's mode to a directory it does not own. GNU tar exits 2 and the
+    upload refuses with "unable to untar files from endpoint"; the same
+    bytes repacked without the root entry upload clean, which was
+    checked on the cluster both ways, and GNU tar extracts the export's
+    tar.gz without complaint where it owns the destination. So the
+    spec's bet — the gzip and tar.gz forms the export produced are the
+    forms CDI's upload accepts, both ends being CDI — holds for the gzip
+    form and not for the tar.gz form on a CDI under OpenShift's
+    restricted security context. quo cannot bridge that without breaking
+    its own rule that the bundle's bytes stream unchanged, so the fixture
+    stays on the gzip form and the finding is left here for whoever
+    carries it to the CDI or KubeVirt side. Two pieces of the attempt
+    are kept because they are right either way: the fixture's disk now
+    asks for Block by name, so its gzip form no longer rests on the
+    class's default volume mode, and the round trip's expected set —
+    deployedSet — now accounts for the DataVolume a deploy creates for a
+    disk whose claim the bundle holds with no DataVolume of its own.
 - The mappings: storage mapped by name (source and target are one cluster,
   so the class matches), and the multus network went through `--network`,
   because the fixture's NetworkAttachmentDefinition lives in the fixture's

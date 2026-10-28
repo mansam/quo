@@ -65,15 +65,22 @@ check the suite still builds.
   HyperConverged resource instead; patching the KubeVirt resource directly
   will be reverted.
 
-- **CDI**, and a storage class that can provision a 1Gi volume. The fixture
-  disk is blank and therefore sparse, so it compresses to very little on the
-  way into a bundle, but it has to be large enough that any provisioner will
-  take it.
+- **CDI**, and a storage class that can provision a 1Gi block volume. The
+  fixture disk is blank and therefore sparse, so it compresses to very little
+  on the way into a bundle, but it has to be large enough that any provisioner
+  will take it.
 
   A class that binds on first consumer is fine. CDI would otherwise park the
   DataVolume in `WaitForFirstConsumer` until a pod mounted the claim, and the
   fixture VirtualMachine is never started, so nothing ever would; the fixture
   asks for immediate binding to get past that.
+
+  The round trip covers the gzip form alone. The tar.gz the export produces
+  of a filesystem volume cannot be uploaded again on a CDI running under
+  OpenShift's restricted security context: the export tars the volume's own
+  root entry, and the upload's untar cannot apply that entry's mode to the
+  volume it lands in. The tar.gz bytes' pass-through is covered by the deploy
+  suite's disk fixtures instead.
 - **Multus** is optional. Without it the fixture VirtualMachine is built with
   no secondary network and the comparison covers one reference type fewer.
 - **Permissions** beyond a namespace owner's: creating a namespace, reading

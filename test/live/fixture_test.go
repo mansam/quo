@@ -379,14 +379,21 @@ func (r *fixture) createDisk(ctx context.Context, s *suite) (err error) {
 	return
 }
 
-// diskStorage is what the fixture asks of the cluster's storage for its disk:
-// fixtureDiskSize on the class the environment named, or on whichever class
-// the cluster defaults to.
+// diskStorage is what the fixture asks of the cluster's storage for its
+// disk: fixtureDiskSize on the class the environment named, or on
+// whichever class the cluster defaults to, as a block device. The volume
+// mode is asked for by name rather than left to the class's default,
+// because the export offers a block device as a gzip and a filesystem
+// volume as a tar.gz, and the tar.gz the export produces is not a form
+// every cluster's CDI takes back — the round trip runs on the gzip form,
+// and the deploy suite's disk fixtures cover the tar.gz bytes'
+// pass-through.
 func diskStorage() (storage map[string]any) {
 	storage = map[string]any{
 		"resources": map[string]any{
 			"requests": map[string]any{"storage": fixtureDiskSize},
 		},
+		"volumeMode": "Block",
 	}
 	class := os.Getenv(envStorageClass)
 	if class != "" {
