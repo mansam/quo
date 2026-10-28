@@ -1,6 +1,6 @@
 # quo
 
-quo captures a stopped KubeVirt VirtualMachine as a diagnostic bundle. The bundle contains the VirtualMachine definition, its disks, and all the resources it depends on including storage classes and the cluster's KubeVirt CR.
+quo captures a stopped KubeVirt VirtualMachine as a diagnostic bundle. The bundle contains the VirtualMachine definition, its disks, and all the resources it depends on. That includes storage classes and the cluster's KubeVirt CR.
 
 ## Commands
 
@@ -10,7 +10,7 @@ quo captures a stopped KubeVirt VirtualMachine as a diagnostic bundle. The bundl
 quo export -n <namespace> <name> [-o <path>]
 ```
 
-The export path may be a directory or a file path. A directory, or no `-o` at all, names the bundle after the VirtualMachine. Without flags, `quo export -n kube-system my-vm` writes `my-vm.quo` in the current directory.
+The export path may be a directory or a file path. quo names the bundle after the VirtualMachine when the path is a directory or when there is no `-o`. Without flags, `quo export -n kube-system my-vm` writes `my-vm.quo` in the current directory.
 
 A bundle contains plaintext Secrets from the source cluster.
 
@@ -26,7 +26,7 @@ quo check -n <namespace> <name>
 quo inspect <path>
 ```
 
-It reads the bundle format, reports what the bundle contains, and lists any items that could not be exported due to RBAC limitations.
+It reads the bundle format. It reports what the bundle contains. It lists any items that quo could not export because of RBAC limitations.
 
 **quo deploy** puts a bundle onto a cluster as a stopped VirtualMachine.
 
@@ -35,13 +35,15 @@ quo deploy <bundle> -n <namespace> [--name <name>] [--dry-run]
      [--network <network>=<attachment>] [--storage-class <source>=<target>]
 ```
 
-The deployed VirtualMachine is the source cluster's own resolution of the captured one and is left stopped; starting it is `virtctl start`. Each disk is uploaded into a DataVolume through the target cluster's CDI, which has to be installed. A storage class or a multus network maps onto the target's resource of the same name on its own; `--storage-class` and `--network` name the rest, and every mapping is reported in the deploy record.
+The deployed VirtualMachine is the source cluster's own resolution of the captured one. The deploy leaves it stopped. Start it with `virtctl start`. The deploy uploads each disk into a DataVolume through the target cluster's CDI. The target cluster must have CDI installed.
 
-A bundle contains plaintext Secrets, and a deploy writes them onto the target cluster as they are. The cluster you deploy onto is the trust boundary: treat it with the same care as the cluster the bundle was captured from.
+A storage class or a multus network maps onto the target's resource of the same name on its own. `--storage-class` and `--network` name the rest. The deploy record reports every mapping.
 
-Deploying one bundle twice — onto one cluster or two — produces two machines with the same identity: the same MAC addresses, firmware UUID and serial, and for Windows guests the same machine SID. On a shared network that is a duplicate machine.
+A bundle contains plaintext Secrets. A deploy writes them onto the target cluster as they are. The cluster you deploy onto is the trust boundary. Treat it with the same care as the source cluster.
 
-**quo undeploy** takes a bundle's deployment off a cluster again.
+Deploying one bundle twice produces two machines with the same identity. This is true whether both deploys go to one cluster or to two. The machines have the same MAC addresses, firmware UUID and serial. Windows guests also have the same machine SID. On a shared network, that is a duplicate machine.
+
+**quo undeploy** removes a bundle's deployment from a cluster.
 
 ```
 quo undeploy <bundle> -n <namespace> [--dry-run]
@@ -55,7 +57,7 @@ It removes exactly one deployment: the objects in the namespace carrying the bun
 make build
 ```
 
-The binary is written to `bin/quo`. To install to the Go bin directory:
+The build writes the binary to `bin/quo`. To install to the Go bin directory:
 
 ```
 make install
@@ -68,7 +70,7 @@ A bundle is an uncompressed tar. Its first member is always the manifest, which 
 - Format version
 - Provenance: where the bundle came from, the source cluster versions
 - Requirements: networks, storage, and container images that would be necessary to redeploy the VM
-- Capture record: All resources that quo attempted to export
+- Capture record: all resources that quo attempted to export
 - Member index: sizes and digests of all other members
 
-Resources collected from the cluster are grouped by kind under `resources/`. Disk data is grouped under `disks/`.
+quo groups the resources it collects by kind under `resources/`. The bundle groups disk data under `disks/`.
