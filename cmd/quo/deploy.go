@@ -8,9 +8,11 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"text/tabwriter"
 
+	"github.com/mansam/quo/pkg/capture"
 	"github.com/mansam/quo/pkg/cluster"
 	"github.com/mansam/quo/pkg/deploy"
 )
@@ -35,6 +37,7 @@ func runDeploy(args []string) (err error) {
 	if err != nil {
 		return
 	}
+	parsed.opt.Progress = newUploadReporter(os.Stderr)
 	// Ctrl-C stops the deploy where it stands. What was created stays
 	// where it is, because a deploy never rolls back, and the record
 	// prints all the same, so what the target holds is still said.
@@ -45,6 +48,43 @@ func runDeploy(args []string) (err error) {
 	err = deployErr
 	if err == nil {
 		err = printErr
+	}
+	return
+}
+
+// newUploadReporter returns the progress reporter the deploy uses. It
+// rewrites one line of out while a disk uploads and starts a new line once
+// the disk has finished, so that a deploy taking hours can be told apart
+// from one that has stopped making progress.
+//
+// Progress goes to standard error so that standard output stays the result
+// of the command.
+func newUploadReporter(out io.Writer) (report func(p deploy.Progress)) {
+	// Width of the line last written, so that a shorter line can be padded
+	// over the one it replaces. A carriage return moves the cursor back to
+	// the start of the line without removing what is already there, so
+	// that "1023.5 MiB" followed by "1.1 GiB" would otherwise read
+	// "1.1 GiBMiB".
+	written := 0
+	report = func(p deploy.Progress) {
+		line := fmt.Sprintf(
+			"disk %d/%d %s (%s): %s",
+			p.Disk,
+			p.Disks,
+			p.Claim,
+			strings.Join(p.Volumes, ", "),
+			capture.FormatSize(p.Transferred))
+		padding := ""
+		if len(line) < written {
+			padding = strings.Repeat(" ", written-len(line))
+		}
+		written = len(line)
+		ending := "\r"
+		if p.Done {
+			ending = "\n"
+			written = 0
+		}
+		_, _ = fmt.Fprint(out, line, padding, ending)
 	}
 	return
 }

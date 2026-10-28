@@ -3,6 +3,7 @@ package bundle
 import (
 	"archive/tar"
 	"bytes"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -644,6 +645,95 @@ func TestReaderHandsBackTheManifestsOwnBytes(t *testing.T) {
 	// its digest; a reader that needs to say which bundle it is holding
 	// hashes these bytes.
 	g.Expect(reader.ManifestBytes()).To(gomega.Equal(data))
+}
+
+func TestReaderStreamsAMemberAndVerifiesItAsItIsRead(t *testing.T) {
+	g := gomega.NewGomegaWithT(t)
+	archive := tarball(t,
+		rawMember{path: ManifestPath, data: encodeManifest(t, indexing(t))},
+		rawMember{path: resourcePath, data: objectBody})
+
+	reader, err := Open(bytes.NewReader(archive))
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	stream, err := reader.OpenStream(resourcePath)
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	// The member's recorded size is told up front, so a caller that hands
+	// the stream to a transfer can say what it will add up to.
+	g.Expect(stream.Size()).To(gomega.BeEquivalentTo(len(objectBody)))
+	// Until the stream is consumed there is no digest to report.
+	g.Expect(stream.Mismatch()).ToNot(gomega.HaveOccurred())
+
+	content, err := io.ReadAll(stream)
+
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	g.Expect(content).To(gomega.Equal(objectBody))
+	g.Expect(stream.Mismatch()).ToNot(gomega.HaveOccurred())
+}
+
+func TestReaderReportsAStreamedMemberThatFailsItsDigestAtItsEnd(t *testing.T) {
+	g := gomega.NewGomegaWithT(t)
+	manifest := indexing(t)
+	manifest.Members = append(manifest.Members, Member{
+		Path:   ExpandedSpecPath,
+		Size:   int64(len(expandedBody)),
+		Digest: digest(expandedBody),
+	})
+	archive := tarball(t,
+		rawMember{path: ManifestPath, data: encodeManifest(t, manifest)},
+		rawMember{path: resourcePath, data: objectBody},
+		rawMember{path: ExpandedSpecPath, data: []byte("corrupted in transit")})
+
+	reader, err := Open(bytes.NewReader(archive))
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	stream, err := reader.OpenStream(ExpandedSpecPath)
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+
+	// The whole member is read before the digest can be compared, so the
+	// mismatch surfaces from the read at the end of the stream rather
+	// than before any of it...
+	_, err = io.ReadAll(stream)
+	g.Expect(err).To(gomega.MatchError(&DigestMismatchError{}))
+	g.Expect(err.Error()).To(gomega.ContainSubstring(ExpandedSpecPath))
+	// ...and it is still readable afterwards, so a caller that handed the
+	// stream to something else which consumed it — an upload, which may
+	// wrap the error beyond recognising — learns the verdict here.
+	g.Expect(stream.Mismatch()).To(gomega.MatchError(&DigestMismatchError{}))
+}
+
+func TestReaderStreamsTheMembersOneAtATimeLikeReadDoes(t *testing.T) {
+	g := gomega.NewGomegaWithT(t)
+	manifest := indexing(t)
+	manifest.Members = append(manifest.Members, Member{
+		Path:   ExpandedSpecPath,
+		Size:   int64(len(expandedBody)),
+		Digest: digest(expandedBody),
+	})
+	archive := tarball(t,
+		rawMember{path: ManifestPath, data: encodeManifest(t, manifest)},
+		rawMember{path: resourcePath, data: objectBody},
+		rawMember{path: ExpandedSpecPath, data: expandedBody})
+
+	reader, err := Open(bytes.NewReader(archive))
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	stream, err := reader.OpenStream(resourcePath)
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	_, err = io.ReadAll(stream)
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+
+	// The members arrive in written order and the reader walks forward
+	// only, so a streamed member leaves the reader positioned after it
+	// and the members that follow are still streamable.
+	next, err := reader.OpenStream(ExpandedSpecPath)
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	content, err := io.ReadAll(next)
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	g.Expect(content).To(gomega.Equal(expandedBody))
+
+	// And a member already gone by is refused, exactly as Read refuses
+	// one.
+	_, err = reader.OpenStream(resourcePath)
+	g.Expect(err).To(gomega.HaveOccurred())
+	g.Expect(err.Error()).To(gomega.ContainSubstring("has already been read"))
 }
 
 // rawMember is a tar member written exactly as given.

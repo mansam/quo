@@ -13,6 +13,8 @@ import (
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8slabels "k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/portforward"
 	"k8s.io/client-go/transport/spdy"
 )
@@ -21,38 +23,46 @@ import (
 const (
 	// forwardReadyTimeout bounds the wait for a forwarded port to open.
 	forwardReadyTimeout = time.Minute
-	// exportServicePort is the port the export's Service publishes.
-	exportServicePort = 443
+	// dataServicePort is the port the data services quo reaches publish:
+	// the export server's Service and CDI's upload proxy both serve on
+	// 443.
+	dataServicePort = 443
 )
 
-// forward is a local port forwarded to the export server's pod.
+// forward is a local port forwarded to a pod inside the cluster.
 type forward struct {
 	address string
 	stop    chan struct{}
 }
 
-// server is the pod serving an export and the port it listens on.
+// server is a pod serving data and the port it listens on.
 type server struct {
 	pod  string
 	port int32
 }
 
-// forwardTo forwards a local port to the pod behind the export's Service, so
-// that a disk can be downloaded from a cluster that publishes no route to it.
-func (r *vmExport) forwardTo(ctx context.Context, service string) (err error) {
-	found, err := r.getServer(ctx, service)
+// forwardTo forwards a local port to the pod behind a cluster's Service,
+// so that a server inside the cluster can be reached without the cluster
+// publishing a route to it. The forward is the caller's to stop.
+func forwardTo(
+	ctx context.Context,
+	core kubernetes.Interface,
+	config *rest.Config,
+	namespace, service string) (f *forward, err error) {
+	//
+	found, err := getServer(ctx, core, namespace, service)
 	if err != nil {
 		return
 	}
-	transport, upgrader, err := spdy.RoundTripperFor(r.config)
+	transport, upgrader, err := spdy.RoundTripperFor(config)
 	if err != nil {
-		err = fmt.Errorf("build a port forward to %s/%s: %w", r.namespace, found.pod, err)
+		err = fmt.Errorf("build a port forward to %s/%s: %w", namespace, found.pod, err)
 		return
 	}
-	target := r.core.CoreV1().RESTClient().
+	target := core.CoreV1().RESTClient().
 		Post().
 		Resource("pods").
-		Namespace(r.namespace).
+		Namespace(namespace).
 		Name(found.pod).
 		SubResource("portforward").
 		URL()
@@ -62,7 +72,7 @@ func (r *vmExport) forwardTo(ctx context.Context, service string) (err error) {
 	ports := []string{fmt.Sprintf("0:%d", found.port)}
 	forwarder, err := portforward.New(dialer, ports, stop, ready, io.Discard, io.Discard)
 	if err != nil {
-		err = fmt.Errorf("build a port forward to %s/%s: %w", r.namespace, found.pod, err)
+		err = fmt.Errorf("build a port forward to %s/%s: %w", namespace, found.pod, err)
 		return
 	}
 	failed := make(chan error, 1)
@@ -72,7 +82,7 @@ func (r *vmExport) forwardTo(ctx context.Context, service string) (err error) {
 	select {
 	case <-ready:
 	case err = <-failed:
-		err = fmt.Errorf("forward a port to %s/%s: %w", r.namespace, found.pod, err)
+		err = fmt.Errorf("forward a port to %s/%s: %w", namespace, found.pod, err)
 		return
 	case <-ctx.Done():
 		close(stop)
@@ -80,42 +90,54 @@ func (r *vmExport) forwardTo(ctx context.Context, service string) (err error) {
 		return
 	case <-time.After(forwardReadyTimeout):
 		close(stop)
-		err = fmt.Errorf("forwarding a port to %s/%s did not open", r.namespace, found.pod)
+		err = fmt.Errorf("forwarding a port to %s/%s did not open", namespace, found.pod)
 		return
 	}
 	opened, err := forwarder.GetPorts()
 	if err != nil {
 		close(stop)
-		err = fmt.Errorf("forward a port to %s/%s: %w", r.namespace, found.pod, err)
+		err = fmt.Errorf("forward a port to %s/%s: %w", namespace, found.pod, err)
 		return
 	}
-	r.forward = &forward{
+	f = &forward{
 		address: net.JoinHostPort("127.0.0.1", strconv.Itoa(int(opened[0].Local))),
 		stop:    stop,
 	}
 	return
 }
 
-// getServer returns the pod behind the export's Service and the port the
-// export server listens on inside it.
+// forwardTo forwards a local port to the pod behind the export's Service,
+// so that a disk can be downloaded from a cluster that publishes no route
+// to it.
+func (r *vmExport) forwardTo(ctx context.Context, service string) (err error) {
+	r.forward, err = forwardTo(ctx, r.core, r.config, r.namespace, service)
+	return
+}
+
+// getServer returns the pod behind a Service and the port the server
+// listens on inside it.
 //
 // A port is forwarded to a pod rather than to a Service, so the port to ask
 // for is the one the Service forwards to and not the one it publishes.
-func (r *vmExport) getServer(ctx context.Context, service string) (found server, err error) {
-	published, err := r.core.CoreV1().Services(r.namespace).Get(ctx, service, meta.GetOptions{})
+func getServer(
+	ctx context.Context,
+	client kubernetes.Interface,
+	namespace, service string) (found server, err error) {
+	//
+	published, err := client.CoreV1().Services(namespace).Get(ctx, service, meta.GetOptions{})
 	if err != nil {
-		err = fmt.Errorf("get export service %s/%s: %w", r.namespace, service, err)
+		err = fmt.Errorf("get service %s/%s: %w", namespace, service, err)
 		return
 	}
 	if len(published.Spec.Selector) == 0 {
-		err = fmt.Errorf("export service %s/%s selects no pods", r.namespace, service)
+		err = fmt.Errorf("service %s/%s selects no pods", namespace, service)
 		return
 	}
-	pods, err := r.core.CoreV1().Pods(r.namespace).List(ctx, meta.ListOptions{
+	pods, err := client.CoreV1().Pods(namespace).List(ctx, meta.ListOptions{
 		LabelSelector: k8slabels.SelectorFromSet(published.Spec.Selector).String(),
 	})
 	if err != nil {
-		err = fmt.Errorf("list the pods of export service %s/%s: %w", r.namespace, service, err)
+		err = fmt.Errorf("list the pods of service %s/%s: %w", namespace, service, err)
 		return
 	}
 	for i := range pods.Items {
@@ -126,17 +148,17 @@ func (r *vmExport) getServer(ctx context.Context, service string) (found server,
 		found.port, err = targetPort(published, &pods.Items[i])
 		return
 	}
-	err = fmt.Errorf("export service %s/%s has no running pod", r.namespace, service)
+	err = fmt.Errorf("service %s/%s has no running pod", namespace, service)
 	return
 }
 
-// targetPort returns the port on pod that service forwards the export port
+// targetPort returns the port on pod that service forwards the data port
 // to, resolving a port named rather than numbered against the pod itself.
 func targetPort(service *core.Service, pod *core.Pod) (port int32, err error) {
 	published := servicePort(service)
 	if published == nil {
 		err = fmt.Errorf(
-			"export service %s/%s publishes no ports",
+			"service %s/%s publishes no ports",
 			service.Namespace,
 			service.Name)
 		return
@@ -155,10 +177,10 @@ func targetPort(service *core.Service, pod *core.Pod) (port int32, err error) {
 	return
 }
 
-// servicePort returns the port the export server is published on.
+// servicePort returns the port the server is published on.
 func servicePort(service *core.Service) (found *core.ServicePort) {
 	for i := range service.Spec.Ports {
-		if service.Spec.Ports[i].Port != exportServicePort {
+		if service.Spec.Ports[i].Port != dataServicePort {
 			continue
 		}
 		found = &service.Spec.Ports[i]

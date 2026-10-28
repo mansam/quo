@@ -19,14 +19,21 @@ import (
 // quo refuses, before creating anything, when the bundle cannot be read or
 // its format version is unknown, when it holds no expanded spec, when the
 // namespace does not exist, and when the VirtualMachine it would create is
-// already there. Each refusal names what it found.
+// already there. A bundle holding disks to upload is refused as well when
+// the target has no CDI, when a disk's storage class is not on the target
+// under the name the bundle records, and when the target's own account of
+// that class rules out the volume mode the disk needs. Each refusal names
+// what it found.
 //
 // Past the refusals the deploy is best-effort: a step that fails is
 // recorded and the run continues, and a bundle member that fails its
 // digest is skipped rather than applied, so corruption never reaches the
-// target. The record is returned however the run ended, and the error is
-// non-nil when anything was not created, so that a caller can tell a
-// complete deploy from a partial one.
+// target. The objects go on in order — the DataVolumes, then the uploads,
+// then the VirtualMachine last — so that nothing in the namespace looks
+// like a VirtualMachine until its disks are in place. The record is
+// returned however the run ended, and the error is non-nil when anything
+// was not created, so that a caller can tell a complete deploy from a
+// partial one.
 //
 // The context bounds the run: cancelling it stops the deploy where it
 // stands, and everything already created stays in place, because a deploy
@@ -54,14 +61,38 @@ func Deploy(ctx context.Context, t cluster.Target, opt Options) (record Record, 
 	if err != nil {
 		return
 	}
-	step, err := createVirtualMachine(ctx, t, reader, manifest, opt)
+	// A bundle is written with its resources first and its disks last,
+	// and the reader walks forward only, so the expansion is read before
+	// the first disk is asked for. It is read whole — the expansion is one
+	// small member — and applied last.
+	expanded, step, err := readVirtualMachine(reader, manifest, opt)
 	if err != nil {
 		return
 	}
-	record = append(record, step)
-	if step.Outcome != OutcomeCreated {
-		err = &NotCreatedError{NotCreated: 1, Attempted: len(record)}
+	if step.Outcome == OutcomeSkipped {
+		// The member failed its digest, so the machine it names cannot be
+		// created. The disks are not uploaded for a machine that cannot
+		// be, which is the same rule that refuses a bundle holding no
+		// expansion at all.
+		record = append(record, step)
+		err = &NotCreatedError{NotCreated: 1, Attempted: 1}
+		return
 	}
+	disks := planDisks(manifest, opt)
+	err = resolveDisks(ctx, t, disks)
+	if err != nil {
+		return
+	}
+	identity := bundleIdentity(reader.ManifestBytes())
+	// The DataVolumes, then the uploads, then the VirtualMachine last.
+	createDataVolumes(ctx, t, disks, opt, identity)
+	uploadDisks(ctx, t, reader, disks, opt)
+	for i := range disks {
+		record = append(record, disks[i].step)
+	}
+	record = append(record, createVirtualMachine(
+		ctx, t, expanded, step, opt, manifest.Provenance, identity))
+	err = notCreated(record)
 	return
 }
 
@@ -105,28 +136,24 @@ func validateTarget(
 	return
 }
 
-// createVirtualMachine creates the VirtualMachine a deploy is for and
-// returns the deploy record's entry for it: the bundle's expanded spec —
-// the source cluster's own resolution of the machine — carrying the forced
-// rewrites and nothing else.
+// readVirtualMachine reads and decodes the bundle's expanded spec, and
+// returns the step the deploy record holds for the VirtualMachine.
 //
-// The step is recorded whatever became of it. Only a bundle that cannot be
-// read at all is an error, because that is a refusal rather than a step:
-// the member holding the expansion is indexed but absent, or does not
-// decode as an object.
-func createVirtualMachine(
-	ctx context.Context,
-	t cluster.Target,
+// A member that fails its digest is a skipped step rather than an error —
+// the run records it and ends — while a member that does not decode is a
+// refusal: a bundle whose expansion cannot be read as an object cannot be
+// deployed at all.
+func readVirtualMachine(
 	reader *bundle.Reader,
 	manifest *bundle.Manifest,
-	opt Options) (step Step, err error) {
+	opt Options) (expanded *unstructured.Unstructured, step Step, err error) {
 	//
 	step = Step{
 		Kind:      cluster.KindVirtualMachine,
 		Namespace: opt.Namespace,
 		Name:      virtualMachineName(opt, manifest),
 	}
-	expanded, readErr := reader.Read(manifest.ExpandedSpec)
+	content, readErr := reader.Read(manifest.ExpandedSpec)
 	if readErr != nil {
 		var mismatch *bundle.DigestMismatchError
 		if !errors.As(readErr, &mismatch) {
@@ -139,19 +166,56 @@ func createVirtualMachine(
 		step.Reason = readErr.Error()
 		return
 	}
-	vm := &unstructured.Unstructured{}
-	err = yaml.Unmarshal(expanded, &vm.Object)
+	expanded = &unstructured.Unstructured{}
+	err = yaml.Unmarshal(content, &expanded.Object)
 	if err != nil {
 		err = fmt.Errorf("decode the expanded spec: %w", err)
 		return
 	}
-	vm = buildVirtualMachine(vm, opt, manifest.Provenance, bundleIdentity(reader.ManifestBytes()))
+	return
+}
+
+// createVirtualMachine creates the VirtualMachine a deploy is for and
+// finishes the deploy record's entry for it: the bundle's expanded spec —
+// the source cluster's own resolution of the machine — carrying the forced
+// rewrites and nothing else.
+//
+// The step is the one readVirtualMachine built, so the entry a skipped
+// expansion would have recorded and the entry a created one records name
+// the same object. It is recorded whatever became of it.
+func createVirtualMachine(
+	ctx context.Context,
+	t cluster.Target,
+	expanded *unstructured.Unstructured,
+	step Step,
+	opt Options,
+	provenance bundle.Provenance,
+	identity string) (finished Step) {
+	//
+	vm := buildVirtualMachine(expanded, opt, provenance, identity)
 	createErr := t.Create(ctx, vm)
 	if createErr != nil {
 		step.Outcome = OutcomeFailed
 		step.Reason = createErr.Error()
-		return
+		return step
 	}
 	step.Outcome = OutcomeCreated
+	return step
+}
+
+// notCreated returns the error that says a run did not create everything
+// it tried to, nil when it did. The deploy record names each object and
+// what became of it; this error is what makes the exit code non-zero, so
+// that a script can tell a complete deploy from a partial one.
+func notCreated(record Record) (err error) {
+	missing := 0
+	for i := range record {
+		if record[i].Outcome != OutcomeCreated {
+			missing++
+		}
+	}
+	if missing > 0 {
+		err = &NotCreatedError{NotCreated: missing, Attempted: len(record)}
+	}
 	return
 }

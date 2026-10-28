@@ -87,3 +87,77 @@ func (r *NotCreatedError) Is(err error) (matched bool) {
 	_, matched = err.(*NotCreatedError)
 	return
 }
+
+// NoCDIError reports a target cluster with no CDI, from a bundle that
+// holds disks to upload. A disk goes back onto a cluster only through
+// CDI's upload, so there is no way past this but installing it: failing
+// disk by disk for an hour is what refusing up front avoids.
+type NoCDIError struct {
+	// Disks is how many disks the bundle holds to upload.
+	Disks int
+}
+
+// Error says what the target lacks and what needed it.
+func (r *NoCDIError) Error() string {
+	disks := fmt.Sprintf("%d disks", r.Disks)
+	if r.Disks == 1 {
+		disks = "one disk"
+	}
+	return fmt.Sprintf(
+		"the target cluster has no CDI, and the bundle holds %s to upload; install CDI on the target cluster first",
+		disks)
+}
+
+// Is reports whether err is a NoCDIError.
+func (r *NoCDIError) Is(err error) (matched bool) {
+	_, matched = err.(*NoCDIError)
+	return
+}
+
+// MissingStorageClassError reports a disk whose storage class the target
+// cluster does not have under the name the bundle records. The disks are
+// not uploaded that cannot be placed.
+type MissingStorageClassError struct {
+	Claim        string
+	StorageClass string
+}
+
+// Error names the disk and the class it needed.
+func (r *MissingStorageClassError) Error() string {
+	return fmt.Sprintf(
+		"PersistentVolumeClaim %q needs the storage class %q, which the target cluster does not have",
+		r.Claim,
+		r.StorageClass)
+}
+
+// Is reports whether err is a MissingStorageClassError.
+func (r *MissingStorageClassError) Is(err error) (matched bool) {
+	_, matched = err.(*MissingStorageClassError)
+	return
+}
+
+// UnsupportedVolumeModeError reports a disk whose volume mode the target
+// cluster's own account of the matched storage class rules out. No mapping
+// fixes that: the class cannot hold the disk as it was captured, so the
+// machine would not be the one the customer has.
+type UnsupportedVolumeModeError struct {
+	Claim        string
+	StorageClass string
+	VolumeMode   string
+}
+
+// Error names the disk, the mode it needs and the class that cannot
+// provide it.
+func (r *UnsupportedVolumeModeError) Error() string {
+	return fmt.Sprintf(
+		"PersistentVolumeClaim %q needs volumeMode %s, which storage class %q on the target cluster cannot provide",
+		r.Claim,
+		r.VolumeMode,
+		r.StorageClass)
+}
+
+// Is reports whether err is an UnsupportedVolumeModeError.
+func (r *UnsupportedVolumeModeError) Is(err error) (matched bool) {
+	_, matched = err.(*UnsupportedVolumeModeError)
+	return
+}

@@ -3,6 +3,7 @@ package cluster
 import (
 	"context"
 	"fmt"
+	"io"
 
 	k8serr "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
@@ -34,6 +35,17 @@ type Target interface {
 	// as the caller built it, so that what a bundle holds reaches the
 	// cluster unchanged wherever a deploy is not forced to change it.
 	Create(ctx context.Context, object *unstructured.Unstructured) (err error)
+	// UploadDisk puts the bytes readable from content into the claim the
+	// named DataVolume creates in namespace, which CDI names after the
+	// DataVolume itself. The bytes are sent unchanged, exactly as they
+	// were read; size is the count they will add up to, which the upload
+	// is told so that a transfer which comes up short fails rather than
+	// ending early.
+	//
+	// The upload waits for CDI to make the claim ready to receive the
+	// bytes, so a caller that creates the DataVolume and uploads into it
+	// at once needs no readiness loop of its own.
+	UploadDisk(ctx context.Context, namespace, name string, content io.Reader, size int64) (err error)
 }
 
 // The KubeVirt adapter serves both directions quo works in.

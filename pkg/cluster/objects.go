@@ -20,7 +20,7 @@ var resourceByKind = map[string]resource{
 		gvr: schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "controllerrevisions"},
 	},
 	KindDataVolume: {
-		gvr: schema.GroupVersionResource{Group: "cdi.kubevirt.io", Version: "v1beta1", Resource: "datavolumes"},
+		gvr: dataVolumeResource,
 	},
 	KindNetworkAttachmentDefinition: {
 		gvr: schema.GroupVersionResource{
@@ -28,6 +28,14 @@ var resourceByKind = map[string]resource{
 			Version:  "v1",
 			Resource: "network-attachment-definitions",
 		},
+	},
+	KindCDIConfig: {
+		gvr: schema.GroupVersionResource{
+			Group:    "cdi.kubevirt.io",
+			Version:  "v1beta1",
+			Resource: "cdiconfigs",
+		},
+		clusterScoped: true,
 	},
 	KindPersistentVolume: {
 		gvr:           schema.GroupVersionResource{Version: "v1", Resource: "persistentvolumes"},

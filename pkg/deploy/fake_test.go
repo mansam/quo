@@ -1,8 +1,10 @@
 package deploy
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -37,6 +39,21 @@ const (
 // can assert the annotation exactly.
 var testCapturedAt = time.Date(2026, 3, 14, 15, 9, 26, 0, time.UTC)
 
+// The storage class the disk fixtures' claims were provisioned from, as
+// the target holds it.
+const testStorageClass = "fast-rbd"
+
+// Claims the disk fixture's volumes are backed by: a claim serving two
+// volumes, a claim a dataVolumeTemplate provisions, and two plain claims.
+// The gap and unsized-disk tests leave bytes or requirements out around
+// them.
+const (
+	testRootClaim = "db-01-root"
+	testDataClaim = "db-01-data"
+	testGapClaim  = "db-01-archive"
+	testThinClaim = "db-01-scratch"
+)
+
 // versionAnnotation is an annotation whose value a general YAML library
 // would be liable to reinterpret as a number, so a test can see that a
 // deploy carries what the source wrote through unchanged.
@@ -66,6 +83,22 @@ type fakeTarget struct {
 	// createErr is what Create reports in place of creating, so a test
 	// can make a create fail while the reads behave normally.
 	createErr error
+	// uploaded records every disk the deploy uploaded, in order.
+	uploaded []fakeUpload
+	// uploadErrFor is what UploadDisk reports for the named claim, so a
+	// test can make one disk's upload fail while the rest proceed.
+	uploadErrFor map[string]error
+	// events records what the deploy did and in what order: every create
+	// and every upload, interleaved.
+	events []string
+}
+
+// fakeUpload is one disk a deploy sent to the target.
+type fakeUpload struct {
+	namespace string
+	name      string
+	size      int64
+	content   []byte
 }
 
 var _ cluster.Target = &fakeTarget{}
@@ -74,9 +107,23 @@ var _ cluster.Target = &fakeTarget{}
 // nothing held.
 func target() (t *fakeTarget) {
 	t = &fakeTarget{
-		namespaces: map[string]bool{testDeployNamespace: true},
-		objects:    map[cluster.ObjectRef]*unstructured.Unstructured{},
+		namespaces:   map[string]bool{testDeployNamespace: true},
+		objects:      map[cluster.ObjectRef]*unstructured.Unstructured{},
+		uploadErrFor: map[string]error{},
 	}
+	return
+}
+
+// storageTarget returns a fake target that can take the disk fixtures'
+// storage: the CDI configuration, the storage class their claims were
+// provisioned from, and the target's own account of what that class can
+// provide.
+func storageTarget() (t *fakeTarget) {
+	t = target()
+	t.hold(cluster.ObjectRef{Kind: cluster.KindCDIConfig, Name: cluster.CDIConfigName}, cdiConfig())
+	t.hold(cluster.ObjectRef{Kind: cluster.KindStorageClass, Name: testStorageClass}, storageClass())
+	t.hold(cluster.ObjectRef{Kind: cluster.KindStorageProfile, Name: testStorageClass},
+		storageProfile("Block", "Filesystem"))
 	return
 }
 
@@ -130,6 +177,40 @@ func (r *fakeTarget) Create(ctx context.Context, object *unstructured.Unstructur
 		return
 	}
 	r.created = append(r.created, object.DeepCopy())
+	r.events = append(r.events, "create "+object.GetKind()+" "+object.GetNamespace()+"/"+object.GetName())
+	return
+}
+
+// UploadDisk receives the disk the way CDI would: it reads the whole
+// stream, so a member that fails its digest fails here too, and records
+// what arrived. A cancelled context is reported the way a real client
+// does once the deploy has been interrupted.
+func (r *fakeTarget) UploadDisk(
+	ctx context.Context,
+	namespace, name string,
+	content io.Reader,
+	size int64) (err error) {
+	//
+	err = ctx.Err()
+	if err != nil {
+		err = fmt.Errorf("upload disk %q: %w", name, err)
+		return
+	}
+	received, err := io.ReadAll(content)
+	if err != nil {
+		return
+	}
+	if failFor, found := r.uploadErrFor[name]; found {
+		err = failFor
+		return
+	}
+	r.uploaded = append(r.uploaded, fakeUpload{
+		namespace: namespace,
+		name:      name,
+		size:      size,
+		content:   received,
+	})
+	r.events = append(r.events, "upload "+namespace+"/"+name)
 	return
 }
 
@@ -196,6 +277,285 @@ func collect(t *testing.T, writer *bundle.Writer, object *unstructured.Unstructu
 	if err != nil {
 		t.Fatalf("collect %s %s: %v", object.GetKind(), object.GetName(), err)
 	}
+}
+
+// writeDisksFixtureBundle writes a bundle for a VirtualMachine with four
+// disks, covering the forms a capture produces: a claim serving two
+// volumes, a claim a dataVolumeTemplate provisions, and two plain claims.
+// gaps names the claims the bundle holds no bytes for, which is what a
+// capture leaves when the export server offered a claim nothing. It goes
+// through the same writer a capture does, so the fixture is built by the
+// same code that builds real bundles.
+func writeDisksFixtureBundle(t *testing.T, gaps ...string) (path string) {
+	t.Helper()
+	held := map[string]bool{
+		testRootClaim: true,
+		testDataClaim: true,
+		testGapClaim:  true,
+		testThinClaim: true,
+	}
+	for _, claim := range gaps {
+		held[claim] = false
+	}
+	disks := []bundle.Disk{
+		{
+			Claim:   testRootClaim,
+			Path:    bundle.DiskPath(testRootClaim, bundle.DiskGzip),
+			Format:  bundle.DiskGzip,
+			Volumes: []string{"root", "logs"},
+		},
+		{
+			Claim:   testDataClaim,
+			Path:    bundle.DiskPath(testDataClaim, bundle.DiskArchiveGzip),
+			Format:  bundle.DiskArchiveGzip,
+			Volumes: []string{"data"},
+		},
+		{
+			Claim:   testGapClaim,
+			Path:    bundle.DiskPath(testGapClaim, bundle.DiskGzip),
+			Format:  bundle.DiskGzip,
+			Volumes: []string{"archive"},
+		},
+		{
+			Claim:   testThinClaim,
+			Path:    bundle.DiskPath(testThinClaim, bundle.DiskGzip),
+			Format:  bundle.DiskGzip,
+			Volumes: []string{"scratch"},
+		},
+	}
+	path = filepath.Join(t.TempDir(), testBundleFilename)
+	file, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("create bundle: %v", err)
+	}
+	defer func() {
+		_ = file.Close()
+	}()
+	writer := bundle.NewWriter(file)
+	expanded, marshalErr := yaml.Marshal(disksExpandedSpec().Object)
+	if marshalErr != nil {
+		t.Fatalf("marshal the expanded spec: %v", marshalErr)
+	}
+	writer.AddExpandedSpec(expanded)
+	writer.Require(bundle.Requirements{Storage: []bundle.StorageRequirement{
+		{
+			Claim:        testRootClaim,
+			StorageClass: testStorageClass,
+			Size:         "32Gi",
+			VolumeMode:   "Block",
+		},
+		{
+			Claim:        testDataClaim,
+			StorageClass: testStorageClass,
+			Size:         "100Gi",
+			VolumeMode:   "Filesystem",
+		},
+		{
+			Claim:        testGapClaim,
+			StorageClass: testStorageClass,
+			Size:         "10Gi",
+			VolumeMode:   "Filesystem",
+		},
+		{
+			Claim:        testThinClaim,
+			StorageClass: testStorageClass,
+			Size:         "5Gi",
+			VolumeMode:   "Filesystem",
+		},
+	}})
+	for i := range disks {
+		if !held[disks[i].Claim] {
+			continue
+		}
+		writer.Reserve(disks[i])
+	}
+	err = writer.Open(fixtureProvenance())
+	if err != nil {
+		t.Fatalf("open bundle: %v", err)
+	}
+	for i := range disks {
+		if !held[disks[i].Claim] {
+			continue
+		}
+		content := diskBody(disks[i].Claim)
+		err = writer.Stage(disks[i].Path, bytes.NewReader(content), int64(len(content)))
+		if err != nil {
+			t.Fatalf("stage disk %q: %v", disks[i].Claim, err)
+		}
+	}
+	err = writer.Close()
+	if err != nil {
+		t.Fatalf("close bundle: %v", err)
+	}
+	return
+}
+
+// writeUnsizedDiskBundle writes a bundle holding one disk whose
+// requirement could record nothing but the claim's name, which is what a
+// claim the capture was not allowed to read leaves behind: the bytes are
+// held, and nothing says how big a target has to make them.
+func writeUnsizedDiskBundle(t *testing.T) (path string) {
+	t.Helper()
+	path = filepath.Join(t.TempDir(), testBundleFilename)
+	file, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("create bundle: %v", err)
+	}
+	defer func() {
+		_ = file.Close()
+	}()
+	writer := bundle.NewWriter(file)
+	expanded, marshalErr := yaml.Marshal(disksExpandedSpec().Object)
+	if marshalErr != nil {
+		t.Fatalf("marshal the expanded spec: %v", marshalErr)
+	}
+	writer.AddExpandedSpec(expanded)
+	disk := bundle.Disk{
+		Claim:   testThinClaim,
+		Path:    bundle.DiskPath(testThinClaim, bundle.DiskGzip),
+		Format:  bundle.DiskGzip,
+		Volumes: []string{"scratch"},
+	}
+	writer.Reserve(disk)
+	writer.Require(bundle.Requirements{Storage: []bundle.StorageRequirement{
+		{Claim: testThinClaim},
+	}})
+	err = writer.Open(fixtureProvenance())
+	if err != nil {
+		t.Fatalf("open bundle: %v", err)
+	}
+	content := diskBody(disk.Claim)
+	err = writer.Stage(disk.Path, bytes.NewReader(content), int64(len(content)))
+	if err != nil {
+		t.Fatalf("stage disk %q: %v", disk.Claim, err)
+	}
+	err = writer.Close()
+	if err != nil {
+		t.Fatalf("close bundle: %v", err)
+	}
+	return
+}
+
+// diskBody is the compressed bytes the fixture holds for one claim. It is
+// stand-in content — opaque to quo, which streams it unchanged — but
+// different for every claim, so a test can tell one disk from another.
+func diskBody(claim string) (content []byte) {
+	content = bytes.Repeat([]byte("disk of "+claim+"\n"), 256)
+	return
+}
+
+// disksExpandedSpec builds the form a source cluster resolves the disk
+// fixture's VirtualMachine to: the identity values and the source
+// cluster's own metadata, plus the volumes and dataVolumeTemplates that
+// make its disks.
+func disksExpandedSpec() (expanded *unstructured.Unstructured) {
+	expanded = &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "kubevirt.io/v1",
+		"kind":       "VirtualMachine",
+		"metadata": map[string]any{
+			"name":            testVirtualMachineName,
+			"namespace":       testSourceNamespace,
+			"uid":             "2b1f38d2-0e33-4f6a-9d21-8f4e0a4c9b77",
+			"resourceVersion": "158213",
+			"generation":      int64(3),
+		},
+		"spec": map[string]any{
+			"running": false,
+			// The template provisions the data disk, which a deploy
+			// recreates as a DataVolume of its own and removes from the
+			// applied machine.
+			"dataVolumeTemplates": []any{
+				map[string]any{
+					"metadata": map[string]any{"name": testDataClaim},
+					"spec": map[string]any{
+						"storage": map[string]any{
+							"resources":        map[string]any{"requests": map[string]any{"storage": "100Gi"}},
+							"storageClassName": testStorageClass,
+						},
+					},
+				},
+			},
+			"template": map[string]any{
+				"spec": map[string]any{
+					"volumes": []any{
+						map[string]any{
+							"name":                  "root",
+							"persistentVolumeClaim": map[string]any{"claimName": testRootClaim},
+						},
+						map[string]any{
+							"name":                  "logs",
+							"persistentVolumeClaim": map[string]any{"claimName": testRootClaim},
+						},
+						map[string]any{
+							"name":       "data",
+							"dataVolume": map[string]any{"name": testDataClaim},
+						},
+						map[string]any{
+							"name":                  "archive",
+							"persistentVolumeClaim": map[string]any{"claimName": testGapClaim},
+						},
+						map[string]any{
+							"name":                  "scratch",
+							"persistentVolumeClaim": map[string]any{"claimName": testThinClaim},
+						},
+					},
+					"domain": map[string]any{
+						"cpu":      map[string]any{"cores": int64(4)},
+						"machine":  map[string]any{"type": testMachineType},
+						"firmware": map[string]any{"uuid": testUUID},
+						"devices": map[string]any{
+							"interfaces": []any{
+								map[string]any{"name": "default", "macAddress": testMAC},
+							},
+						},
+					},
+				},
+			},
+		},
+		"status": map[string]any{"printableStatus": "Stopped"},
+	}}
+	return
+}
+
+// cdiConfig is CDI's own configuration, which the deploy reads to tell a
+// target that has CDI from one that does not.
+func cdiConfig() (held *unstructured.Unstructured) {
+	held = &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "cdi.kubevirt.io/v1beta1",
+		"kind":       "CDIConfig",
+		"metadata":   map[string]any{"name": cluster.CDIConfigName},
+	}}
+	return
+}
+
+// storageClass is the class the disk fixtures' claims were provisioned
+// from, as the target holds it.
+func storageClass() (held *unstructured.Unstructured) {
+	held = &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "storage.k8s.io/v1",
+		"kind":       "StorageClass",
+		"metadata":   map[string]any{"name": testStorageClass},
+	}}
+	return
+}
+
+// storageProfile is the target's own account of what its storage class
+// can provide. modes says which volume modes it offers.
+func storageProfile(modes ...string) (held *unstructured.Unstructured) {
+	sets := make([]any, 0, len(modes))
+	for _, mode := range modes {
+		sets = append(sets, map[string]any{
+			"volumeMode":  mode,
+			"accessModes": []any{"ReadWriteOnce"},
+		})
+	}
+	held = &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "cdi.kubevirt.io/v1beta1",
+		"kind":       "StorageProfile",
+		"metadata":   map[string]any{"name": testStorageClass},
+		"status":     map[string]any{"claimPropertySets": sets},
+	}}
+	return
 }
 
 // fixtureProvenance is what the fixture bundle records about where it came

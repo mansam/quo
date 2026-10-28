@@ -9,6 +9,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"github.com/mansam/quo/pkg/bundle"
+	"github.com/mansam/quo/pkg/cluster"
 )
 
 // labelManagedBy says quo put this object here. It is the Kubernetes
@@ -36,6 +37,13 @@ const (
 	annotationDeployedAt           = "quo.mansam.dev/deployed-at"
 )
 
+// annotationBindImmediate asks CDI to bind a DataVolume's claim at once
+// rather than wait for a first consumer.
+const annotationBindImmediate = "cdi.kubevirt.io/storage.bind.immediate.requested"
+
+// dataVolumeAPIVersion is the API version a created DataVolume carries.
+const dataVolumeAPIVersion = "cdi.kubevirt.io/v1beta1"
+
 // virtualMachineName is the name the deployed VirtualMachine takes: the
 // one the command line gave, or the machine's own name when it gave none.
 // Nothing in a VirtualMachine's spec references its own name, so a rename
@@ -50,9 +58,9 @@ func virtualMachineName(opt Options, manifest *bundle.Manifest) (name string) {
 
 // buildVirtualMachine returns the VirtualMachine to create: the expanded
 // spec carrying the forced rewrites — the source cluster's metadata
-// cleared, the name when renaming, the namespace, and the labels and
-// annotations — and nothing else changed. The expanded spec is rewritten
-// in place; a deploy uses it once.
+// cleared, the name when renaming, the namespace, the dataVolumeTemplates
+// removed, and the labels and annotations — and nothing else changed. The
+// expanded spec is rewritten in place; a deploy uses it once.
 func buildVirtualMachine(
 	expanded *unstructured.Unstructured,
 	opt Options,
@@ -65,18 +73,12 @@ func buildVirtualMachine(
 		vm.SetName(opt.Name)
 	}
 	vm.SetNamespace(opt.Namespace)
-	labels := vm.GetLabels()
-	if labels == nil {
-		labels = map[string]string{}
-	}
-	labels[labelManagedBy] = "quo"
-	labels[labelBundle] = identity
-	vm.SetLabels(labels)
+	// The templates became standalone DataVolumes, created before the
+	// VirtualMachine, so the volume stanzas that named them are satisfied
+	// unchanged and the machine creates no disks of its own.
+	unstructured.RemoveNestedField(vm.Object, "spec", "dataVolumeTemplates")
+	labelAsDeployed(vm, opt, identity)
 	annotations := vm.GetAnnotations()
-	if annotations == nil {
-		annotations = map[string]string{}
-	}
-	annotations[annotationBundleFile] = opt.Bundle
 	annotations[annotationSourceCluster] = provenance.SourceCluster
 	annotations[annotationSourceNamespace] = provenance.Namespace
 	annotations[annotationSourceVirtualMachine] = provenance.VirtualMachine
@@ -84,6 +86,83 @@ func buildVirtualMachine(
 	annotations[annotationDeployedAt] = time.Now().UTC().Format(time.RFC3339)
 	vm.SetAnnotations(annotations)
 	return
+}
+
+// buildDataVolume returns the DataVolume that receives one of the bundle's
+// disks.
+//
+// The DataVolume is named after the claim the disk backs, so the
+// VirtualMachine's volume stanzas find the claim CDI creates without a
+// rewrite of their own: CDI names the claim after the DataVolume. Its
+// source is always upload, because a claim cannot be populated on its
+// own; its size, volume mode and storage class come from the requirement
+// recorded at capture; and its content type follows the compressed form
+// the bundle holds the disk in, because the target's CDI reads the bytes
+// as what they are.
+//
+// The DataVolume also asks CDI to bind its claim at once. The machine it
+// belongs to is deployed stopped, so nothing will ever be the first
+// consumer a WaitForFirstConsumer class waits for, and the upload cannot
+// start until the claim is bound.
+func buildDataVolume(
+	held bundle.Disk,
+	required bundle.StorageRequirement,
+	opt Options,
+	identity string) (dataVolume *unstructured.Unstructured) {
+	//
+	contentType := "kubevirt"
+	if held.Format == bundle.DiskArchiveGzip {
+		// A tar of a filesystem volume's content, which CDI unpacks
+		// rather than writes as a disk image.
+		contentType = "archive"
+	}
+	storage := map[string]any{
+		"resources": map[string]any{
+			"requests": map[string]any{"storage": required.Size},
+		},
+		"storageClassName": required.StorageClass,
+	}
+	if required.VolumeMode != "" {
+		storage["volumeMode"] = required.VolumeMode
+	}
+	dataVolume = &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": dataVolumeAPIVersion,
+		"kind":       cluster.KindDataVolume,
+		"metadata": map[string]any{
+			"name":      held.Claim,
+			"namespace": opt.Namespace,
+		},
+		"spec": map[string]any{
+			"source":      map[string]any{"upload": map[string]any{}},
+			"contentType": contentType,
+			"storage":     storage,
+		},
+	}}
+	labelAsDeployed(dataVolume, opt, identity)
+	annotations := dataVolume.GetAnnotations()
+	annotations[annotationBindImmediate] = ""
+	dataVolume.SetAnnotations(annotations)
+	return
+}
+
+// labelAsDeployed marks one object as quo's work from one bundle: the
+// managed-by label, the bundle identity label, and the annotation naming
+// the exact bundle file. What the VirtualMachine additionally carries —
+// where it came from and when — is set where the VirtualMachine is built.
+func labelAsDeployed(object *unstructured.Unstructured, opt Options, identity string) {
+	labels := object.GetLabels()
+	if labels == nil {
+		labels = map[string]string{}
+	}
+	labels[labelManagedBy] = "quo"
+	labels[labelBundle] = identity
+	object.SetLabels(labels)
+	annotations := object.GetAnnotations()
+	if annotations == nil {
+		annotations = map[string]string{}
+	}
+	annotations[annotationBundleFile] = opt.Bundle
+	object.SetAnnotations(annotations)
 }
 
 // clearSourceMetadata removes the metadata the source cluster assigned the

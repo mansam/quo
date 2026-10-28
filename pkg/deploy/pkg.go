@@ -1,4 +1,5 @@
-// Package deploy puts a bundle onto a cluster as a stopped VirtualMachine.
+// Package deploy puts a bundle onto a cluster as a stopped VirtualMachine
+// with its disks populated through CDI's upload.
 //
 // Deploy is the library entry point. The CLI only parses a command line
 // and calls it, and tests call it directly: given a fake target and a
@@ -10,6 +11,13 @@
 // applied: it stays the declaration of record. Instancetypes, preferences
 // and ControllerRevisions are never created either; they are in the
 // bundle to be read.
+//
+// Every disk becomes a DataVolume named after the claim it backs, with
+// source upload, and the bundle's bytes are streamed into it unchanged.
+// The VirtualMachine's volume stanzas are left alone: a volume referencing
+// a claim by name finds the claim the DataVolume creates, and the
+// dataVolumeTemplates the declaration carried are removed, because the
+// DataVolumes they describe are created on their own.
 package deploy
 
 // Options is a deploy once the command line is parsed.
@@ -28,6 +36,26 @@ type Options struct {
 	// under the name it was captured with; nothing in a VirtualMachine's
 	// spec references its own name, so a rename forces no other rewrite.
 	Name string
+	// Progress, when set, is called while a disk uploads, so that a
+	// deploy that takes hours can be told apart from one that has hung.
+	Progress func(p Progress)
+}
+
+// Progress describes how far a disk upload has got.
+type Progress struct {
+	// Claim is the PersistentVolumeClaim the disk is going back into.
+	Claim string
+	// Volumes names the volumes of the deployed VirtualMachine the disk
+	// serves.
+	Volumes []string
+	// Disk is the position of this disk in the deploy, counting from one,
+	// and Disks is how many there are.
+	Disk  int
+	Disks int
+	// Transferred is how many bytes have been sent so far.
+	Transferred int64
+	// Done reports the disk as fully sent.
+	Done bool
 }
 
 // Outcome is what became of one object a deploy tried to create.

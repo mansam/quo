@@ -422,6 +422,9 @@ func expectedVirtualMachine(t *testing.T, path, name string) (expected *unstruct
 	} {
 		unstructured.RemoveNestedField(expected.Object, "metadata", field)
 	}
+	// The templates became standalone DataVolumes, created ahead of the
+	// machine, so the machine creates no disks of its own.
+	unstructured.RemoveNestedField(expected.Object, "spec", "dataVolumeTemplates")
 	expected.SetName(name)
 	expected.SetNamespace(testDeployNamespace)
 	expected.SetLabels(map[string]string{

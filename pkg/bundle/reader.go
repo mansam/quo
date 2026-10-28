@@ -2,8 +2,10 @@ package bundle
 
 import (
 	"archive/tar"
+	"crypto/sha256"
 	"errors"
 	"fmt"
+	"hash"
 	"io"
 
 	"sigs.k8s.io/yaml"
@@ -241,7 +243,61 @@ func (r *Reader) ManifestBytes() (content []byte) {
 // it, and asking for one already gone by is an error. Reading a member
 // that failed its digest leaves the reader positioned after it, so a
 // caller that records the failure can go on to the members that follow.
+//
+// A member too large to hold in memory — a disk — is streamed instead,
+// through OpenStream.
 func (r *Reader) Read(path string) (content []byte, err error) {
+	member, err := r.seekTo(path)
+	if err != nil {
+		return
+	}
+	content, err = io.ReadAll(r.tr)
+	if cutShort(err) {
+		err = absentMember(path)
+		return
+	}
+	if err != nil {
+		err = fmt.Errorf("read member %q: %w", path, err)
+		return
+	}
+	found := digest(content)
+	if found != member.Digest {
+		err = &DigestMismatchError{Path: path, Want: member.Digest, Got: found}
+		return
+	}
+	return
+}
+
+// OpenStream returns the member at path as a stream, so that a member too
+// large to hold in memory — a disk — can be consumed as it arrives.
+//
+// The stream verifies the member against the digest the manifest records
+// for it as it is read: a digest that does not match surfaces from Read at
+// the end of the stream, and from Mismatch afterwards, so a caller that
+// handed the stream to something else which consumed it — an upload, say —
+// still learns what the digest said rather than depending on the consumer
+// to hand the error back.
+//
+// The positioning rules of Read apply: members arrive in the order they
+// were written, and asking for one already gone by is an error.
+func (r *Reader) OpenStream(path string) (stream *VerifiedStream, err error) {
+	member, err := r.seekTo(path)
+	if err != nil {
+		return
+	}
+	stream = &VerifiedStream{
+		tr:     r.tr,
+		member: member,
+		hashed: sha256.New(),
+	}
+	return
+}
+
+// seekTo positions the reader at the member path and returns the member
+// the manifest records for it. The members before it are passed over
+// without being verified: only what is read is checked, which is what
+// keeps a reader from hashing every disk a bundle holds before it starts.
+func (r *Reader) seekTo(path string) (member Member, err error) {
 	member, indexed := r.memberByPath[path]
 	if !indexed {
 		err = &FormatError{
@@ -273,22 +329,63 @@ func (r *Reader) Read(path string) (content []byte, err error) {
 		if header.Name != path {
 			continue
 		}
-		content, err = io.ReadAll(r.tr)
-		if cutShort(err) {
-			err = absentMember(path)
-			return
-		}
-		if err != nil {
-			err = fmt.Errorf("read member %q: %w", path, err)
-			return
-		}
-		found := digest(content)
-		if found != member.Digest {
-			err = &DigestMismatchError{Path: path, Want: member.Digest, Got: found}
-			return
-		}
 		return
 	}
+}
+
+// VerifiedStream is one bundle member as a stream, verified against the
+// digest the manifest records for it while it is read.
+type VerifiedStream struct {
+	tr     *tar.Reader
+	member Member
+	hashed hash.Hash
+	// mismatch is the digest verdict once the member has been read to its
+	// end: a DigestMismatchError when the bytes were not what the manifest
+	// recorded, nil when they were and until the end is reached.
+	mismatch error
+}
+
+// Read passes bytes through and verifies the member once its end is
+// reached. A digest that does not match is reported in place of the end of
+// the stream, so that a caller consuming the stream cannot miss it.
+func (r *VerifiedStream) Read(p []byte) (n int, err error) {
+	n, err = r.tr.Read(p)
+	if n > 0 {
+		_, _ = r.hashed.Write(p[:n])
+	}
+	if !errors.Is(err, io.EOF) {
+		return
+	}
+	if r.mismatch == nil {
+		found := encodeDigest(r.hashed)
+		if found != r.member.Digest {
+			r.mismatch = &DigestMismatchError{
+				Path: r.member.Path,
+				Want: r.member.Digest,
+				Got:  found,
+			}
+		}
+	}
+	if r.mismatch != nil {
+		err = r.mismatch
+	}
+	return
+}
+
+// Size is the byte count the manifest records for the member, which is
+// what the stream delivers when the bundle behind it is whole.
+func (r *VerifiedStream) Size() (size int64) {
+	size = r.member.Size
+	return
+}
+
+// Mismatch returns the digest verdict once the member has been read to its
+// end: a DigestMismatchError when the bytes were not what the manifest
+// recorded, nil when they were and until the end is reached. A caller that
+// gave the stream to something else to consume reads the verdict here.
+func (r *VerifiedStream) Mismatch() (err error) {
+	err = r.mismatch
+	return
 }
 
 // absentMember reports a member the manifest indexes that the bundle does

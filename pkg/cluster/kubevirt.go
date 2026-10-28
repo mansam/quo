@@ -32,6 +32,13 @@ var (
 		Version:  "v1",
 		Resource: "namespaces",
 	}
+	// dataVolumeResource serves DataVolumes, which a deploy creates to
+	// receive a bundle's disks and reads back while CDI prepares them.
+	dataVolumeResource = schema.GroupVersionResource{
+		Group:    "cdi.kubevirt.io",
+		Version:  "v1beta1",
+		Resource: "datavolumes",
+	}
 	kubeVirtResource = schema.GroupVersionResource{
 		Group:    "kubevirt.io",
 		Version:  "v1",

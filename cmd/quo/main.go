@@ -69,7 +69,8 @@ The deploy namespace is required: quo never falls back to the kubeconfig's
 current namespace, because a diagnostic VirtualMachine landing in someone's
 default namespace by accident is a quiet mistake. The deployed VirtualMachine
 is the source cluster's own resolution of the captured one and is left stopped;
-starting it is virtctl start.
+starting it is virtctl start. Each disk the bundle holds is uploaded into a
+DataVolume through the target cluster's CDI, which has to be installed.
 
 A bundle contains plaintext Secrets from the source cluster. Treat it with the
 same care as the cluster it was captured from.

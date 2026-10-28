@@ -92,6 +92,15 @@ const (
 	KindStorageProfile   = "StorageProfile"
 )
 
+// KindCDIConfig is CDI's own configuration. A deploy reads it to tell a
+// target that has CDI from one that does not, because a bundle's disks go
+// back onto a cluster only through CDI's upload.
+const KindCDIConfig = "CDIConfig"
+
+// CDIConfigName is the name of the CDIConfig singleton: CDI creates one
+// and calls it config.
+const CDIConfigName = "config"
+
 // DiskExport is a VirtualMachineExport that has become ready: the disks of one
 // VirtualMachine, each addressed by the PersistentVolumeClaim behind it.
 type DiskExport interface {
