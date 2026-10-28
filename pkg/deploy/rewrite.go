@@ -58,10 +58,11 @@ func virtualMachineName(opt Options, manifest *bundle.Manifest) (name string) {
 
 // buildVirtualMachine returns the VirtualMachine to create: the expanded
 // spec carrying the forced rewrites — the source cluster's metadata
-// cleared, the name when renaming, the namespace, the multus network
-// names from the mapping, the dataVolumeTemplates removed, and the
-// labels and annotations — and nothing else changed. The expanded spec
-// is rewritten in place; a deploy uses it once.
+// cleared, the name when renaming, the namespace, the instancetype and
+// preference matchers removed, the multus network names from the mapping,
+// the dataVolumeTemplates removed, and the labels and annotations — and
+// nothing else changed. The expanded spec is rewritten in place; a deploy
+// uses it once.
 func buildVirtualMachine(
 	expanded *unstructured.Unstructured,
 	opt Options,
@@ -76,6 +77,13 @@ func buildVirtualMachine(
 	}
 	vm.SetNamespace(opt.Namespace)
 	rewriteNetworks(vm, networks)
+	// The expansion is the source cluster's own resolution of the machine,
+	// so what the instancetype and the preference named is already folded
+	// into the spec. A matcher that survives the expansion is removed,
+	// because the applied VirtualMachine names none: no ControllerRevision
+	// is created on the target, and none is needed.
+	unstructured.RemoveNestedField(vm.Object, "spec", "instancetype")
+	unstructured.RemoveNestedField(vm.Object, "spec", "preference")
 	// The templates became standalone DataVolumes, created before the
 	// VirtualMachine, so the volume stanzas that named them are satisfied
 	// unchanged and the machine creates no disks of its own.

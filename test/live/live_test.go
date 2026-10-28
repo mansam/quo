@@ -23,7 +23,10 @@ import (
 	"fmt"
 	"os"
 	"testing"
+	"time"
 
+	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
@@ -244,6 +247,42 @@ func (r *suite) serves(groupVersion, name string) (served bool) {
 		return
 	}
 	return
+}
+
+// await reads one object back, in the namespace given, until it reaches the
+// state ready reports, and returns the last thing it read.
+func (r *suite) await(
+	ctx context.Context,
+	gvr schema.GroupVersionResource,
+	namespace, name string,
+	awaited string,
+	timeout time.Duration,
+	ready func(object *unstructured.Unstructured) (done bool)) (object *unstructured.Unstructured, err error) {
+	//
+	deadline := time.Now().Add(timeout)
+	for {
+		object, err = r.dynamic.
+			Resource(gvr).
+			Namespace(namespace).
+			Get(ctx, name, meta.GetOptions{})
+		if err != nil {
+			err = fmt.Errorf("get %s %q: %w", gvr.Resource, name, err)
+			return
+		}
+		if ready(object) {
+			return
+		}
+		if time.Now().After(deadline) {
+			err = fmt.Errorf("%s %q did not %s within %s", gvr.Resource, name, awaited, timeout)
+			return
+		}
+		select {
+		case <-ctx.Done():
+			err = ctx.Err()
+			return
+		case <-time.After(pollInterval):
+		}
+	}
 }
 
 // loadConfig reads the kubeconfig the suite connects with.

@@ -353,7 +353,37 @@ func (r *fixture) createAttachment(ctx context.Context, s *suite) (err error) {
 // waits for CDI to provision it, so that the claim exists and is bound before
 // anything tries to export it.
 func (r *fixture) createDisk(ctx context.Context, s *suite) (err error) {
-	storage := map[string]any{
+	dv := r.buildObject(
+		"cdi.kubevirt.io/v1beta1",
+		"DataVolume",
+		partDisk,
+		map[string]any{
+			"spec": map[string]any{
+				"source":  map[string]any{"blank": map[string]any{}},
+				"storage": diskStorage(),
+			},
+		})
+	annotate(dv, bindImmediately, "true")
+	err = r.submit(ctx, s, dataVolumeResource, dv)
+	if err != nil {
+		return
+	}
+	_, err = s.await(
+		ctx,
+		dataVolumeResource,
+		r.namespace,
+		r.named(partDisk),
+		"become provisioned",
+		provisionTimeout,
+		provisioned)
+	return
+}
+
+// diskStorage is what the fixture asks of the cluster's storage for its disk:
+// fixtureDiskSize on the class the environment named, or on whichever class
+// the cluster defaults to.
+func diskStorage() (storage map[string]any) {
+	storage = map[string]any{
 		"resources": map[string]any{
 			"requests": map[string]any{"storage": fixtureDiskSize},
 		},
@@ -362,29 +392,6 @@ func (r *fixture) createDisk(ctx context.Context, s *suite) (err error) {
 	if class != "" {
 		storage["storageClassName"] = class
 	}
-	dv := r.buildObject(
-		"cdi.kubevirt.io/v1beta1",
-		"DataVolume",
-		partDisk,
-		map[string]any{
-			"spec": map[string]any{
-				"source":  map[string]any{"blank": map[string]any{}},
-				"storage": storage,
-			},
-		})
-	annotate(dv, bindImmediately, "true")
-	err = r.submit(ctx, s, dataVolumeResource, dv)
-	if err != nil {
-		return
-	}
-	err = r.await(
-		ctx,
-		s,
-		dataVolumeResource,
-		r.named(partDisk),
-		"become provisioned",
-		provisionTimeout,
-		provisioned)
 	return
 }
 
@@ -403,10 +410,10 @@ func (r *fixture) createVirtualMachine(ctx context.Context, s *suite) (err error
 	if err != nil {
 		return
 	}
-	err = r.await(
+	_, err = s.await(
 		ctx,
-		s,
 		virtualMachineResource,
+		r.namespace,
 		r.named(partVM),
 		"settle",
 		settleTimeout,
@@ -421,6 +428,14 @@ func (r *fixture) createVirtualMachine(ctx context.Context, s *suite) (err error
 func (r *fixture) buildVirtualMachineSpec() (spec map[string]any) {
 	spec = map[string]any{
 		"runStrategy": "Halted",
+		// The template declares the root disk the way a machine that ran
+		// once and was stopped does: KubeVirt provisions a template's
+		// DataVolume when the machine starts and leaves it behind when it
+		// stops. The fixture never starts the machine, so it creates the
+		// DataVolume itself, and the template and the volume name one and
+		// the same disk — which is what gives the round trip a template to
+		// hoist onto a standalone DataVolume.
+		"dataVolumeTemplates": []any{r.buildDataVolumeTemplate()},
 		"instancetype": map[string]any{
 			"kind": "VirtualMachineInstancetype",
 			"name": r.named(partInstancetype),
@@ -461,6 +476,20 @@ func (r *fixture) buildVirtualMachineSpec() (spec map[string]any) {
 				"networks": r.buildNetworks(),
 				"volumes":  r.buildVolumes(),
 			},
+		},
+	}
+	return
+}
+
+// buildDataVolumeTemplate returns the template stanza declaring the root
+// disk: the same name, source and storage as the DataVolume the fixture
+// creates for it.
+func (r *fixture) buildDataVolumeTemplate() (template map[string]any) {
+	template = map[string]any{
+		"metadata": map[string]any{"name": r.named(partDisk)},
+		"spec": map[string]any{
+			"source":  map[string]any{"blank": map[string]any{}},
+			"storage": diskStorage(),
 		},
 	}
 	return
@@ -594,43 +623,6 @@ func (r *fixture) submit(
 		name:      built.GetName(),
 	})
 	return
-}
-
-// await reads one object back until it reaches the state ready reports.
-func (r *fixture) await(
-	ctx context.Context,
-	s *suite,
-	gvr schema.GroupVersionResource,
-	name string,
-	awaited string,
-	timeout time.Duration,
-	ready func(object *unstructured.Unstructured) (done bool)) (err error) {
-	//
-	deadline := time.Now().Add(timeout)
-	for {
-		var object *unstructured.Unstructured
-		object, err = s.dynamic.
-			Resource(gvr).
-			Namespace(r.namespace).
-			Get(ctx, name, meta.GetOptions{})
-		if err != nil {
-			err = fmt.Errorf("get %s %q: %w", gvr.Resource, name, err)
-			return
-		}
-		if ready(object) {
-			return
-		}
-		if time.Now().After(deadline) {
-			err = fmt.Errorf("%s %q did not %s within %s", gvr.Resource, name, awaited, timeout)
-			return
-		}
-		select {
-		case <-ctx.Done():
-			err = ctx.Err()
-			return
-		case <-time.After(pollInterval):
-		}
-	}
 }
 
 // provisioned reports a DataVolume CDI has finished importing, which is when

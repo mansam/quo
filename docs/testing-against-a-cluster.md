@@ -16,6 +16,15 @@ Two things that cannot be checked that way live in `test/live`, behind the
   `cluster.Cluster`, so it never calls `pkg/cluster`. A thin adapter is
   exactly where a wrong field name or a wrong subresource path survives every
   test that does not make a real request.
+- **the round trip.** The suite captures its fixture into a bundle, deploys
+  the bundle into a second namespace on the same cluster, and compares what
+  the target holds against the fixture. Whether a bundle actually reproduces
+  the VirtualMachine — whether CDI's upload accepts the export's compressed
+  bytes unchanged, whether the deploy's rewrites land right, whether the
+  mappings resolve — is the question phase 1 left open, and only a real
+  cluster answers it. The target's own expand-spec of the deployed machine is
+  diffed against the bundle's expansion and the differences reported, because
+  two clusters resolving the machine differently is information.
 
 The suite is excluded from the default test run. `go test ./...` does not
 build it, `go vet ./...` does not see it, and local development never needs a
@@ -27,8 +36,10 @@ cluster.
 go test -tags live ./test/live/...
 ```
 
-Expect it to take several minutes: it provisions a volume through CDI and
-waits for a real VirtualMachineExport server to come up.
+Expect it to take several minutes: it provisions a volume through CDI, waits
+for a real VirtualMachineExport server to come up, and then deploys the
+captured bundle back onto the cluster through CDI's upload before taking it
+off again.
 
 With no usable cluster, every test that needs one skips and says what the
 cluster would have had to offer. Nothing fails. The comparison logic that does
@@ -72,6 +83,12 @@ check the suite still builds.
   was refused; the suite is not, because it has to build what it captures and
   then check that everything arrived.
 
+  The round-trip test needs a namespace of its own to deploy into —
+  deploying into the fixture's namespace would collide with the fixture — so
+  it always creates one and removes it again. A kubeconfig that may not
+  create a namespace runs the capture side of the suite and skips the round
+  trip, saying so.
+
 ## Settings
 
 | Variable | Meaning |
@@ -87,6 +104,13 @@ behind it, a ConfigMap, a cloud-init Secret, an access-credential Secret, a
 ServiceAccount, an instancetype, a preference, and a
 NetworkAttachmentDefinition where Multus is installed. The VirtualMachine also
 names a container disk image, which nothing pulls because it is never started.
+
+The round-trip test then deploys the captured bundle of that fixture into a
+second namespace: the VirtualMachine, its disk as a DataVolume populated
+through CDI's upload, and the closure objects. It removes the deployment again
+with quo's own undeploy — which is also the first place the undeploy runs
+against a real API server — and deletes the namespace after that, which is
+the sure end however the test went.
 
 Every name is derived from one random suffix, so two runs sharing a namespace
 do not collide. Everything created is removed again in the reverse order,
@@ -113,6 +137,13 @@ than the graph does is the traversal working.
 An object quo found and was then not allowed to read counts as found. Being
 refused the read is a different problem with a different fix, and quo records
 it in the capture record rather than passing over it.
+
+**The round trip** fails when the deploy did not create everything it tried,
+or when an object the fixture has of a kind a deploy creates is missing from
+the target — the failure names the object. The expand-spec differences are
+logged and are not failures: the two clusters resolving the machine
+differently is information, above all where the deploy's own rewrites show up
+(the hoisted dataVolumeTemplates, the qualified network name).
 
 ## In CI
 

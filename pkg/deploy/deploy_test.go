@@ -316,6 +316,33 @@ func TestDeployRefusesWhenTheTargetCannotTakeIt(t *testing.T) {
 	}
 }
 
+func TestDeployRemovesTheMatchersTheExpansionStillCarries(t *testing.T) {
+	g := gomega.NewGomegaWithT(t)
+	// One of the shapes the expand-spec subresource produces: a resolution
+	// that still names the instancetype and preference it was asked for.
+	// The applied VirtualMachine names none either way, because the
+	// resolution is what lands — a matcher would have the target create a
+	// ControllerRevision for a machine that needs none.
+	path := writeExpandedBundle(t, matcherExpandedSpec(t))
+	fake := target()
+
+	record, err := Deploy(context.TODO(), fake, testOptions(path))
+
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	g.Expect(record.Steps).To(gomega.HaveLen(1))
+	created := fake.created[0]
+	_, matched, _ := unstructured.NestedMap(created.Object, "spec", "instancetype")
+	g.Expect(matched).To(gomega.BeFalse())
+	_, matched, _ = unstructured.NestedMap(created.Object, "spec", "preference")
+	g.Expect(matched).To(gomega.BeFalse())
+	// What the matchers resolved to is still there: the machine type and
+	// CPU the source cluster folded in arrive with the rest of the spec.
+	machineType, found, _ := unstructured.NestedString(
+		created.Object, "spec", "template", "spec", "domain", "machine", "type")
+	g.Expect(found).To(gomega.BeTrue())
+	g.Expect(machineType).To(gomega.Equal(testMachineType))
+}
+
 func TestDeploySkipsAnExpandedSpecThatFailsItsDigest(t *testing.T) {
 	g := gomega.NewGomegaWithT(t)
 	// One byte of the expansion changed in transit. The machine type sits

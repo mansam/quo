@@ -391,6 +391,19 @@ var apiVersionByKind = map[string]string{
 // whose expand-spec read failed produces.
 func writeFixtureBundle(t *testing.T, expand bool) (path string) {
 	t.Helper()
+	var expanded *unstructured.Unstructured
+	if expand {
+		expanded = expandedSpec()
+	}
+	return writeExpandedBundle(t, expanded)
+}
+
+// writeExpandedBundle writes the fixture bundle around the expansion given:
+// the collected objects writeFixtureBundle holds, with the expansion member
+// swapped for whichever form a source cluster's expand-spec read produced.
+// A nil expansion leaves the member out.
+func writeExpandedBundle(t *testing.T, expanded *unstructured.Unstructured) (path string) {
+	t.Helper()
 	path = filepath.Join(t.TempDir(), testBundleFilename)
 	file, err := os.Create(path)
 	if err != nil {
@@ -404,12 +417,12 @@ func writeFixtureBundle(t *testing.T, expand bool) (path string) {
 	collect(t, writer, instancetype())
 	collect(t, writer, preference())
 	collect(t, writer, controllerRevision())
-	if expand {
-		expanded, marshalErr := yaml.Marshal(expandedSpec().Object)
+	if expanded != nil {
+		encoded, marshalErr := yaml.Marshal(expanded.Object)
 		if marshalErr != nil {
 			t.Fatalf("marshal the expanded spec: %v", marshalErr)
 		}
-		writer.AddExpandedSpec(expanded)
+		writer.AddExpandedSpec(encoded)
 	}
 	err = writer.Open(fixtureProvenance())
 	if err != nil {
@@ -1075,6 +1088,34 @@ func expandedSpec() (expanded *unstructured.Unstructured) {
 		},
 		"status": map[string]any{"printableStatus": "Stopped"},
 	}}
+	return
+}
+
+// matcherExpandedSpec builds the form a source cluster resolves the fixture
+// VirtualMachine to when the expand-spec read leaves the instancetype and
+// preference matchers on the spec it resolved. Whether that happens is a
+// fact the live round-trip observes rather than assumes, so the deploy is
+// built to name no matcher either way.
+func matcherExpandedSpec(t *testing.T) (expanded *unstructured.Unstructured) {
+	t.Helper()
+	expanded = expandedSpec()
+	for matcher, named := range map[string]map[string]any{
+		"instancetype": {
+			"kind":         "VirtualMachineInstancetype",
+			"name":         "standard-large",
+			"revisionName": "db-01-4f5e6d7c",
+		},
+		"preference": {
+			"kind":         "VirtualMachinePreference",
+			"name":         "windows-defaults",
+			"revisionName": "db-01-9c2d3e4f",
+		},
+	} {
+		err := unstructured.SetNestedField(expanded.Object, named, "spec", matcher)
+		if err != nil {
+			t.Fatalf("set the %s matcher of the expanded spec: %v", matcher, err)
+		}
+	}
 	return
 }
 
