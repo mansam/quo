@@ -18,22 +18,24 @@ import (
 //
 // quo refuses, before creating anything, when the bundle cannot be read or
 // its format version is unknown, when it holds no expanded spec, when the
-// namespace does not exist, and when the VirtualMachine it would create is
-// already there. A bundle holding disks to upload is refused as well when
-// the target has no CDI, when a disk's storage class is not on the target
-// under the name the bundle records, and when the target's own account of
-// that class rules out the volume mode the disk needs. Each refusal names
-// what it found.
+// namespace does not exist, and when any object it would create — a
+// DataVolume, a closure object, the VirtualMachine — is already there, one
+// refusal naming them all. A bundle holding disks to upload is refused as
+// well when the target has no CDI, when a disk's storage class is not on
+// the target under the name the bundle records, and when the target's own
+// account of that class rules out the volume mode the disk needs. Each
+// refusal names what it found.
 //
 // Past the refusals the deploy is best-effort: a step that fails is
 // recorded and the run continues, and a bundle member that fails its
 // digest is skipped rather than applied, so corruption never reaches the
 // target. The objects go on in order — the DataVolumes, then the uploads,
-// then the VirtualMachine last — so that nothing in the namespace looks
-// like a VirtualMachine until its disks are in place. The record is
-// returned however the run ended, and the error is non-nil when anything
-// was not created, so that a caller can tell a complete deploy from a
-// partial one.
+// then the closure objects, then the VirtualMachine last — so that nothing
+// in the namespace looks like a VirtualMachine until its disks are in
+// place, and the machine's cloud-init, sysprep and access credentials are
+// present when it is examined. The record is returned however the run
+// ended, and the error is non-nil when anything was not created, so that a
+// caller can tell a complete deploy from a partial one.
 //
 // The context bounds the run: cancelling it stops the deploy where it
 // stands, and everything already created stays in place, because a deploy
@@ -57,38 +59,51 @@ func Deploy(ctx context.Context, t cluster.Target, opt Options) (record Record, 
 		err = &NoExpandedSpecError{Bundle: opt.Bundle}
 		return
 	}
-	err = validateTarget(ctx, t, opt, manifest)
+	closure := planClosure(manifest, opt)
+	disks := planDisks(manifest, opt)
+	err = validateTarget(ctx, t, opt, manifest, closure, disks)
 	if err != nil {
 		return
 	}
-	// A bundle is written with its resources first and its disks last,
-	// and the reader walks forward only, so the expansion is read before
-	// the first disk is asked for. It is read whole — the expansion is one
-	// small member — and applied last.
+	// A bundle is written with its resources first, its expansion after
+	// them and its disks last, and the reader walks forward only. The
+	// closure members are read before the expansion is asked for — asking
+	// for the expansion walks past every resource member and leaves them
+	// unreadable — and the expansion is read before the first disk is
+	// asked for. Both are read whole and held, because they are small,
+	// and applied after the disks, each at its turn.
+	err = readClosure(reader, closure)
+	if err != nil {
+		return
+	}
 	expanded, step, err := readVirtualMachine(reader, manifest, opt)
 	if err != nil {
 		return
 	}
 	if step.Outcome == OutcomeSkipped {
 		// The member failed its digest, so the machine it names cannot be
-		// created. The disks are not uploaded for a machine that cannot
-		// be, which is the same rule that refuses a bundle holding no
-		// expansion at all.
+		// created. The disks are not uploaded and the closure objects are
+		// not applied for a machine that cannot be, which is the same
+		// rule that refuses a bundle holding no expansion at all.
 		record = append(record, step)
 		err = &NotCreatedError{NotCreated: 1, Attempted: 1}
 		return
 	}
-	disks := planDisks(manifest, opt)
 	err = resolveDisks(ctx, t, disks)
 	if err != nil {
 		return
 	}
 	identity := bundleIdentity(reader.ManifestBytes())
-	// The DataVolumes, then the uploads, then the VirtualMachine last.
+	// The DataVolumes, then the uploads, then the closure objects, then
+	// the VirtualMachine last.
 	createDataVolumes(ctx, t, disks, opt, identity)
 	uploadDisks(ctx, t, reader, disks, opt)
+	createClosure(ctx, t, closure, opt, identity)
 	for i := range disks {
 		record = append(record, disks[i].step)
+	}
+	for i := range closure {
+		record = append(record, closure[i].step)
 	}
 	record = append(record, createVirtualMachine(
 		ctx, t, expanded, step, opt, manifest.Provenance, identity))
@@ -101,14 +116,23 @@ func Deploy(ctx context.Context, t cluster.Target, opt Options) (record Record, 
 // cannot succeed.
 //
 // The namespace has to be there, because objects created into a namespace
-// that was never made land nowhere. And the name the VirtualMachine will
-// take has to be free, because something already holding it is someone
-// else's work, which a deploy neither overwrites nor builds around.
+// that was never made land nowhere. And every name a deploy would take has
+// to be free — the DataVolumes it will create, the closure objects it will
+// apply, the VirtualMachine — because something already holding one is
+// someone else's work, which a deploy neither overwrites nor builds
+// around. One refusal names every colliding object.
+//
+// The check is made from the manifest alone, before any member is read:
+// what the manifest says the bundle holds is what the deploy would create,
+// and a member that later fails its digest can only shrink that set, never
+// grow it.
 func validateTarget(
 	ctx context.Context,
 	t cluster.Target,
 	opt Options,
-	manifest *bundle.Manifest) (err error) {
+	manifest *bundle.Manifest,
+	closure []plannedClosure,
+	disks []plannedDisk) (err error) {
 	//
 	_, err = t.GetNamespace(ctx, opt.Namespace)
 	if errors.Is(err, cluster.ErrNotFound) {
@@ -118,21 +142,57 @@ func validateTarget(
 	if err != nil {
 		return
 	}
-	ref := cluster.ObjectRef{
+	var taken []cluster.ObjectRef
+	for _, ref := range wouldCreate(opt, manifest, closure, disks) {
+		_, err = t.GetObject(ctx, ref)
+		if errors.Is(err, cluster.ErrNotFound) {
+			// A name that is free is what a deploy went looking for.
+			err = nil
+			continue
+		}
+		if err != nil {
+			return
+		}
+		taken = append(taken, ref)
+	}
+	if len(taken) > 0 {
+		err = &AlreadyExistsError{Objects: taken}
+	}
+	return
+}
+
+// wouldCreate returns every object a deploy would put onto the target, in
+// the order it would create them: the DataVolumes for the disks it will
+// place, the closure objects it will apply, and the VirtualMachine. A disk
+// planned as skipped is not among them, because it creates nothing.
+func wouldCreate(
+	opt Options,
+	manifest *bundle.Manifest,
+	closure []plannedClosure,
+	disks []plannedDisk) (refs []cluster.ObjectRef) {
+	//
+	for i := range disks {
+		if disks[i].step.Outcome == OutcomeSkipped {
+			continue
+		}
+		refs = append(refs, cluster.ObjectRef{
+			Kind:      cluster.KindDataVolume,
+			Namespace: opt.Namespace,
+			Name:      disks[i].step.Name,
+		})
+	}
+	for i := range closure {
+		refs = append(refs, cluster.ObjectRef{
+			Kind:      closure[i].step.Kind,
+			Namespace: opt.Namespace,
+			Name:      closure[i].step.Name,
+		})
+	}
+	refs = append(refs, cluster.ObjectRef{
 		Kind:      cluster.KindVirtualMachine,
 		Namespace: opt.Namespace,
 		Name:      virtualMachineName(opt, manifest),
-	}
-	_, err = t.GetObject(ctx, ref)
-	if errors.Is(err, cluster.ErrNotFound) {
-		// A name that is free is what a deploy went looking for.
-		err = nil
-		return
-	}
-	if err != nil {
-		return
-	}
-	err = &AlreadyExistsError{Kind: ref.Kind, Namespace: ref.Namespace, Name: ref.Name}
+	})
 	return
 }
 

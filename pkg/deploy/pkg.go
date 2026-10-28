@@ -12,6 +12,13 @@
 // and ControllerRevisions are never created either; they are in the
 // bundle to be read.
 //
+// The ConfigMaps, Secrets and ServiceAccounts a bundle holds are applied
+// unchanged apart from the forced rewrites, so that the machine's
+// cloud-init, sysprep and access credentials are present when it is
+// examined. Everything else a bundle holds — the network and storage
+// objects above all — is never written, because it describes the source
+// cluster rather than the machine.
+//
 // Every disk becomes a DataVolume named after the claim it backs, with
 // source upload, and the bundle's bytes are streamed into it unchanged.
 // The VirtualMachine's volume stanzas are left alone: a volume referencing

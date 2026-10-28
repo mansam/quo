@@ -145,6 +145,23 @@ func buildDataVolume(
 	return
 }
 
+// buildClosureObject returns the closure object to create: the bundle's
+// member carrying the forced rewrites that apply to every created object
+// — the source cluster's metadata cleared, the namespace, and the labels
+// and annotations — and nothing else changed. The member is rewritten in
+// place; a deploy uses it once.
+func buildClosureObject(
+	member *unstructured.Unstructured,
+	opt Options,
+	identity string) (object *unstructured.Unstructured) {
+	//
+	object = member
+	clearSourceMetadata(object)
+	object.SetNamespace(opt.Namespace)
+	labelAsDeployed(object, opt, identity)
+	return
+}
+
 // labelAsDeployed marks one object as quo's work from one bundle: the
 // managed-by label, the bundle identity label, and the annotation naming
 // the exact bundle file. What the VirtualMachine additionally carries —
@@ -165,19 +182,17 @@ func labelAsDeployed(object *unstructured.Unstructured, opt Options, identity st
 	object.SetAnnotations(annotations)
 }
 
-// clearSourceMetadata removes the metadata the source cluster assigned the
-// expansion, none of which a target can recreate: it mints its own uid,
-// creation timestamp, generation and resourceVersion when it creates, and
-// records its own managed fields — and it refuses a create that arrives
-// carrying a resourceVersion. Where the machine came from is already said
-// by the provenance annotations, so none of the source's bookkeeping is
-// sent.
-func clearSourceMetadata(vm *unstructured.Unstructured) {
-	vm.SetResourceVersion("")
-	vm.SetUID("")
-	vm.SetCreationTimestamp(meta.Time{})
-	vm.SetGeneration(0)
-	vm.SetManagedFields(nil)
+// clearSourceMetadata removes the metadata the source cluster assigned an
+// object the bundle holds, none of which a target can recreate: it mints
+// its own uid, creation timestamp, generation and resourceVersion when it
+// creates, and records its own managed fields — and it refuses a create
+// that arrives carrying a resourceVersion.
+func clearSourceMetadata(object *unstructured.Unstructured) {
+	object.SetResourceVersion("")
+	object.SetUID("")
+	object.SetCreationTimestamp(meta.Time{})
+	object.SetGeneration(0)
+	object.SetManagedFields(nil)
 }
 
 // bundleIdentity is the value that labels every object created from one
