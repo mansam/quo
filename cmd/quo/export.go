@@ -50,6 +50,10 @@ func runExport(args []string) (err error) {
 		return
 	}
 	err = printSkipped(os.Stdout, record)
+	if err != nil {
+		return
+	}
+	err = warnUndeployable(os.Stdout, record)
 	return
 }
 
@@ -85,6 +89,41 @@ func subject(attempt bundle.Attempt) (named string) {
 		return
 	}
 	named = attempt.Kind + " " + attempt.Name
+	return
+}
+
+// warnUndeployable says when a capture produced a bundle that cannot be
+// deployed: one whose expanded spec could not be read, which a deploy refuses.
+// The capture has still succeeded, so this is said plainly rather than as a
+// failure, and on a line of its own after the skipped objects rather than
+// among them: the person capturing the bundle learns here, before it is sent,
+// that it will not deploy, and why the read failed.
+func warnUndeployable(out io.Writer, record bundle.CaptureRecord) (err error) {
+	for i := range record {
+		attempt := record[i]
+		if attempt.Kind != bundle.KindExpandedSpec {
+			continue
+		}
+		if attempt.Outcome != bundle.OutcomeSkipped {
+			continue
+		}
+		_, err = fmt.Fprintf(
+			out,
+			"\nThe capture could not read the expanded spec (%s), so the bundle cannot be deployed.\n",
+			whySkipped(attempt))
+		return
+	}
+	return
+}
+
+// whySkipped renders why one skipped attempt could not be collected: the
+// reason the capture record classifies it under, then what the cluster said,
+// which is where an actionable detail such as the missing permission appears.
+func whySkipped(attempt bundle.Attempt) (why string) {
+	why = string(attempt.Reason)
+	if attempt.Message != "" {
+		why = why + ": " + attempt.Message
+	}
 	return
 }
 

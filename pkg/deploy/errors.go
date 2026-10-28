@@ -2,6 +2,9 @@ package deploy
 
 import (
 	"fmt"
+	"strings"
+
+	"github.com/mansam/quo/pkg/cluster"
 )
 
 // NoExpandedSpecError reports a bundle whose capture could not read the
@@ -45,18 +48,33 @@ func (r *MissingNamespaceError) Is(err error) (matched bool) {
 	return
 }
 
-// AlreadyExistsError reports an object the target cluster already holds
-// where a deploy would create one of its own. Someone else's work is
-// neither overwritten nor built around.
+// AlreadyExistsError reports objects the target cluster already holds
+// where a deploy would create its own. Someone else's work is neither
+// overwritten nor built around.
 type AlreadyExistsError struct {
-	Kind      string
-	Namespace string
-	Name      string
+	// Objects are the colliding objects, in the order the deploy would
+	// create them.
+	Objects []cluster.ObjectRef
 }
 
-// Error names the object that is already there.
+// Error names every object that is already there.
 func (r *AlreadyExistsError) Error() string {
-	return fmt.Sprintf("%s %s/%s already exists on the target cluster", r.Kind, r.Namespace, r.Name)
+	named := make([]string, 0, len(r.Objects))
+	for i := range r.Objects {
+		named = append(named, fmt.Sprintf(
+			"%s %s/%s",
+			r.Objects[i].Kind,
+			r.Objects[i].Namespace,
+			r.Objects[i].Name))
+	}
+	exists := "exist"
+	if len(r.Objects) == 1 {
+		exists = "exists"
+	}
+	return fmt.Sprintf(
+		"%s already %s on the target cluster",
+		strings.Join(named, ", "),
+		exists)
 }
 
 // Is reports whether err is an AlreadyExistsError.
