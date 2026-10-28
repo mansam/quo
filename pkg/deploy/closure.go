@@ -108,7 +108,8 @@ func readClosure(reader *bundle.Reader, closure []plannedClosure) (err error) {
 // cloud-init, sysprep and access credentials are present when it is
 // examined. An object that was skipped when it was read creates nothing;
 // a create that fails is recorded and the run continues to the objects
-// behind it and the machine.
+// behind it and the machine. A dry run applies none of them and still
+// says each one as created, which is what a real deploy would do with it.
 func createClosure(
 	ctx context.Context,
 	t cluster.Target,
@@ -120,6 +121,13 @@ func createClosure(
 		if closure[i].step.Outcome == OutcomeSkipped {
 			// An object that creates nothing was decided when its member
 			// was read; the record already says why.
+			continue
+		}
+		if opt.DryRun {
+			// Nothing is created. The step still says created, because
+			// the record a dry run returns is the record a real deploy
+			// would print.
+			closure[i].step.Outcome = OutcomeCreated
 			continue
 		}
 		object := buildClosureObject(closure[i].object, opt, identity)

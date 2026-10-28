@@ -96,6 +96,11 @@ func newUploadReporter(out io.Writer) (report func(p deploy.Progress)) {
 // target's resources. A run that refused before attempting anything has
 // no record, so nothing is printed for one.
 //
+// A dry run prints the record the real deploy would print — the steps say
+// created, because that is what a real deploy would do with each object —
+// behind one line saying that none of it happened, so the steps cannot be
+// read as actions.
+//
 // The record ends with the undeploy command for what exists, so that the
 // way to take the deployment off again is the last thing said. It is
 // printed only when something was created: a deploy that put nothing on
@@ -108,6 +113,9 @@ func printRecord(out io.Writer, record deploy.Record, opt deploy.Options) (err e
 		return
 	}
 	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	if opt.DryRun {
+		_, _ = fmt.Fprintln(tw, "Dry run: nothing is created, nothing is uploaded.")
+	}
 	if len(record.Steps) > 0 {
 		_, _ = fmt.Fprintf(tw, "Deploy record (%d)\n", len(record.Steps))
 		for i := range record.Steps {
@@ -154,9 +162,16 @@ func printRecord(out io.Writer, record deploy.Record, opt deploy.Options) (err e
 	if !created {
 		return
 	}
+	// A dry run points the command at what a real deploy would put
+	// there, which is not there yet; a real one at what is.
+	lead := "Remove it again with:"
+	if opt.DryRun {
+		lead = "Remove what it would create with:"
+	}
 	_, err = fmt.Fprintf(
 		out,
-		"\nRemove it again with:\n  quo undeploy %s -n %s\n",
+		"\n%s\n  quo undeploy %s -n %s\n",
+		lead,
 		opt.Bundle,
 		opt.Namespace)
 	if err != nil {
@@ -221,6 +236,7 @@ func parseDeployArgs(args []string) (parsed deployArgs, err error) {
 	fs.StringVar(&parsed.opt.Namespace, "n", "", "namespace to deploy into")
 	fs.StringVar(&parsed.opt.Namespace, "namespace", "", "namespace to deploy into")
 	fs.StringVar(&parsed.opt.Name, "name", "", "name for the deployed VirtualMachine")
+	fs.BoolVar(&parsed.opt.DryRun, "dry-run", false, "say what would be created and create nothing")
 	storageClasses := &mappingFlag{
 		want: "a storage class mapping wants <source>=<target>",
 	}
