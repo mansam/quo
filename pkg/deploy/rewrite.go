@@ -109,9 +109,9 @@ func buildVirtualMachine(
 // The pod network names no object and is never mapped. A network the
 // deploy resolved no mapping for keeps what the expansion carries.
 func rewriteNetworks(vm *unstructured.Unstructured, networks []Requirement) {
-	attached := make(map[string]string, len(networks))
+	attachedByName := make(map[string]string, len(networks))
 	for i := range networks {
-		attached[networks[i].From] = networks[i].To
+		attachedByName[networks[i].From] = networks[i].To
 	}
 	// The slice is taken without a copy, because what it holds is
 	// rewritten in place: NestedSlice hands back a copy of what it
@@ -133,7 +133,7 @@ func rewriteNetworks(vm *unstructured.Unstructured, networks []Requirement) {
 			continue
 		}
 		name, _, _ := unstructured.NestedString(network, "name")
-		attachment, found := attached[name]
+		attachment, found := attachedByName[name]
 		if !found {
 			continue
 		}

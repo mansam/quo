@@ -60,10 +60,10 @@ func planDisks(manifest *bundle.Manifest, opt Options) (disks []plannedDisk) {
 	for i := range manifest.Disks {
 		heldByClaim[manifest.Disks[i].Claim] = manifest.Disks[i]
 	}
-	planned := make(map[string]bool, len(manifest.Requirements.Storage))
+	plannedByClaim := make(map[string]bool, len(manifest.Requirements.Storage))
 	for i := range manifest.Requirements.Storage {
 		required := manifest.Requirements.Storage[i]
-		planned[required.Claim] = true
+		plannedByClaim[required.Claim] = true
 		disk := plannedDisk{
 			held:     heldByClaim[required.Claim],
 			required: required,
@@ -90,7 +90,7 @@ func planDisks(manifest *bundle.Manifest, opt Options) (disks []plannedDisk) {
 		disks = append(disks, disk)
 	}
 	for i := range manifest.Disks {
-		if planned[manifest.Disks[i].Claim] {
+		if plannedByClaim[manifest.Disks[i].Claim] {
 			continue
 		}
 		// A member with no requirement is a bundle no capture of quo
@@ -149,27 +149,27 @@ func resolveDisks(
 	if err != nil {
 		return
 	}
-	placed := map[string]Requirement{}
-	checked := map[string]bool{}
+	placedByClass := map[string]Requirement{}
+	checkedByClass := map[string]bool{}
 	for i := range disks {
 		if disks[i].step.Outcome == OutcomeSkipped {
 			continue
 		}
 		source := disks[i].required.StorageClass
-		mapping, found := placed[source]
+		mapping, found := placedByClass[source]
 		if !found {
 			mapping, err = placeStorageClass(ctx, t, source, opt)
 			if err != nil {
 				return
 			}
-			placed[source] = mapping
+			placedByClass[source] = mapping
 			requirements = append(requirements, mapping)
 		}
 		disks[i].storageClass = mapping.To
-		if disks[i].required.VolumeMode == "" || checked[disks[i].storageClass] {
+		if disks[i].required.VolumeMode == "" || checkedByClass[disks[i].storageClass] {
 			continue
 		}
-		checked[disks[i].storageClass] = true
+		checkedByClass[disks[i].storageClass] = true
 		err = checkVolumeMode(ctx, t, disks[i])
 		if err != nil {
 			return
