@@ -88,6 +88,9 @@ type fakeTarget struct {
 	// uploadErrFor is what UploadDisk reports for the named claim, so a
 	// test can make one disk's upload fail while the rest proceed.
 	uploadErrFor map[string]error
+	// deleteErrFor is what Delete reports for the named object, so a
+	// test can make one deletion fail while the rest proceed.
+	deleteErrFor map[string]error
 	// events records what the deploy did and in what order: every create
 	// and every upload, interleaved.
 	events []string
@@ -110,6 +113,7 @@ func target() (t *fakeTarget) {
 		namespaces:   map[string]bool{testDeployNamespace: true},
 		objects:      map[cluster.ObjectRef]*unstructured.Unstructured{},
 		uploadErrFor: map[string]error{},
+		deleteErrFor: map[string]error{},
 	}
 	return
 }
@@ -214,10 +218,126 @@ func (r *fakeTarget) UploadDisk(
 	return
 }
 
+// ListByLabel returns the objects the namespace holds carrying key=value,
+// reporting a cancelled context the way a real client does once the
+// undeploy has been interrupted. Only the kinds a deploy can leave are
+// selected, the way the real adapter scans DeployedKinds.
+func (r *fakeTarget) ListByLabel(
+	ctx context.Context,
+	namespace, key, value string) (objects []*unstructured.Unstructured, err error) {
+	//
+	err = ctx.Err()
+	if err != nil {
+		err = fmt.Errorf("list %s in namespace %q: %w", key, namespace, err)
+		return
+	}
+	deployed := make(map[string]bool, len(cluster.DeployedKinds))
+	for _, kind := range cluster.DeployedKinds {
+		deployed[kind] = true
+	}
+	for ref, held := range r.objects {
+		if ref.Namespace != namespace || !deployed[ref.Kind] {
+			continue
+		}
+		if held.GetLabels()[key] != value {
+			continue
+		}
+		objects = append(objects, held.DeepCopy())
+	}
+	return
+}
+
+// Delete removes one object, reporting a cancelled context the way a real
+// client does once the undeploy has been interrupted.
+//
+// Deleting a DataVolume takes its claim with it: CDI names the claim
+// after the DataVolume and owns it through an owner reference, so the
+// cluster removes the claim with the DataVolume. That is the cluster's
+// doing, not quo's — an undeploy never selects the claim on its own —
+// and the fake models it the same way.
+func (r *fakeTarget) Delete(ctx context.Context, object *unstructured.Unstructured) (err error) {
+	//
+	err = ctx.Err()
+	if err != nil {
+		err = fmt.Errorf("delete %s %q: %w", object.GetKind(), object.GetName(), err)
+		return
+	}
+	ref := cluster.ObjectRef{
+		Kind:      object.GetKind(),
+		Namespace: object.GetNamespace(),
+		Name:      object.GetName(),
+	}
+	if failFor, found := r.deleteErrFor[object.GetName()]; found {
+		err = failFor
+		return
+	}
+	delete(r.objects, ref)
+	if object.GetKind() == cluster.KindDataVolume {
+		// CDI names the claim after the DataVolume and owns it, so the
+		// cluster takes the claim with the DataVolume.
+		delete(r.objects, cluster.ObjectRef{
+			Kind:      cluster.KindPersistentVolumeClaim,
+			Namespace: ref.Namespace,
+			Name:      ref.Name,
+		})
+	}
+	r.events = append(r.events, "delete "+object.GetKind()+" "+object.GetNamespace()+"/"+object.GetName())
+	return
+}
+
 // hold puts an object on the fake target, the way a cluster holds work
 // that was there before the deploy.
 func (r *fakeTarget) hold(ref cluster.ObjectRef, object *unstructured.Unstructured) {
 	r.objects[ref] = object
+}
+
+// holds reports whether the fake target still holds the named object of
+// the deploy namespace.
+func (r *fakeTarget) holds(kind, name string) (held bool) {
+	_, held = r.objects[cluster.ObjectRef{
+		Kind:      kind,
+		Namespace: testDeployNamespace,
+		Name:      name,
+	}]
+	return
+}
+
+// holdLabeled holds one object carrying a bundle's identity label in the
+// deploy namespace: an object of a deployment, or the claim CDI made for
+// one of its DataVolumes.
+func (r *fakeTarget) holdLabeled(kind, name, identity string) {
+	r.hold(
+		cluster.ObjectRef{Kind: kind, Namespace: testDeployNamespace, Name: name},
+		deployedObject(kind, name, identity))
+}
+
+// deployedObject builds one object of a deployment: labeled as quo's work
+// from one bundle, the way a deploy leaves it on the cluster.
+func deployedObject(kind, name, identity string) (held *unstructured.Unstructured) {
+	held = &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": apiVersionByKind[kind],
+		"kind":       kind,
+		"metadata": map[string]any{
+			"name":      name,
+			"namespace": testDeployNamespace,
+		},
+	}}
+	held.SetLabels(map[string]string{
+		labelManagedBy: "quo",
+		labelBundle:    identity,
+	})
+	return
+}
+
+// apiVersionByKind is the apiVersion each kind a deployment can hold
+// carries, so a held fixture looks the way a cluster holds it.
+var apiVersionByKind = map[string]string{
+	cluster.KindConfigMap:             "v1",
+	cluster.KindDataVolume:            "cdi.kubevirt.io/v1beta1",
+	cluster.KindPersistentVolumeClaim: "v1",
+	cluster.KindSecret:                "v1",
+	cluster.KindServiceAccount:        "v1",
+	cluster.KindVirtualMachine:        "kubevirt.io/v1",
 }
 
 // writeFixtureBundle writes a bundle holding what a capture of the fixture

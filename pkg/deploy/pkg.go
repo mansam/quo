@@ -1,9 +1,11 @@
 // Package deploy puts a bundle onto a cluster as a stopped VirtualMachine
-// with its disks populated through CDI's upload.
+// with its disks populated through CDI's upload, and takes a bundle's
+// deployment off a cluster again.
 //
-// Deploy is the library entry point. The CLI only parses a command line
-// and calls it, and tests call it directly: given a fake target and a
-// bundle, a test gets back the deploy record a real deploy would print.
+// Deploy and Undeploy are the library entry points. The CLI only parses
+// a command line and calls one of them, and tests call them directly:
+// given a fake target and a bundle, a test gets back the deploy record
+// or the list of deletions a real run would print.
 //
 // The VirtualMachine a deploy creates is the bundle's expanded spec — the
 // source cluster's own resolution of the machine — carrying the forced

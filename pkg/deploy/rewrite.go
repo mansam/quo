@@ -17,7 +17,7 @@ import (
 const labelManagedBy = "app.kubernetes.io/managed-by"
 
 // labelBundle says which bundle this object was deployed from. Its key is
-// frozen: undeploy will select on it, and so will anyone cleaning up with
+// frozen: undeploy selects on it, and so does anyone cleaning up with
 // kubectl.
 const labelBundle = "quo.mansam.dev/bundle"
 

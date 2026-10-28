@@ -44,7 +44,7 @@ func runDeploy(args []string) (err error) {
 	ctx, stop := signal.NotifyContext(context.TODO(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	record, deployErr := deploy.Deploy(ctx, t, parsed.opt)
-	printErr := printRecord(os.Stdout, record)
+	printErr := printRecord(os.Stdout, record, parsed.opt)
 	err = deployErr
 	if err == nil {
 		err = printErr
@@ -93,9 +93,14 @@ func newUploadReporter(out io.Writer) (report func(p deploy.Progress)) {
 // and what became of each one. A run that refused before attempting
 // anything has no record, so nothing is printed for one.
 //
+// The record ends with the undeploy command for what exists, so that the
+// way to take the deployment off again is the last thing said. It is
+// printed only when something was created: a deploy that put nothing on
+// the target leaves nothing to point an undeploy at.
+//
 // Write errors are discarded per line because tabwriter reports them
 // again from Flush, which is checked.
-func printRecord(out io.Writer, record deploy.Record) (err error) {
+func printRecord(out io.Writer, record deploy.Record, opt deploy.Options) (err error) {
 	if len(record) == 0 {
 		return
 	}
@@ -105,7 +110,7 @@ func printRecord(out io.Writer, record deploy.Record) (err error) {
 		line := fmt.Sprintf(
 			"  %s\t%s\t%s",
 			record[i].Kind,
-			named(record[i]),
+			named(record[i].Namespace, record[i].Name),
 			record[i].Outcome)
 		if record[i].Reason != "" {
 			line += "\t" + record[i].Reason
@@ -117,15 +122,34 @@ func printRecord(out io.Writer, record deploy.Record) (err error) {
 		err = fmt.Errorf("write deploy record: %w", err)
 		return
 	}
+	created := false
+	for i := range record {
+		if record[i].Outcome == deploy.OutcomeCreated {
+			created = true
+			break
+		}
+	}
+	if !created {
+		return
+	}
+	_, err = fmt.Fprintf(
+		out,
+		"\nRemove it again with:\n  quo undeploy %s -n %s\n",
+		opt.Bundle,
+		opt.Namespace)
+	if err != nil {
+		err = fmt.Errorf("write the undeploy command: %w", err)
+		return
+	}
 	return
 }
 
-// named renders a step's object with its namespace, dropping it for a
+// named renders an object with its namespace, dropping it for a
 // cluster-scoped object.
-func named(step deploy.Step) (rendered string) {
-	rendered = step.Name
-	if step.Namespace != "" {
-		rendered = step.Namespace + "/" + step.Name
+func named(namespace, name string) (rendered string) {
+	rendered = name
+	if namespace != "" {
+		rendered = namespace + "/" + name
 	}
 	return
 }

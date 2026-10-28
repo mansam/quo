@@ -88,6 +88,30 @@ func (r *NotCreatedError) Is(err error) (matched bool) {
 	return
 }
 
+// NotDeletedError reports an undeploy that ran but did not delete
+// everything it tried to. What the undeploy deleted names each object
+// and what became of it; this error is what makes the exit code
+// non-zero, so that a script can tell a complete undeploy from a
+// partial one.
+type NotDeletedError struct {
+	NotDeleted int
+	Attempted  int
+}
+
+// Error says how much of the undeploy arrived.
+func (r *NotDeletedError) Error() string {
+	return fmt.Sprintf(
+		"the undeploy deleted %d of the %d objects it tried to",
+		r.Attempted-r.NotDeleted,
+		r.Attempted)
+}
+
+// Is reports whether err is a NotDeletedError.
+func (r *NotDeletedError) Is(err error) (matched bool) {
+	_, matched = err.(*NotDeletedError)
+	return
+}
+
 // NoCDIError reports a target cluster with no CDI, from a bundle that
 // holds disks to upload. A disk goes back onto a cluster only through
 // CDI's upload, so there is no way past this but installing it: failing
