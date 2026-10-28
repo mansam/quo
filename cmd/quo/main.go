@@ -84,7 +84,7 @@ its own; --storage-class <source>=<target> places the disks of one class, with
 the unnamed class included; and --network <network>=<attachment> attaches one
 of the machine's networks to a NetworkAttachmentDefinition of the target's,
 named with its namespace when it lives outside the deploy namespace. Every
-mapping is reported in the deploy record, and a requirement that resolves to
+mapping is reported in the deploy record, and a requirement that maps to
 nothing refuses the deploy before anything is created. Container disk images
 are reported as requirements and never pull-checked. --dry-run runs every
 refusal a deploy runs and prints the record a real deploy would print, the

@@ -32,7 +32,7 @@ import (
 // refusal naming them all. A bundle holding disks to upload is refused as
 // well when the target has no CDI and when the target's own account of the
 // class a disk's storage was mapped onto rules out the volume mode the disk
-// needs. A requirement — a storage class or a multus network — that resolves
+// needs. A requirement — a storage class or a multus network — that maps
 // to nothing is a refusal too, naming what was tried: nothing is created
 // whose needs cannot be placed.
 //
@@ -107,11 +107,11 @@ func Deploy(ctx context.Context, t cluster.Target, opt Options) (record Record, 
 		err = &NotCreatedError{NotCreated: 1, Attempted: 1}
 		return
 	}
-	storage, err := resolveDisks(ctx, t, disks, opt)
+	storage, err := placeDisks(ctx, t, disks, opt)
 	if err != nil {
 		return
 	}
-	networks, err := resolveNetworks(ctx, t, manifest.Requirements.Networks, opt)
+	networks, err := attachNetworks(ctx, t, manifest.Requirements.Networks, opt)
 	if err != nil {
 		return
 	}
@@ -275,7 +275,7 @@ func readVirtualMachine(
 // nothing and still says the machine as created, which is what a real
 // deploy would do with it.
 //
-// networks is what resolveNetworks decided for the machine's multus
+// networks is what attachNetworks decided for the machine's multus
 // networks; the applied VirtualMachine carries the mappings.
 func createVirtualMachine(
 	ctx context.Context,

@@ -54,15 +54,14 @@ type Options struct {
 	// The key is the class the bundle records — or *, which covers every
 	// class that does not match by name, the unnamed class included —
 	// and the value is the target's class those disks land on. A class
-	// that resolves to nothing, by name or by mapping, refuses the
-	// deploy.
+	// that maps to nothing, by name or by flag, refuses the deploy.
 	StorageClasses map[string]string
 	// Networks attaches the machine's multus networks. The key is the
 	// VirtualMachine's own name for the network, and the value names the
 	// NetworkAttachmentDefinition of the target's it attaches to,
 	// namespace-qualified when it lives outside the deploy namespace. A
-	// network that resolves to nothing, by the attachment's name or by a
-	// mapping, refuses the deploy.
+	// network that maps to nothing, by the attachment's name or by a
+	// flag, refuses the deploy.
 	Networks map[string]string
 	// DryRun reports what the deploy would do without doing any of it.
 	// Every refusal still runs and the record still says every object
@@ -116,7 +115,7 @@ type Record struct {
 	// were attempted.
 	Steps []Step
 	// Requirements lists every requirement the bundle declared, in the
-	// order the deploy resolved them, with what each was mapped onto.
+	// order the deploy mapped them, with what each was mapped onto.
 	Requirements []Requirement
 }
 

@@ -129,10 +129,10 @@ func TestDeployDryRunRunsEveryRefusalTheRealDeployRuns(t *testing.T) {
 			names:  []string{"install CDI on the target cluster first"},
 		},
 		{
-			name:   "a storage class that resolves to nothing",
+			name:   "a storage class that maps to nothing",
 			bundle: disks,
 			target: cdiOnly,
-			want:   &UnresolvedRequirementError{},
+			want:   &UnmappedRequirementError{},
 			names:  []string{"place it with --storage-class"},
 		},
 		{
@@ -143,10 +143,10 @@ func TestDeployDryRunRunsEveryRefusalTheRealDeployRuns(t *testing.T) {
 			names:  []string{"Block"},
 		},
 		{
-			name:   "a network that resolves to nothing",
+			name:   "a network that maps to nothing",
 			bundle: networks,
 			target: bare,
-			want:   &UnresolvedRequirementError{},
+			want:   &UnmappedRequirementError{},
 			names:  []string{"attach it with --network"},
 		},
 	}
@@ -385,7 +385,7 @@ func TestDeployDryRunReportsTheMappingsItWouldApply(t *testing.T) {
 		name     string
 		networks map[string]string
 		// attachment and where say the NetworkAttachmentDefinition the
-		// mapping resolves onto, and the namespace holding it: the
+		// mapping attaches to, and the namespace holding it: the
 		// deploy namespace for the mapping by name, outside it for the
 		// flag's qualified form.
 		attachment string

@@ -357,7 +357,7 @@ func TestDeployPlacesAnUnnamedClassOnlyThroughTheCatchAll(t *testing.T) {
 	}
 }
 
-func TestDeployRefusesAStorageClassThatResolvesToNothing(t *testing.T) {
+func TestDeployRefusesAStorageClassThatMapsToNothing(t *testing.T) {
 	path := writeDisksFixtureBundle(t)
 	// A target with CDI but nothing else: no class the bundle records
 	// and no class a mapping could name.
@@ -406,7 +406,7 @@ func TestDeployRefusesAStorageClassThatResolvesToNothing(t *testing.T) {
 
 			record, err := Deploy(context.TODO(), tt.target, opt)
 
-			g.Expect(err).To(gomega.MatchError(&UnresolvedRequirementError{}))
+			g.Expect(err).To(gomega.MatchError(&UnmappedRequirementError{}))
 			// The refusal names the requirement and what was tried.
 			g.Expect(err.Error()).To(gomega.ContainSubstring(testStorageClass))
 			g.Expect(err.Error()).To(gomega.ContainSubstring(tt.names))
@@ -553,7 +553,7 @@ func TestDeployRefusesATargetThatCannotTakeTheDisks(t *testing.T) {
 		{
 			name:   "a disk whose storage class the target does not have",
 			target: noClass,
-			want:   &UnresolvedRequirementError{},
+			want:   &UnmappedRequirementError{},
 			names:  testStorageClass,
 		},
 		{

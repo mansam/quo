@@ -9,10 +9,10 @@ import (
 	"github.com/mansam/quo/pkg/cluster"
 )
 
-// resolveNetworks resolves each multus network the bundle declares onto a
+// attachNetworks attaches each multus network the bundle declares to a
 // NetworkAttachmentDefinition of the target's, so that the applied
 // VirtualMachine names where its networks attach on the target, and
-// refuses — naming the network and what was tried — when one resolves to
+// refuses — naming the network and what was tried — when one maps to
 // nothing, because the machine is not created whose networks cannot be
 // attached.
 //
@@ -22,7 +22,7 @@ import (
 // one for it, which overrides whatever the deploy namespace holds. The
 // pod network is the cluster's own — every target has one — and is never
 // mapped.
-func resolveNetworks(
+func attachNetworks(
 	ctx context.Context,
 	t cluster.Target,
 	required []bundle.NetworkRequirement,
@@ -38,7 +38,7 @@ func resolveNetworks(
 		if named, found := opt.Networks[required[i].Name]; found {
 			attachment, how, err = attachNetwork(ctx, t, required[i].Name, named, opt)
 		} else {
-			attachment, how, err = matchNetwork(ctx, t, required[i], opt)
+			attachment, how, err = attachNetworkByName(ctx, t, required[i], opt)
 		}
 		if err != nil {
 			return nil, err
@@ -80,7 +80,7 @@ func attachNetwork(
 		return
 	}
 	if !held {
-		err = &UnresolvedRequirementError{
+		err = &UnmappedRequirementError{
 			Kind:        "network",
 			Requirement: network,
 			Tried: fmt.Sprintf(
@@ -97,21 +97,21 @@ func attachNetwork(
 	return
 }
 
-// matchNetwork attaches one of the machine's networks to the
+// attachNetworkByName attaches one of the machine's networks to the
 // NetworkAttachmentDefinition of the attachment's name in the deploy
 // namespace, which is the mapping a deploy makes on its own. A network
 // that names no attachment, or one the deploy namespace holds no
-// definition of, resolves to nothing unless the command line mapped it,
+// definition of, maps to nothing unless the command line mapped it,
 // which is a refusal: the machine is not created whose networks cannot
 // be attached.
-func matchNetwork(
+func attachNetworkByName(
 	ctx context.Context,
 	t cluster.Target,
 	required bundle.NetworkRequirement,
 	opt Options) (attachment string, how string, err error) {
 	//
 	if required.Attachment == "" {
-		err = &UnresolvedRequirementError{
+		err = &UnmappedRequirementError{
 			Kind:        "network",
 			Requirement: required.Name,
 			Tried: fmt.Sprintf(
@@ -130,7 +130,7 @@ func matchNetwork(
 		return
 	}
 	if !held {
-		err = &UnresolvedRequirementError{
+		err = &UnmappedRequirementError{
 			Kind:        "network",
 			Requirement: required.Name,
 			Tried: fmt.Sprintf(

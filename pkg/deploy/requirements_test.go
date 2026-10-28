@@ -143,7 +143,7 @@ func networkNameOf(t *testing.T, vm *unstructured.Unstructured, network string) 
 	return
 }
 
-func TestDeployRefusesANetworkThatResolvesToNothing(t *testing.T) {
+func TestDeployRefusesANetworkThatMapsToNothing(t *testing.T) {
 	tests := []struct {
 		name       string
 		attachment string
@@ -181,7 +181,7 @@ func TestDeployRefusesANetworkThatResolvesToNothing(t *testing.T) {
 
 			record, err := Deploy(context.TODO(), fake, opt)
 
-			g.Expect(err).To(gomega.MatchError(&UnresolvedRequirementError{}))
+			g.Expect(err).To(gomega.MatchError(&UnmappedRequirementError{}))
 			// The refusal names the network and what was tried.
 			g.Expect(err.Error()).To(gomega.ContainSubstring(testMultusNetwork))
 			g.Expect(err.Error()).To(gomega.ContainSubstring(tt.names))

@@ -156,12 +156,12 @@ func (r *NoCDIError) Is(err error) (matched bool) {
 	return
 }
 
-// UnresolvedRequirementError reports a requirement of the bundle's that
-// resolved to nothing on the target cluster. The disks are not uploaded
+// UnmappedRequirementError reports a requirement of the bundle's that
+// mapped to nothing on the target cluster. The disks are not uploaded
 // and the machine is not created for a bundle whose needs cannot be
 // placed; the error says what was tried, so the mapping that is missing
 // can be named on the command line.
-type UnresolvedRequirementError struct {
+type UnmappedRequirementError struct {
 	// Kind is the sort of thing the requirement asks the target for: a
 	// storage class or a network.
 	Kind string
@@ -175,17 +175,17 @@ type UnresolvedRequirementError struct {
 }
 
 // Error names the requirement and what was tried.
-func (r *UnresolvedRequirementError) Error() string {
+func (r *UnmappedRequirementError) Error() string {
 	return fmt.Sprintf(
-		"%s %q resolves to nothing on the target cluster: %s",
+		"%s %q maps to nothing on the target cluster: %s",
 		r.Kind,
 		r.Requirement,
 		r.Tried)
 }
 
-// Is reports whether err is an UnresolvedRequirementError.
-func (r *UnresolvedRequirementError) Is(err error) (matched bool) {
-	_, matched = err.(*UnresolvedRequirementError)
+// Is reports whether err is an UnmappedRequirementError.
+func (r *UnmappedRequirementError) Is(err error) (matched bool) {
+	_, matched = err.(*UnmappedRequirementError)
 	return
 }
 

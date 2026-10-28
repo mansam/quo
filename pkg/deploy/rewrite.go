@@ -107,7 +107,7 @@ func buildVirtualMachine(
 // VirtualMachine itself.
 //
 // The pod network names no object and is never mapped. A network the
-// deploy resolved no mapping for keeps what the expansion carries.
+// deploy holds no mapping for keeps what the expansion carries.
 func rewriteNetworks(vm *unstructured.Unstructured, networks []Requirement) {
 	attachedByName := make(map[string]string, len(networks))
 	for i := range networks {

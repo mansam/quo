@@ -111,9 +111,9 @@ func planDisks(manifest *bundle.Manifest, opt Options) (disks []plannedDisk) {
 	return
 }
 
-// resolveDisks checks what a deploy can check about the target before it
-// creates anything, and refuses — naming what it found — when a disk
-// cannot be placed on it.
+// placeDisks places the bundle's disks on the target's storage classes,
+// and refuses — naming what it found — when a disk cannot be placed on
+// the target.
 //
 // CDI has to be there, because a disk goes back onto a cluster only
 // through its upload. Each class the bundle records is placed once and
@@ -122,7 +122,7 @@ func planDisks(manifest *bundle.Manifest, opt Options) (disks []plannedDisk) {
 // the volume mode they need. A profile that says nothing about the class
 // is not a refusal: CDI falls back to its own defaults when the claim is
 // created, and the create is what answers.
-func resolveDisks(
+func placeDisks(
 	ctx context.Context,
 	t cluster.Target,
 	disks []plannedDisk,
@@ -186,7 +186,7 @@ func resolveDisks(
 // target's class of that name is the mapping a deploy makes on its own,
 // and the catch-all covers what does not match by name — a class the
 // target does not hold, and the unnamed class, which names nothing to
-// match. A class that resolves to nothing is a refusal, because the disks
+// match. A class that maps to nothing is a refusal, because the disks
 // are not uploaded that cannot be placed.
 func placeStorageClass(
 	ctx context.Context,
@@ -222,7 +222,7 @@ func placeStorageClass(
 	}
 	catchAll, found := opt.StorageClasses[catchAllClass]
 	if !found {
-		err = &UnresolvedRequirementError{
+		err = &UnmappedRequirementError{
 			Kind:        "storage class",
 			Requirement: source,
 			Tried: fmt.Sprintf(
@@ -256,7 +256,7 @@ func verifyStorageClass(
 	if held {
 		return
 	}
-	err = &UnresolvedRequirementError{
+	err = &UnmappedRequirementError{
 		Kind:        "storage class",
 		Requirement: source,
 		Tried: fmt.Sprintf(
