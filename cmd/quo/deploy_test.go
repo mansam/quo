@@ -403,7 +403,7 @@ func TestDeployRecordSaysNoUndeployCommandWhenNothingWasCreated(t *testing.T) {
 func TestTheUploadReporterSaysWhatADiskIsDoing(t *testing.T) {
 	g := gomega.NewGomegaWithT(t)
 	reported := &bytes.Buffer{}
-	report := newUploadReporter(reported)
+	report, _ := newUploadReporter(reported)
 	disk := deploy.Progress{
 		Disk:    1,
 		Disks:   2,
@@ -429,9 +429,67 @@ func TestTheUploadReporterSaysWhatADiskIsDoing(t *testing.T) {
 	// stream. The byte count is shorter than the wait it replaces, so
 	// 31 spaces pad over it.
 	g.Expect(reported.String()).To(gomega.Equal(
-		`disk 1/2 db-01-root (root, logs): waiting, the DataVolume is "Pending"`+"\r"+
-			"disk 1/2 db-01-root (root, logs): 512 B"+strings.Repeat(" ", 31)+"\r"+
-			"disk 1/2 db-01-root (root, logs): 1.0 KiB"+"\n"))
+		`disk 1/2 db-01-root (root, logs): waiting, the DataVolume is "Pending"` + "\r" +
+			"disk 1/2 db-01-root (root, logs): 512 B" + strings.Repeat(" ", 31) + "\r" +
+			"disk 1/2 db-01-root (root, logs): 1.0 KiB" + "\n"))
+}
+
+func TestTheUploadReporterClosesTheLineOfADiskThatNeverFinished(t *testing.T) {
+	g := gomega.NewGomegaWithT(t)
+	reported := &bytes.Buffer{}
+	report, flush := newUploadReporter(reported)
+
+	// The first disk's upload dies part-way. Its line is reported
+	// transferring and never done.
+	report(deploy.Progress{
+		Disk:        1,
+		Disks:       2,
+		Claim:       "db-01-root",
+		Volumes:     []string{"root"},
+		State:       deploy.StateTransferring,
+		Transferred: 512,
+	})
+	// The second disk's first report closes the first disk's line, so
+	// the second starts on a line of its own.
+	report(deploy.Progress{
+		Disk:        2,
+		Disks:       2,
+		Claim:       "db-01-data",
+		Volumes:     []string{"data"},
+		State:       deploy.StateTransferring,
+		Transferred: 256,
+	})
+	// The second disk never finishes either. The flush at the end of
+	// the run closes its line.
+	flush()
+
+	g.Expect(reported.String()).To(gomega.Equal(
+		"disk 1/2 db-01-root (root): 512 B\r" +
+			"\n" +
+			"disk 2/2 db-01-data (data): 256 B\r" +
+			"\n"))
+}
+
+func TestTheUploadReporterFlushesNothingWhenEveryLineFinished(t *testing.T) {
+	g := gomega.NewGomegaWithT(t)
+	reported := &bytes.Buffer{}
+	report, flush := newUploadReporter(reported)
+
+	report(deploy.Progress{
+		Disk:        1,
+		Disks:       1,
+		Claim:       "db-01-root",
+		Volumes:     []string{"root"},
+		State:       deploy.StateDone,
+		Transferred: 512,
+	})
+	flush()
+
+	// Every line reached its ending. The flush at the end of the run
+	// has nothing to close, so the deploy record starts where the last
+	// line ended.
+	g.Expect(reported.String()).To(gomega.Equal(
+		"disk 1/1 db-01-root (root): 512 B\n"))
 }
 
 func TestDeployDryRunPrintsTheRecordItWouldPrint(t *testing.T) {
