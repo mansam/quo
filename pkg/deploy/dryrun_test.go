@@ -281,16 +281,8 @@ func TestDeployDryRunReportsWhatItWouldCreate(t *testing.T) {
 }
 
 func TestDeployDryRunSaysWhatWouldNotBeCreated(t *testing.T) {
-	// The root disk's bytes changed in transit. The claim's name is in
-	// every line of the member's stand-in content. Replacing it keeps
-	// the tar the manifest indexes aligned, while changing what the
-	// digest is computed over.
-	corruptedDisk := writeBytes(t, "corrupted-disk.quo", bytes.ReplaceAll(
-		readFile(t, writeDisksFixtureBundle(t)),
-		[]byte("disk of "+testRootClaim),
-		[]byte("disk 0f "+testRootClaim)))
-	// The sysprep ConfigMap's answer file changed in transit, the same
-	// way.
+	// The sysprep ConfigMap's answer file changed in transit, through
+	// its same-length stand-in.
 	corruptedClosure := writeBytes(t, "corrupted-closure.quo", bytes.ReplaceAll(
 		readFile(t, writeClosureFixtureBundle(t)),
 		[]byte(sysprepAnswer),
@@ -318,14 +310,6 @@ func TestDeployDryRunSaysWhatWouldNotBeCreated(t *testing.T) {
 		count  string
 		total  int
 	}{
-		{
-			name:   "a disk member that fails its digest",
-			bundle: corruptedDisk,
-			at:     0,
-			reason: "does not match its digest",
-			count:  "4 of the 5 objects",
-			total:  5,
-		},
 		{
 			name:   "a closure member that fails its digest",
 			bundle: corruptedClosure,
@@ -381,6 +365,38 @@ func TestDeployDryRunSaysWhatWouldNotBeCreated(t *testing.T) {
 			g.Expect(fake.events).To(gomega.BeEmpty())
 		})
 	}
+}
+
+func TestDeployDryRunReadsNoDiskBytes(t *testing.T) {
+	g := gomega.NewGomegaWithT(t)
+	// The root disk's bytes changed in transit. The claim's name is in
+	// every line of the member's stand-in content. Replacing it keeps
+	// the tar the manifest indexes aligned, while changing what the
+	// digest is computed over. A real deploy reports the member as
+	// failing its digest where the bytes pass through. A dry run moves
+	// no bytes, so the corruption is not its finding. quo inspect is
+	// what verifies a bundle.
+	corruptedDisk := writeBytes(t, "corrupted-disk.quo", bytes.ReplaceAll(
+		readFile(t, writeDisksFixtureBundle(t)),
+		[]byte("disk of "+testRootClaim),
+		[]byte("disk 0f "+testRootClaim)))
+	fake := storageTarget()
+
+	record, err := Deploy(context.TODO(), fake, dryRunOptions(corruptedDisk))
+
+	// The run is clean. No disk byte was read, so the corruption a real
+	// deploy catches on the way through is not seen here. Every step
+	// says created, which is what a real deploy of a whole bundle would
+	// print.
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	g.Expect(record.Steps).To(gomega.HaveLen(5))
+	for i := range record.Steps {
+		g.Expect(record.Steps[i].Outcome).To(gomega.Equal(OutcomeCreated))
+	}
+	// And nothing touched the target all the same.
+	g.Expect(fake.created).To(gomega.BeEmpty())
+	g.Expect(fake.uploaded).To(gomega.BeEmpty())
+	g.Expect(fake.events).To(gomega.BeEmpty())
 }
 
 func TestDeployDryRunReportsTheMappingsItWouldApply(t *testing.T) {
