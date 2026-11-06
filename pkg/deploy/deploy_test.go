@@ -243,25 +243,30 @@ func TestDeployRefusesABundleItCannotDeploy(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			g := gomega.NewGomegaWithT(t)
-			fake := target()
+		for _, mode := range runModes {
+			t.Run(mode.name+" of "+tt.name, func(t *testing.T) {
+				g := gomega.NewGomegaWithT(t)
+				fake := target()
+				opt := testOptions(tt.bundle)
+				opt.DryRun = mode.dryRun
 
-			record, err := Deploy(context.TODO(), fake, testOptions(tt.bundle))
+				record, err := Deploy(context.TODO(), fake, opt)
 
-			if tt.want == nil {
-				g.Expect(err).To(gomega.HaveOccurred())
-			} else {
-				g.Expect(err).To(gomega.MatchError(tt.want))
-			}
-			// The refusal names what it found.
-			if tt.names != "" {
-				g.Expect(err.Error()).To(gomega.ContainSubstring(tt.names))
-			}
-			// Nothing was attempted, so nothing was created.
-			g.Expect(record.Steps).To(gomega.BeEmpty())
-			g.Expect(fake.created).To(gomega.BeEmpty())
-		})
+				if tt.want == nil {
+					g.Expect(err).To(gomega.HaveOccurred())
+				} else {
+					g.Expect(err).To(gomega.MatchError(tt.want))
+				}
+				// The refusal names what it found.
+				if tt.names != "" {
+					g.Expect(err.Error()).To(gomega.ContainSubstring(tt.names))
+				}
+				// Nothing was attempted, so nothing reached the target.
+				g.Expect(record.Steps).To(gomega.BeEmpty())
+				g.Expect(record.Requirements).To(gomega.BeEmpty())
+				wroteNothing(g, fake)
+			})
+		}
 	}
 }
 
@@ -290,29 +295,34 @@ func TestDeployRefusesWhenTheTargetCannotTakeIt(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			g := gomega.NewGomegaWithT(t)
-			fake := target()
-			opt := testOptions(path)
-			if tt.namespace != "" {
-				opt.Namespace = tt.namespace
-			}
-			if tt.taken {
-				fake.hold(cluster.ObjectRef{
-					Kind:      cluster.KindVirtualMachine,
-					Namespace: testDeployNamespace,
-					Name:      testVirtualMachineName,
-				}, declaration())
-			}
+		for _, mode := range runModes {
+			t.Run(mode.name+" of "+tt.name, func(t *testing.T) {
+				g := gomega.NewGomegaWithT(t)
+				fake := target()
+				opt := testOptions(path)
+				opt.DryRun = mode.dryRun
+				if tt.namespace != "" {
+					opt.Namespace = tt.namespace
+				}
+				if tt.taken {
+					fake.hold(cluster.ObjectRef{
+						Kind:      cluster.KindVirtualMachine,
+						Namespace: testDeployNamespace,
+						Name:      testVirtualMachineName,
+					}, declaration())
+				}
 
-			record, err := Deploy(context.TODO(), fake, opt)
+				record, err := Deploy(context.TODO(), fake, opt)
 
-			g.Expect(err).To(gomega.MatchError(tt.want))
-			// The refusal names what it found.
-			g.Expect(err.Error()).To(gomega.ContainSubstring(tt.names))
-			g.Expect(record.Steps).To(gomega.BeEmpty())
-			g.Expect(fake.created).To(gomega.BeEmpty())
-		})
+				g.Expect(err).To(gomega.MatchError(tt.want))
+				// The refusal names what it found.
+				g.Expect(err.Error()).To(gomega.ContainSubstring(tt.names))
+				// Nothing was attempted, so nothing reached the target.
+				g.Expect(record.Steps).To(gomega.BeEmpty())
+				g.Expect(record.Requirements).To(gomega.BeEmpty())
+				wroteNothing(g, fake)
+			})
+		}
 	}
 }
 
@@ -345,17 +355,8 @@ func TestDeployRemovesTheMatchersTheExpansionStillCarries(t *testing.T) {
 
 func TestDeploySkipsAnExpandedSpecThatFailsItsDigest(t *testing.T) {
 	g := gomega.NewGomegaWithT(t)
-	// One byte of the expansion changed in transit. The machine type sits
-	// in the expansion alone, because the declaration names an instancetype
-	// instead. Its last occurrence in the bundle is therefore in the
-	// member.
-	corrupted := bytes.Clone(readFile(t, writeFixtureBundle(t, true)))
-	at := bytes.LastIndex(corrupted, []byte(testMachineType))
-	if at < 0 {
-		t.Fatal("the fixture bundle does not carry the machine type")
-	}
-	corrupted[at] = 'x'
-	path := writeBytes(t, "corrupted.quo", corrupted)
+	// One byte of the expansion changed in transit.
+	path := writeCorruptedExpansionBundle(t, writeFixtureBundle(t, true))
 	fake := target()
 
 	record, err := Deploy(context.TODO(), fake, testOptions(path))

@@ -3,7 +3,6 @@ package cluster
 import (
 	"context"
 	"fmt"
-	"io"
 
 	k8serr "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
@@ -38,17 +37,17 @@ type Target interface {
 	// reaches the cluster unchanged, wherever a deploy is not forced to
 	// change it.
 	Create(ctx context.Context, object *unstructured.Unstructured) (err error)
-	// UploadDisk puts the bytes readable from content into the claim the
-	// named DataVolume creates in namespace. CDI names that claim after
-	// the DataVolume itself. UploadDisk sends the bytes unchanged, exactly
-	// as it read them. size is the count the bytes will add up to.
-	// UploadDisk is told the count, so that a transfer that yields fewer
-	// bytes than the count fails rather than ending early.
+	// UploadDisk puts the bytes readable from upload.Content into the
+	// claim the DataVolume upload.Name creates in upload.Namespace.
+	// CDI names that claim after the DataVolume itself. UploadDisk
+	// sends the bytes unchanged, exactly as it read them.
 	//
 	// The upload waits for CDI to make the claim ready to receive the
-	// bytes. A caller that creates the DataVolume and uploads into it at
-	// once therefore needs no readiness loop of its own.
-	UploadDisk(ctx context.Context, namespace, name string, content io.Reader, size int64) (err error)
+	// bytes. A caller that creates the DataVolume and uploads into it
+	// at once therefore needs no readiness loop of its own. While the
+	// claim is not ready, UploadDisk calls upload.Waiting, when set,
+	// once per check it makes, saying what it waits on.
+	UploadDisk(ctx context.Context, upload Upload) (err error)
 	// ListByLabel returns the objects namespace holds that carry the
 	// label key=value. A deploy labels everything it creates with the
 	// bundle's identity. One label therefore lists one whole deployment.

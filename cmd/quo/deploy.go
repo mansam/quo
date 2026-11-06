@@ -39,13 +39,17 @@ func runDeploy(args []string) (err error) {
 	if err != nil {
 		return
 	}
-	parsed.opt.Progress = newUploadReporter(os.Stderr)
+	reportProgress, flushProgress := newUploadReporter(os.Stderr)
+	parsed.opt.Progress = reportProgress
 	// Ctrl-C stops the deploy where it stands. What was created stays
 	// where it is, because a deploy never rolls back. The record prints
 	// all the same. So what the target holds is still said.
 	ctx, stop := signal.NotifyContext(context.TODO(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	record, deployErr := deploy.Deploy(ctx, t, parsed.opt)
+	// The line the last disk left open is closed here, so the record
+	// never prints onto the end of it.
+	flushProgress()
 	printErr := printRecord(os.Stdout, record, parsed.opt)
 	err = deployErr
 	if err == nil {
@@ -54,39 +58,77 @@ func runDeploy(args []string) (err error) {
 	return
 }
 
-// newUploadReporter returns the progress reporter the deploy uses. The
-// reporter rewrites one line of out while a disk uploads. It starts a new
-// line when the disk finishes. So a person can tell a deploy that takes
-// hours from one that stopped making progress.
+// newUploadReporter returns the progress reporter the deploy uses, and
+// the flush that closes the line it leaves open. The reporter rewrites
+// one line of out while a disk uploads. It starts a new line when the
+// disk finishes. So a person can tell a deploy that takes hours from one
+// that stopped making progress.
+//
+// The line says what the disk is doing. While the target waits for the
+// claim, the line says so, and says what the target waits on. Once bytes
+// move, the line counts them.
+//
+// A disk whose upload never finishes leaves its line open. The reporter
+// closes it when it is asked to report a different disk, and flush closes
+// it when the run ends. The deploy record then never prints onto the end
+// of an unfinished line.
 //
 // Progress goes to standard error. So standard output stays the result of
 // the command.
-func newUploadReporter(out io.Writer) (report func(p deploy.Progress)) {
+func newUploadReporter(out io.Writer) (report func(p deploy.Progress), flush func()) {
 	// written is the width of the line last written, so that a shorter line
 	// can be padded over the one it replaces. A carriage return moves the
 	// cursor back to the start of the line. It removes nothing that is
 	// already there. So "1023.5 MiB" followed by "1.1 GiB" would read
 	// "1.1 GiBMiB" without the padding.
 	written := 0
+	// open says a line is being rewritten that no line ending has closed
+	// yet. disk is the position of the disk that line reports.
+	open := false
+	disk := 0
 	report = func(p deploy.Progress) {
+		if open && disk != p.Disk {
+			// The disk before this one never finished. Its line is
+			// closed here, so this disk starts on a line of its own.
+			_, _ = fmt.Fprint(out, "\n")
+			written = 0
+			open = false
+		}
+		var tail string
+		switch p.State {
+		case deploy.StateWaiting:
+			tail = "waiting, " + p.Said
+		default:
+			tail = capture.FormatSize(p.Transferred)
+		}
 		line := fmt.Sprintf(
 			"disk %d/%d %s (%s): %s",
 			p.Disk,
 			p.Disks,
 			p.Claim,
 			strings.Join(p.Volumes, ", "),
-			capture.FormatSize(p.Transferred))
+			tail)
 		padding := ""
 		if len(line) < written {
 			padding = strings.Repeat(" ", written-len(line))
 		}
 		written = len(line)
 		ending := "\r"
-		if p.Done {
+		open = true
+		if p.State == deploy.StateDone {
 			ending = "\n"
 			written = 0
+			open = false
 		}
+		disk = p.Disk
 		_, _ = fmt.Fprint(out, line, padding, ending)
+	}
+	flush = func() {
+		if !open {
+			return
+		}
+		_, _ = fmt.Fprint(out, "\n")
+		open = false
 	}
 	return
 }

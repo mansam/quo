@@ -327,9 +327,7 @@ func checkVolumeMode(ctx context.Context, t cluster.Target, disk plannedDisk) (e
 // bundle holds that can be placed, named after the claim it backs. The
 // DataVolumes are created before anything uploads and before the
 // VirtualMachine. Nothing in the namespace then looks like a
-// VirtualMachine until its disks are in place. A dry run creates none of
-// them and still says each one as created, which is what a real deploy
-// would do with it.
+// VirtualMachine until its disks are in place.
 func createDataVolumes(
 	ctx context.Context,
 	t cluster.Target,
@@ -341,10 +339,6 @@ func createDataVolumes(
 		if disks[i].step.Outcome == OutcomeSkipped {
 			// A disk that creates nothing was decided when it was
 			// planned. The record already says why.
-			continue
-		}
-		if opt.DryRun {
-			dryRunStep(&disks[i].step)
 			continue
 		}
 		dataVolume := buildDataVolume(disks[i], opt, identity)
@@ -361,8 +355,7 @@ func createDataVolumes(
 // uploadDisks streams each held disk's bytes into its DataVolume, one at
 // a time, and finishes the deploy record's entry for it. A disk whose
 // DataVolume was not created is not uploaded. A disk that fails does not
-// stop the ones behind it. A dry run sends nothing: it reads each member
-// to its end instead, for the verdict on its bytes.
+// stop the ones behind it.
 func uploadDisks(
 	ctx context.Context,
 	t cluster.Target,
@@ -378,12 +371,16 @@ func uploadDisks(
 	}
 }
 
-// upload streams one disk's member into its DataVolume through the
-// progress reporter, and records what became of it. The outcome is
-// created only when the bytes the bundle holds arrived whole. The outcome
-// is skipped when they were not the bytes the manifest recorded. The
-// outcome is failed when the upload itself failed. A dry run sends
-// nothing and only reads the member, for the verdict on its bytes.
+// upload streams one disk's member into its DataVolume, and records
+// what became of it. The outcome is created only when the bytes the
+// bundle holds arrived whole. The outcome is skipped when they were
+// not the bytes the manifest recorded. The outcome is failed when the
+// upload itself failed.
+//
+// Every progress report follows something that happened rather than
+// something the code assumed. The target reports what it waits on,
+// because the target is what waits. The reader the bytes pass through
+// reports how many have passed, because it is what sees them.
 func upload(
 	ctx context.Context,
 	t cluster.Target,
@@ -402,30 +399,15 @@ func upload(
 		disk.step.Reason = err.Error()
 		return
 	}
-	if opt.DryRun {
-		// Nothing is sent anywhere, but the member is read to its end.
-		// Its digest is the one thing about the bytes a dry run can
-		// still vouch for. A member that fails the digest is a skip in
-		// the record, exactly as a real deploy records one.
-		_, readErr := io.Copy(io.Discard, stream)
-		if mismatch := stream.Mismatch(); mismatch != nil {
-			disk.step.Outcome = OutcomeSkipped
-			disk.step.Reason = mismatch.Error()
-			return
-		}
-		if readErr != nil {
-			// A member that ends before it is whole is one a real
-			// deploy would fail to send, which is what the dry run
-			// says.
-			disk.step.Outcome = OutcomeFailed
-			disk.step.Reason = "the upload would fail: " + readErr.Error()
-		}
-		return
-	}
-	report := newReporter(opt, disks, at)
-	report(0, false)
+	report, waiting := newReporter(opt, disks, at)
 	sent := &progressReader{in: stream, report: report, reported: time.Now()}
-	err = t.UploadDisk(ctx, opt.Namespace, disk.held.Claim, sent, stream.Size())
+	err = t.UploadDisk(ctx, cluster.Upload{
+		Namespace: opt.Namespace,
+		Name:      disk.held.Claim,
+		Content:   sent,
+		Size:      stream.Size(),
+		Waiting:   waiting,
+	})
 	if mismatch := stream.Mismatch(); mismatch != nil {
 		// The bytes that left the bundle were not the bytes the manifest
 		// recorded. What the target holds is therefore not the disk the
@@ -440,16 +422,22 @@ func upload(
 		disk.step.Reason = "the upload failed: " + err.Error()
 		return
 	}
-	report(stream.Size(), true)
 	// The step keeps the outcome createDataVolumes gave it: the
 	// DataVolume is created and now holds its bytes.
 }
 
-// newReporter returns the function that reports one disk's upload
-// progress, which does nothing when the caller asked for no progress.
-func newReporter(opt Options, disks []plannedDisk, at int) (report func(sent int64, done bool)) {
+// newReporter returns the functions that report one disk's upload
+// progress: report says the bytes moving through the reader, and waiting
+// says what the target waits on before they move. Both do nothing when
+// the caller asked for no progress.
+func newReporter(
+	opt Options,
+	disks []plannedDisk,
+	at int) (report func(state State, sent int64), waiting func(said string)) {
+	//
 	if opt.Progress == nil {
-		report = func(sent int64, done bool) {}
+		report = func(state State, sent int64) {}
+		waiting = func(said string) {}
 		return
 	}
 	p := Progress{
@@ -458,9 +446,16 @@ func newReporter(opt Options, disks []plannedDisk, at int) (report func(sent int
 		Disk:    at + 1,
 		Disks:   len(disks),
 	}
-	report = func(sent int64, done bool) {
+	report = func(state State, sent int64) {
+		p.State = state
 		p.Transferred = sent
-		p.Done = done
+		p.Said = ""
+		opt.Progress(p)
+	}
+	waiting = func(said string) {
+		p.State = StateWaiting
+		p.Transferred = 0
+		p.Said = said
 		opt.Progress(p)
 	}
 	return
@@ -470,12 +465,20 @@ func newReporter(opt Options, disks []plannedDisk, at int) (report func(sent int
 // Reports are spaced in time, because a disk is read in small pieces and
 // a report per piece would be too many. The reader that wraps the member
 // starts the clock, so a disk that arrives quickly is reported only as
-// started and as finished.
+// finished. The end of the stream is the end of what the bundle had to
+// give, so it is reported as done. The target may still be finishing
+// with the bytes. The end is reported once. Nothing is reported after
+// it, whatever the reader is asked. The bundle's VerifiedStream reports
+// a digest mismatch in place of the end of the stream. A member that
+// fails its digest is therefore never reported done.
 type progressReader struct {
 	in       io.Reader
-	report   func(sent int64, done bool)
+	report   func(state State, sent int64)
 	sent     int64
 	reported time.Time
+	// done says the end of the stream has been reported. Nothing is
+	// reported after it.
+	done bool
 }
 
 // Read reads from the stream it wraps and reports how much is sent so
@@ -483,10 +486,18 @@ type progressReader struct {
 func (r *progressReader) Read(b []byte) (n int, err error) {
 	n, err = r.in.Read(b)
 	r.sent += int64(n)
+	if r.done {
+		return
+	}
+	if errors.Is(err, io.EOF) {
+		r.done = true
+		r.report(StateDone, r.sent)
+		return
+	}
 	if time.Since(r.reported) < progressInterval {
 		return
 	}
 	r.reported = time.Now()
-	r.report(r.sent, false)
+	r.report(StateTransferring, r.sent)
 	return
 }

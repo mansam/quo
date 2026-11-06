@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onsi/gomega"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/yaml"
 
@@ -96,6 +97,19 @@ func testOptions(path string) (opt Options) {
 	return
 }
 
+// runModes is the two ways a deploy runs: for real, and as a dry run.
+// The two share one write path, so a table that states a contract runs
+// each row in both modes. A dry run's row carries the negative beside
+// the contract, because it is what catches a write path that forgets
+// its target.
+var runModes = []struct {
+	name   string
+	dryRun bool
+}{
+	{name: "a deploy"},
+	{name: "a dry run", dryRun: true},
+}
+
 // fakeTarget is quo's one fake Target: a plain struct holding what a test
 // wants a cluster to have and recording everything created on it.
 // Nothing in it touches a network.
@@ -119,6 +133,15 @@ type fakeTarget struct {
 	// uploadErrFor is what UploadDisk reports for the named claim, so a
 	// test can make one disk's upload fail while the rest proceed.
 	uploadErrFor map[string]error
+	// uploadWaitsFor is what UploadDisk says while it waits for the
+	// claim to become ready, once per readiness check. That is what a
+	// cluster whose CDI has not bound the claim yet looks like from the
+	// outside.
+	uploadWaitsFor []string
+	// uploadReadsNothing makes UploadDisk read no bytes and still
+	// report success. That is the shape of a target that only records
+	// an upload. What is never read cannot be reported.
+	uploadReadsNothing bool
 	// deleteErrFor is what Delete reports for the named object, so a
 	// test can make one deletion fail while the rest proceed.
 	deleteErrFor map[string]error
@@ -226,35 +249,46 @@ func (r *fakeTarget) Create(ctx context.Context, object *unstructured.Unstructur
 }
 
 // UploadDisk receives the disk the way CDI would: it reads the whole
-// stream, so a member that fails its digest fails here too. It records
-// what arrived. A cancelled context is reported the way a real client
-// does once the deploy is interrupted.
-func (r *fakeTarget) UploadDisk(
-	ctx context.Context,
-	namespace, name string,
-	content io.Reader,
-	size int64) (err error) {
+// stream, so a member that fails its digest fails here too. It asks the
+// stream once more after its end, because the transport that carries a
+// real upload drains what is left. It records what arrived. Before the
+// bytes move it says what it waits on, once per readiness check, when
+// the cluster it models has not made the claim ready yet. A cancelled
+// context is reported the way a real client does once the deploy is
+// interrupted.
+func (r *fakeTarget) UploadDisk(ctx context.Context, upload cluster.Upload) (err error) {
 	//
 	err = ctx.Err()
 	if err != nil {
-		err = fmt.Errorf("upload disk %q: %w", name, err)
+		err = fmt.Errorf("upload disk %q: %w", upload.Name, err)
 		return
 	}
-	received, err := io.ReadAll(content)
+	if r.uploadReadsNothing {
+		return
+	}
+	for _, said := range r.uploadWaitsFor {
+		if upload.Waiting != nil {
+			upload.Waiting(said)
+		}
+	}
+	received, err := io.ReadAll(upload.Content)
 	if err != nil {
 		return
 	}
-	if failFor, found := r.uploadErrFor[name]; found {
+	// A real upload asks the body again after its end. The ask reads
+	// nothing and returns the end again.
+	_, _ = upload.Content.Read(make([]byte, 1))
+	if failFor, found := r.uploadErrFor[upload.Name]; found {
 		err = failFor
 		return
 	}
 	r.uploaded = append(r.uploaded, fakeUpload{
-		namespace: namespace,
-		name:      name,
-		size:      size,
+		namespace: upload.Namespace,
+		name:      upload.Name,
+		size:      upload.Size,
 		content:   received,
 	})
-	r.events = append(r.events, "upload "+namespace+"/"+name)
+	r.events = append(r.events, "upload "+upload.Namespace+"/"+upload.Name)
 	return
 }
 
@@ -349,6 +383,16 @@ func (r *fakeTarget) holdLabeled(kind, name, identity string) {
 	r.hold(
 		cluster.ObjectRef{Kind: kind, Namespace: testDeployNamespace, Name: name},
 		deployedObject(kind, name, identity))
+}
+
+// wroteNothing asserts that nothing reached the target: nothing was
+// created, nothing was uploaded, and nothing was recorded against it.
+// A dry run's row carries this beside the contract. On a refusal both
+// modes carry it, because a refusal attempts nothing either way.
+func wroteNothing(g *gomega.GomegaWithT, fake *fakeTarget) {
+	g.Expect(fake.created).To(gomega.BeEmpty())
+	g.Expect(fake.uploaded).To(gomega.BeEmpty())
+	g.Expect(fake.events).To(gomega.BeEmpty())
 }
 
 // deployedObject builds one object of a deployment: labeled as quo's work
@@ -708,6 +752,50 @@ func writeStorageFixtureBundle(
 	if err != nil {
 		t.Fatalf("close bundle: %v", err)
 	}
+	return
+}
+
+// writeCorruptedClosureBundle writes the closure fixture bundle with
+// the sysprep answer file changed in transit. The answer's stand-in
+// content sits in the ConfigMap member alone. Replacing it keeps the
+// tar the manifest indexes aligned, while changing what the digest is
+// computed over.
+func writeCorruptedClosureBundle(t *testing.T) (path string) {
+	t.Helper()
+	path = writeBytes(t, "corrupted-closure.quo", bytes.ReplaceAll(
+		readFile(t, writeClosureFixtureBundle(t)),
+		[]byte(sysprepAnswer),
+		[]byte(sysprepMangled)))
+	return
+}
+
+// writeCorruptedExpansionBundle writes the bundle at path with one byte
+// of its expansion changed in transit. The machine type sits in the
+// expansion alone, because the declaration names an instancetype
+// instead. Its last occurrence in the bundle is therefore in the
+// member.
+func writeCorruptedExpansionBundle(t *testing.T, path string) (corrupted string) {
+	t.Helper()
+	content := bytes.Clone(readFile(t, path))
+	at := bytes.LastIndex(content, []byte(testMachineType))
+	if at < 0 {
+		t.Fatalf("the fixture bundle does not carry the machine type")
+	}
+	content[at] = 'x'
+	corrupted = writeBytes(t, "corrupted-expansion.quo", content)
+	return
+}
+
+// writeCorruptedDiskBundle writes the disk fixture bundle with the root
+// disk's bytes changed in transit. The claim's name is in every line of
+// the member's stand-in content. Replacing it has the effect
+// writeCorruptedClosureBundle describes.
+func writeCorruptedDiskBundle(t *testing.T) (path string) {
+	t.Helper()
+	path = writeBytes(t, "corrupted-disk.quo", bytes.ReplaceAll(
+		readFile(t, writeDisksFixtureBundle(t)),
+		[]byte("disk of "+testRootClaim),
+		[]byte("disk 0f "+testRootClaim)))
 	return
 }
 

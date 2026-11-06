@@ -1,7 +1,6 @@
 package deploy
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"testing"
@@ -466,25 +465,27 @@ func TestDeployRefusesAStorageClassThatMapsToNothing(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			g := gomega.NewGomegaWithT(t)
-			opt := testOptions(path)
-			opt.StorageClasses = tt.mapped
+		for _, mode := range runModes {
+			t.Run(mode.name+" of "+tt.name, func(t *testing.T) {
+				g := gomega.NewGomegaWithT(t)
+				opt := testOptions(path)
+				opt.StorageClasses = tt.mapped
+				opt.DryRun = mode.dryRun
 
-			record, err := Deploy(context.TODO(), tt.target, opt)
+				record, err := Deploy(context.TODO(), tt.target, opt)
 
-			g.Expect(err).To(gomega.MatchError(&UnmappedRequirementError{}))
-			// The refusal names the requirement and what was tried.
-			g.Expect(err.Error()).To(gomega.ContainSubstring(testStorageClass))
-			g.Expect(err.Error()).To(gomega.ContainSubstring(tt.names))
-			// It refused before creating anything, so nothing was
-			// attempted and nothing was created: disks are not uploaded
-			// that cannot be placed.
-			g.Expect(record.Steps).To(gomega.BeEmpty())
-			g.Expect(record.Requirements).To(gomega.BeEmpty())
-			g.Expect(tt.target.created).To(gomega.BeEmpty())
-			g.Expect(tt.target.uploaded).To(gomega.BeEmpty())
-		})
+				g.Expect(err).To(gomega.MatchError(&UnmappedRequirementError{}))
+				// The refusal names the requirement and what was tried.
+				g.Expect(err.Error()).To(gomega.ContainSubstring(testStorageClass))
+				g.Expect(err.Error()).To(gomega.ContainSubstring(tt.names))
+				// It refused before creating anything, so nothing was
+				// attempted and nothing reached the target: disks are not
+				// uploaded that cannot be placed.
+				g.Expect(record.Steps).To(gomega.BeEmpty())
+				g.Expect(record.Requirements).To(gomega.BeEmpty())
+				wroteNothing(g, tt.target)
+			})
+		}
 	}
 }
 
@@ -547,25 +548,45 @@ func TestDeployCreatesTheDataVolumesThenUploadsThenTheVirtualMachineLast(t *test
 }
 
 func TestDeployRecordsADiskTheBundleHoldsNoBytesFor(t *testing.T) {
-	g := gomega.NewGomegaWithT(t)
-	path := writeDisksFixtureBundle(t, testGapClaim)
-	fake := storageTarget()
+	for _, mode := range runModes {
+		t.Run(mode.name, func(t *testing.T) {
+			g := gomega.NewGomegaWithT(t)
+			path := writeDisksFixtureBundle(t, testGapClaim)
+			fake := storageTarget()
+			opt := testOptions(path)
+			opt.DryRun = mode.dryRun
 
-	record, err := Deploy(context.TODO(), fake, testOptions(path))
+			record, err := Deploy(context.TODO(), fake, opt)
 
-	// A disk the bundle holds no bytes for creates nothing, the gap is
-	// recorded, and the run continues past it. The machine and the disks
-	// that were held all arrive. The error is what says the deploy was
-	// a partial one.
-	g.Expect(err).To(gomega.MatchError(&NotCreatedError{}))
-	g.Expect(err.Error()).To(gomega.ContainSubstring("4 of the 5 objects"))
-	g.Expect(record.Steps).To(gomega.HaveLen(5))
-	g.Expect(record.Steps[2].Name).To(gomega.Equal(testGapClaim))
-	g.Expect(record.Steps[2].Outcome).To(gomega.Equal(OutcomeSkipped))
-	g.Expect(record.Steps[2].Reason).To(gomega.Equal("the bundle holds no bytes for it"))
-	g.Expect(fake.created).To(gomega.HaveLen(4))
-	g.Expect(fake.uploaded).To(gomega.HaveLen(3))
-	g.Expect(fake.uploaded[2].name).To(gomega.Equal(testThinClaim))
+			// A disk the bundle holds no bytes for creates nothing, the gap is
+			// recorded, and the run continues past it. The machine and the disks
+			// that were held all arrive. The error is what says the deploy was
+			// a partial one, and a dry run's is the same error: what the dry
+			// run describes is a partial deploy, and the exit code says so the
+			// same way.
+			g.Expect(err).To(gomega.MatchError(&NotCreatedError{}))
+			g.Expect(err.Error()).To(gomega.ContainSubstring("4 of the 5 objects"))
+			g.Expect(record.Steps).To(gomega.HaveLen(5))
+			g.Expect(record.Steps[2].Name).To(gomega.Equal(testGapClaim))
+			g.Expect(record.Steps[2].Outcome).To(gomega.Equal(OutcomeSkipped))
+			g.Expect(record.Steps[2].Reason).To(gomega.Equal("the bundle holds no bytes for it"))
+			// Everything else is what a real deploy would create.
+			for i := range record.Steps {
+				if i == 2 {
+					continue
+				}
+				g.Expect(record.Steps[i].Outcome).To(gomega.Equal(OutcomeCreated))
+			}
+			if mode.dryRun {
+				// And nothing touched the target all the same.
+				wroteNothing(g, fake)
+				return
+			}
+			g.Expect(fake.created).To(gomega.HaveLen(4))
+			g.Expect(fake.uploaded).To(gomega.HaveLen(3))
+			g.Expect(fake.uploaded[2].name).To(gomega.Equal(testThinClaim))
+		})
+	}
 }
 
 func TestDeployRecordsADiskTheBundleCannotSize(t *testing.T) {
@@ -632,35 +653,32 @@ func TestDeployRefusesATargetThatCannotTakeTheDisks(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			g := gomega.NewGomegaWithT(t)
+		for _, mode := range runModes {
+			t.Run(mode.name+" of "+tt.name, func(t *testing.T) {
+				g := gomega.NewGomegaWithT(t)
+				opt := testOptions(path)
+				opt.DryRun = mode.dryRun
 
-			record, err := Deploy(context.TODO(), tt.target, testOptions(path))
+				record, err := Deploy(context.TODO(), tt.target, opt)
 
-			g.Expect(err).To(gomega.MatchError(tt.want))
-			// The refusal names what it found.
-			g.Expect(err.Error()).To(gomega.ContainSubstring(tt.names))
-			// It refused before creating anything, so nothing was
-			// attempted and nothing was created: disks are not uploaded
-			// that cannot be placed.
-			g.Expect(record.Steps).To(gomega.BeEmpty())
-			g.Expect(tt.target.created).To(gomega.BeEmpty())
-			g.Expect(tt.target.uploaded).To(gomega.BeEmpty())
-		})
+				g.Expect(err).To(gomega.MatchError(tt.want))
+				// The refusal names what it found.
+				g.Expect(err.Error()).To(gomega.ContainSubstring(tt.names))
+				// It refused before creating anything, so nothing was
+				// attempted and nothing reached the target: disks are not
+				// uploaded that cannot be placed.
+				g.Expect(record.Steps).To(gomega.BeEmpty())
+				g.Expect(record.Requirements).To(gomega.BeEmpty())
+				wroteNothing(g, tt.target)
+			})
+		}
 	}
 }
 
 func TestDeployRecordsADiskThatFailsItsDigestAndGoesOn(t *testing.T) {
 	g := gomega.NewGomegaWithT(t)
-	// The root disk's bytes changed in transit. The claim's name is in
-	// every line of the member's stand-in content. Replacing it keeps
-	// the tar the manifest indexes aligned, while changing what the
-	// digest is computed over.
-	corrupted := bytes.ReplaceAll(
-		readFile(t, writeDisksFixtureBundle(t)),
-		[]byte("disk of "+testRootClaim),
-		[]byte("disk 0f "+testRootClaim))
-	path := writeBytes(t, "corrupted-disks.quo", corrupted)
+	// The root disk's bytes changed in transit.
+	path := writeCorruptedDiskBundle(t)
 	fake := storageTarget()
 
 	record, err := Deploy(context.TODO(), fake, testOptions(path))
@@ -682,6 +700,31 @@ func TestDeployRecordsADiskThatFailsItsDigestAndGoesOn(t *testing.T) {
 	// their bytes uploaded.
 	g.Expect(fake.uploaded).To(gomega.HaveLen(3))
 	g.Expect(fake.uploaded[0].name).To(gomega.Equal(testDataClaim))
+}
+
+func TestDeployDryRunReadsNoDiskBytes(t *testing.T) {
+	g := gomega.NewGomegaWithT(t)
+	// The same corrupted bundle the test above deploys. A real deploy
+	// reports the member as failing its digest where the bytes pass
+	// through. A dry run moves no bytes, so the corruption is not its
+	// finding. quo inspect is what verifies a bundle.
+	fake := storageTarget()
+	opt := testOptions(writeCorruptedDiskBundle(t))
+	opt.DryRun = true
+
+	record, err := Deploy(context.TODO(), fake, opt)
+
+	// The run is clean. No disk byte was read, so the corruption a real
+	// deploy catches on the way through is not seen here. Every step
+	// says created, which is what a real deploy of a whole bundle would
+	// print.
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	g.Expect(record.Steps).To(gomega.HaveLen(5))
+	for i := range record.Steps {
+		g.Expect(record.Steps[i].Outcome).To(gomega.Equal(OutcomeCreated))
+	}
+	// And nothing touched the target all the same.
+	wroteNothing(g, fake)
 }
 
 func TestDeployRecordsAnUploadThatFailedAndGoesOn(t *testing.T) {
@@ -722,38 +765,121 @@ func TestDeployReportsTheProgressOfEachUpload(t *testing.T) {
 	_, err := Deploy(context.TODO(), fake, opt)
 
 	g.Expect(err).ToNot(gomega.HaveOccurred())
-	// Each uploaded disk is reported as started and as finished, with the
-	// volumes it serves and its position among the disks of the deploy.
-	// That numbering is the same one the deploy record uses.
-	done := 0
-	for i := range reported {
-		if !reported[i].Done {
-			continue
+	// Each disk is reported as done, with the volumes it serves and its
+	// position among the disks of the deploy. That numbering is the same
+	// one the deploy record uses. The reader the bytes pass through is
+	// what reports them, so a disk that arrives quickly is reported
+	// only as done.
+	g.Expect(reported).To(gomega.HaveLen(4))
+	for i, claim := range []string{testRootClaim, testDataClaim, testGapClaim, testThinClaim} {
+		format := bundle.DiskGzip
+		if claim == testDataClaim {
+			format = bundle.DiskArchiveGzip
 		}
-		done++
-		switch done {
-		case 1:
-			g.Expect(reported[i].Claim).To(gomega.Equal(testRootClaim))
-			g.Expect(reported[i].Volumes).To(gomega.Equal([]string{"root", "logs"}))
-			g.Expect(reported[i].Disk).To(gomega.Equal(1))
-			g.Expect(reported[i].Transferred).To(gomega.BeEquivalentTo(
-				len(memberOf(t, path, bundle.DiskPath(testRootClaim, bundle.DiskGzip)))))
-		case 2:
-			g.Expect(reported[i].Claim).To(gomega.Equal(testDataClaim))
-			g.Expect(reported[i].Volumes).To(gomega.Equal([]string{"data"}))
-			g.Expect(reported[i].Disk).To(gomega.Equal(2))
-		case 3:
-			g.Expect(reported[i].Claim).To(gomega.Equal(testGapClaim))
-			g.Expect(reported[i].Disk).To(gomega.Equal(3))
-		case 4:
-			g.Expect(reported[i].Claim).To(gomega.Equal(testThinClaim))
-			g.Expect(reported[i].Disk).To(gomega.Equal(4))
-		}
-	}
-	g.Expect(done).To(gomega.Equal(4))
-	for i := range reported {
+		member := memberOf(t, path, bundle.DiskPath(claim, format))
+		g.Expect(reported[i].Claim).To(gomega.Equal(claim))
+		g.Expect(reported[i].State).To(gomega.Equal(StateDone))
+		g.Expect(reported[i].Transferred).To(gomega.BeEquivalentTo(len(member)))
+		g.Expect(reported[i].Disk).To(gomega.Equal(i + 1))
 		g.Expect(reported[i].Disks).To(gomega.Equal(4))
 	}
+	g.Expect(reported[0].Volumes).To(gomega.Equal([]string{"root", "logs"}))
+	g.Expect(reported[1].Volumes).To(gomega.Equal([]string{"data"}))
+}
+
+func TestDeployReportsTheEndOfAnUploadOnce(t *testing.T) {
+	g := gomega.NewGomegaWithT(t)
+	// One disk, so the reports the run makes are its reports alone.
+	path := writeStorageFixtureBundle(t, bundle.StorageRequirement{
+		Claim:        testRootClaim,
+		StorageClass: testStorageClass,
+		Size:         "32Gi",
+		VolumeMode:   "Block",
+	})
+	fake := storageTarget()
+	var reported []Progress
+	opt := testOptions(path)
+	opt.Progress = func(p Progress) {
+		reported = append(reported, p)
+	}
+
+	_, err := Deploy(context.TODO(), fake, opt)
+
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	// The target asks the stream past its end, the way a real upload
+	// does: the read that empties the member carries bytes and the end
+	// together, and the ask that follows returns only the end. The end
+	// is reported once, and nothing is reported for the ask after it.
+	member := memberOf(t, path, bundle.DiskPath(testRootClaim, bundle.DiskGzip))
+	g.Expect(reported).To(gomega.HaveLen(1))
+	g.Expect(reported[0].State).To(gomega.Equal(StateDone))
+	g.Expect(reported[0].Claim).To(gomega.Equal(testRootClaim))
+	g.Expect(reported[0].Transferred).To(gomega.BeEquivalentTo(len(member)))
+}
+
+func TestDeployReportsNothingForATargetThatTransfersNothing(t *testing.T) {
+	g := gomega.NewGomegaWithT(t)
+	path := writeDisksFixtureBundle(t)
+	fake := storageTarget()
+	fake.uploadReadsNothing = true
+	var reported []Progress
+	opt := testOptions(path)
+	opt.Progress = func(p Progress) {
+		reported = append(reported, p)
+	}
+
+	_, err := Deploy(context.TODO(), fake, opt)
+
+	// No byte of any disk moved, so nothing is reported: no wait, no
+	// count, no disk reported done. A progress line counts bytes only
+	// once bytes have moved.
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	g.Expect(reported).To(gomega.BeEmpty())
+}
+
+func TestDeploySaysWhatAnUploadWaitsFor(t *testing.T) {
+	g := gomega.NewGomegaWithT(t)
+	// One disk, so the reports the run makes are its reports alone.
+	path := writeStorageFixtureBundle(t, bundle.StorageRequirement{
+		Claim:        testRootClaim,
+		StorageClass: testStorageClass,
+		Size:         "32Gi",
+		VolumeMode:   "Block",
+	})
+	fake := storageTarget()
+	// CDI has not made the claim ready yet. Each readiness check says
+	// what it waits on, the way a real target says the DataVolume's
+	// phase.
+	fake.uploadWaitsFor = []string{
+		"the DataVolume has no phase yet",
+		`the DataVolume is "Pending"`,
+		`the DataVolume is "ImportInProgress"`,
+	}
+	var reported []Progress
+	opt := testOptions(path)
+	opt.Progress = func(p Progress) {
+		reported = append(reported, p)
+	}
+
+	_, err := Deploy(context.TODO(), fake, opt)
+
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	// While the target waits, each check it makes is reported, saying
+	// what it waits on. No bytes have moved, so none are counted.
+	for i, said := range fake.uploadWaitsFor {
+		g.Expect(reported[i].State).To(gomega.Equal(StateWaiting))
+		g.Expect(reported[i].Said).To(gomega.Equal(said))
+		g.Expect(reported[i].Claim).To(gomega.Equal(testRootClaim))
+		g.Expect(reported[i].Transferred).To(gomega.BeZero())
+	}
+	// The wait ends and the bytes move. The disk's next report is its
+	// last: the reader the bytes pass through reports it done.
+	member := memberOf(t, path, bundle.DiskPath(testRootClaim, bundle.DiskGzip))
+	g.Expect(reported).To(gomega.HaveLen(len(fake.uploadWaitsFor) + 1))
+	last := reported[len(fake.uploadWaitsFor)]
+	g.Expect(last.State).To(gomega.Equal(StateDone))
+	g.Expect(last.Claim).To(gomega.Equal(testRootClaim))
+	g.Expect(last.Transferred).To(gomega.BeEquivalentTo(len(member)))
 }
 
 // errUploadRefused is what a transfer that died on the way to the upload

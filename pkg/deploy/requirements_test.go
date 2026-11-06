@@ -11,48 +11,67 @@ import (
 )
 
 func TestDeployMapsANetworkOntoTheAttachmentOfItsName(t *testing.T) {
-	g := gomega.NewGomegaWithT(t)
-	path := writeNetworksFixtureBundle(t, testAttachment)
-	fake := target()
-	fake.hold(cluster.ObjectRef{
-		Kind:      cluster.KindNetworkAttachmentDefinition,
-		Namespace: testDeployNamespace,
-		Name:      testAttachment,
-	}, heldAttachment(testDeployNamespace, testAttachment))
+	for _, mode := range runModes {
+		t.Run(mode.name, func(t *testing.T) {
+			g := gomega.NewGomegaWithT(t)
+			path := writeNetworksFixtureBundle(t, testAttachment)
+			fake := target()
+			fake.hold(cluster.ObjectRef{
+				Kind:      cluster.KindNetworkAttachmentDefinition,
+				Namespace: testDeployNamespace,
+				Name:      testAttachment,
+			}, heldAttachment(testDeployNamespace, testAttachment))
+			opt := testOptions(path)
+			opt.DryRun = mode.dryRun
 
-	record, err := Deploy(context.TODO(), fake, testOptions(path))
+			record, err := Deploy(context.TODO(), fake, opt)
 
-	g.Expect(err).ToNot(gomega.HaveOccurred())
-	// The mapping is automatic when the deploy namespace holds a
-	// NetworkAttachmentDefinition of the attachment's name, and it is
-	// reported: nothing maps silently.
-	g.Expect(record.Requirements).To(gomega.Equal([]Requirement{
-		{
-			Kind: "network",
-			From: testMultusNetwork,
-			To:   testAttachment,
-			How:  "by name",
-		},
-	}))
-	// The applied VirtualMachine's networkName carries the mapping. The
-	// source cluster's own qualified form is replaced by the
-	// attachment's name, bare because its definition lives in the deploy
-	// namespace. An unqualified name there means the namespace of the
-	// VirtualMachine itself. The pod network stanza is carried through
-	// untouched, because the pod network is never mapped.
-	created := fake.created[0]
-	networks, _, _ := unstructured.NestedSlice(
-		created.Object, "spec", "template", "spec", "networks")
-	g.Expect(networks).To(gomega.Equal([]any{
-		map[string]any{"name": "default", "pod": map[string]any{}},
-		map[string]any{
-			"name":   testMultusNetwork,
-			"multus": map[string]any{"networkName": testAttachment},
-		},
-	}))
-	// Only the VirtualMachine was created: a mapped network creates no
-	// object of its own, and the definition is never written.
-	g.Expect(fake.created).To(gomega.HaveLen(1))
+			g.Expect(err).ToNot(gomega.HaveOccurred())
+			// The mapping is automatic when the deploy namespace holds a
+			// NetworkAttachmentDefinition of the attachment's name, and it
+			// is reported: nothing maps silently.
+			g.Expect(record.Requirements).To(gomega.Equal([]Requirement{
+				{
+					Kind: "network",
+					From: testMultusNetwork,
+					To:   testAttachment,
+					How:  "by name",
+				},
+			}))
+			// The one object a real deploy would create is the machine,
+			// said as created.
+			g.Expect(record.Steps).To(gomega.Equal([]Step{{
+				Kind:      cluster.KindVirtualMachine,
+				Namespace: testDeployNamespace,
+				Name:      testVirtualMachineName,
+				Outcome:   OutcomeCreated,
+			}}))
+			if mode.dryRun {
+				// And it was not put anywhere.
+				wroteNothing(g, fake)
+				return
+			}
+			// The applied VirtualMachine's networkName carries the mapping. The
+			// source cluster's own qualified form is replaced by the
+			// attachment's name, bare because its definition lives in the deploy
+			// namespace. An unqualified name there means the namespace of the
+			// VirtualMachine itself. The pod network stanza is carried through
+			// untouched, because the pod network is never mapped.
+			created := fake.created[0]
+			networks, _, _ := unstructured.NestedSlice(
+				created.Object, "spec", "template", "spec", "networks")
+			g.Expect(networks).To(gomega.Equal([]any{
+				map[string]any{"name": "default", "pod": map[string]any{}},
+				map[string]any{
+					"name":   testMultusNetwork,
+					"multus": map[string]any{"networkName": testAttachment},
+				},
+			}))
+			// Only the VirtualMachine was created: a mapped network creates no
+			// object of its own, and the definition is never written.
+			g.Expect(fake.created).To(gomega.HaveLen(1))
+		})
+	}
 }
 
 func TestDeployAttachesANetworkToTheAttachmentAMappingNames(t *testing.T) {
@@ -83,43 +102,59 @@ func TestDeployAttachesANetworkToTheAttachmentAMappingNames(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			g := gomega.NewGomegaWithT(t)
-			path := writeNetworksFixtureBundle(t, testAttachment)
-			fake := target()
-			// Hold the definition the flag names, wherever it lives.
-			attachment := testAttachment
-			if tt.wantTo != testAttachment {
-				attachment = testAttachmentElsewhere
-			}
-			fake.hold(cluster.ObjectRef{
-				Kind:      cluster.KindNetworkAttachmentDefinition,
-				Namespace: tt.holds,
-				Name:      attachment,
-			}, heldAttachment(tt.holds, attachment))
-			opt := testOptions(path)
-			opt.Networks = map[string]string{testMultusNetwork: tt.named}
+		for _, mode := range runModes {
+			t.Run(mode.name+" of "+tt.name, func(t *testing.T) {
+				g := gomega.NewGomegaWithT(t)
+				path := writeNetworksFixtureBundle(t, testAttachment)
+				fake := target()
+				// Hold the definition the flag names, wherever it lives.
+				attachment := testAttachment
+				if tt.wantTo != testAttachment {
+					attachment = testAttachmentElsewhere
+				}
+				fake.hold(cluster.ObjectRef{
+					Kind:      cluster.KindNetworkAttachmentDefinition,
+					Namespace: tt.holds,
+					Name:      attachment,
+				}, heldAttachment(tt.holds, attachment))
+				opt := testOptions(path)
+				opt.Networks = map[string]string{testMultusNetwork: tt.named}
+				opt.DryRun = mode.dryRun
 
-			record, err := Deploy(context.TODO(), fake, opt)
+				record, err := Deploy(context.TODO(), fake, opt)
 
-			g.Expect(err).ToNot(gomega.HaveOccurred())
-			// The mapping is reported, saying the flag that named it.
-			// What it maps onto is named the way the applied
-			// VirtualMachine names it: qualified only when the
-			// definition lives outside the deploy namespace.
-			g.Expect(record.Requirements).To(gomega.Equal([]Requirement{
-				{
-					Kind: "network",
-					From: testMultusNetwork,
-					To:   tt.wantTo,
-					How:  "by --network",
-				},
-			}))
-			created := fake.created[0]
-			g.Expect(networkNameOf(t, created, testMultusNetwork)).To(gomega.Equal(tt.wantTo))
-			// The mapping creates no object of its own.
-			g.Expect(fake.created).To(gomega.HaveLen(1))
-		})
+				g.Expect(err).ToNot(gomega.HaveOccurred())
+				// The mapping is reported, saying the flag that named it.
+				// What it maps onto is named the way the applied
+				// VirtualMachine names it: qualified only when the
+				// definition lives outside the deploy namespace.
+				g.Expect(record.Requirements).To(gomega.Equal([]Requirement{
+					{
+						Kind: "network",
+						From: testMultusNetwork,
+						To:   tt.wantTo,
+						How:  "by --network",
+					},
+				}))
+				// The one object a real deploy would create is the
+				// machine, said as created.
+				g.Expect(record.Steps).To(gomega.Equal([]Step{{
+					Kind:      cluster.KindVirtualMachine,
+					Namespace: testDeployNamespace,
+					Name:      testVirtualMachineName,
+					Outcome:   OutcomeCreated,
+				}}))
+				if mode.dryRun {
+					// And it was not put anywhere.
+					wroteNothing(g, fake)
+					return
+				}
+				created := fake.created[0]
+				g.Expect(networkNameOf(t, created, testMultusNetwork)).To(gomega.Equal(tt.wantTo))
+				// The mapping creates no object of its own.
+				g.Expect(fake.created).To(gomega.HaveLen(1))
+			})
+		}
 	}
 }
 
@@ -171,27 +206,30 @@ func TestDeployRefusesANetworkThatMapsToNothing(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			g := gomega.NewGomegaWithT(t)
-			// Nothing is held: no NetworkAttachmentDefinition anywhere.
-			path := writeNetworksFixtureBundle(t, tt.attachment)
-			fake := target()
-			opt := testOptions(path)
-			opt.Networks = tt.networks
+		for _, mode := range runModes {
+			t.Run(mode.name+" of "+tt.name, func(t *testing.T) {
+				g := gomega.NewGomegaWithT(t)
+				// Nothing is held: no NetworkAttachmentDefinition anywhere.
+				path := writeNetworksFixtureBundle(t, tt.attachment)
+				fake := target()
+				opt := testOptions(path)
+				opt.Networks = tt.networks
+				opt.DryRun = mode.dryRun
 
-			record, err := Deploy(context.TODO(), fake, opt)
+				record, err := Deploy(context.TODO(), fake, opt)
 
-			g.Expect(err).To(gomega.MatchError(&UnmappedRequirementError{}))
-			// The refusal names the network and what was tried.
-			g.Expect(err.Error()).To(gomega.ContainSubstring(testMultusNetwork))
-			g.Expect(err.Error()).To(gomega.ContainSubstring(tt.names))
-			// It refused before creating anything, so nothing was
-			// attempted and nothing was created: the machine is not
-			// created whose networks cannot be attached.
-			g.Expect(record.Steps).To(gomega.BeEmpty())
-			g.Expect(record.Requirements).To(gomega.BeEmpty())
-			g.Expect(fake.created).To(gomega.BeEmpty())
-		})
+				g.Expect(err).To(gomega.MatchError(&UnmappedRequirementError{}))
+				// The refusal names the network and what was tried.
+				g.Expect(err.Error()).To(gomega.ContainSubstring(testMultusNetwork))
+				g.Expect(err.Error()).To(gomega.ContainSubstring(tt.names))
+				// It refused before creating anything, so nothing was
+				// attempted and nothing reached the target: the machine is
+				// not created whose networks cannot be attached.
+				g.Expect(record.Steps).To(gomega.BeEmpty())
+				g.Expect(record.Requirements).To(gomega.BeEmpty())
+				wroteNothing(g, fake)
+			})
+		}
 	}
 }
 
