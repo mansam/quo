@@ -119,6 +119,10 @@ type fakeTarget struct {
 	// uploadErrFor is what UploadDisk reports for the named claim, so a
 	// test can make one disk's upload fail while the rest proceed.
 	uploadErrFor map[string]error
+	// uploadReadsNothing makes UploadDisk read no bytes and still
+	// report success. That is the shape of a target that only records
+	// an upload. What is never read cannot be reported.
+	uploadReadsNothing bool
 	// deleteErrFor is what Delete reports for the named object, so a
 	// test can make one deletion fail while the rest proceed.
 	deleteErrFor map[string]error
@@ -238,6 +242,9 @@ func (r *fakeTarget) UploadDisk(
 	err = ctx.Err()
 	if err != nil {
 		err = fmt.Errorf("upload disk %q: %w", name, err)
+		return
+	}
+	if r.uploadReadsNothing {
 		return
 	}
 	received, err := io.ReadAll(content)
