@@ -107,7 +107,9 @@ const (
 	StateWaiting State = "waiting"
 	// StateTransferring is an upload whose bytes are moving.
 	StateTransferring State = "transferring"
-	// StateDone is an upload whose bytes have all arrived.
+	// StateDone is an upload whose bytes have all passed through the
+	// reader. That is the end of what the bundle had to give. The
+	// target may still be finishing with them.
 	StateDone State = "done"
 )
 
