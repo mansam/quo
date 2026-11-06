@@ -30,7 +30,7 @@ Capture's check is that arrangement. `capture.Check` runs the real read
 path against a sink that keeps nothing, so a check cannot write at all.
 No branch in the read path knows a check is running. The `quo check`
 command that wrapped it was folded into `quo export --dry-run` in commit
-`45add8c`. The library entry point is intact, and the deploy side now
+`244d4cd`. The library entry point is intact, and the deploy side now
 matches it.
 
 ## Why
