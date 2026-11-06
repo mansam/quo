@@ -75,12 +75,12 @@ type Export struct {
 // vmExport is a VirtualMachineExport, its token secret, and the connection
 // to the export server that serves its disks.
 type vmExport struct {
-	dynamic     dynamic.Interface
-	core        kubernetes.Interface
-	config      *rest.Config
-	namespace   string
-	vm          string
-	name        string
+	dynamic   dynamic.Interface
+	core      kubernetes.Interface
+	config    *rest.Config
+	namespace string
+	vm        string
+	name      string
 	// waiting, when set, is called each time the export is checked for
 	// readiness, saying what it waits on.
 	waiting     func(said string)

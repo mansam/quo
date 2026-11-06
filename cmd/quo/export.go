@@ -42,9 +42,13 @@ func runExport(args []string) (err error) {
 		err = capture.Check(context.TODO(), c, parsed.opt, os.Stdout)
 		return
 	}
-	parsed.opt.Progress = newReporter(os.Stderr)
+	reportProgress, flushProgress := newReporter(os.Stderr)
+	parsed.opt.Progress = reportProgress
 	dest := bundleDest(parsed.output, parsed.opt.Name)
 	record, err := capture.ExportToFile(context.TODO(), c, parsed.opt, dest)
+	// The line the last disk left open is closed here, so the record
+	// never prints onto the end of it.
+	flushProgress()
 	if err != nil {
 		return
 	}
@@ -139,21 +143,38 @@ func whySkipped(attempt bundle.Attempt) (why string) {
 	return
 }
 
-// newReporter returns the progress reporter the CLI uses. The reporter
-// rewrites one line of out while a disk transfers. It starts a new line when
-// the disk finishes. So a person can tell a capture that takes hours from
-// one that stopped making progress.
+// newReporter returns the progress reporter the CLI uses, and the flush
+// that closes the line it leaves open. The reporter rewrites one line of
+// out while a disk transfers. It starts a new line when the disk finishes.
+// So a person can tell a capture that takes hours from one that stopped
+// making progress.
+//
+// A disk whose transfer dies part-way leaves its line open. The reporter
+// closes it when it is asked to report a different disk, and flush closes
+// whatever line is open when the run ends. The capture record then never
+// prints onto the end of one.
 //
 // Progress goes to standard error. So standard output stays the result of
 // the command.
-func newReporter(out io.Writer) (report func(p capture.Progress)) {
+func newReporter(out io.Writer) (report func(p capture.Progress), flush func()) {
 	// written is the width of the line last written, so that a shorter line
 	// can be padded over the one it replaces. A carriage return moves the
 	// cursor back to the start of the line. It removes nothing that is
 	// already there. So "1023.5 MiB" followed by "1.1 GiB" would read
 	// "1.1 GiBMiB" without the padding.
 	written := 0
+	// open says a line is being rewritten that no line ending has closed
+	// yet. disk is the position of the disk that line reports.
+	open := false
+	disk := 0
 	report = func(p capture.Progress) {
+		if open && disk != p.Disk {
+			// The disk before this one never finished. Its line is
+			// closed here, so this disk starts on a line of its own.
+			_, _ = fmt.Fprint(out, "\n")
+			written = 0
+			open = false
+		}
 		var line string
 		if p.State == capture.StateWaiting {
 			line = "waiting for the export server, " + p.Said
@@ -172,11 +193,21 @@ func newReporter(out io.Writer) (report func(p capture.Progress)) {
 		}
 		written = len(line)
 		ending := "\r"
+		open = true
 		if p.State == capture.StateDone {
 			ending = "\n"
 			written = 0
+			open = false
 		}
+		disk = p.Disk
 		_, _ = fmt.Fprint(out, line, padding, ending)
+	}
+	flush = func() {
+		if !open {
+			return
+		}
+		_, _ = fmt.Fprint(out, "\n")
+		open = false
 	}
 	return
 }

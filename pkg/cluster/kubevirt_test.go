@@ -69,6 +69,6 @@ func TestEachWarningPrintsOnce(t *testing.T) {
 	}
 	handler.HandleWarningHeader(299, "", "a different warning")
 	g.Expect(out.String()).To(gomega.Equal(
-		"Warning: "+repeated+"\n"+
+		"Warning: " + repeated + "\n" +
 			"Warning: a different warning\n"))
 }

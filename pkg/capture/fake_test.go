@@ -81,8 +81,8 @@ type fakeCluster struct {
 	// ready, once per check. That is what a cluster whose export server
 	// has not come up yet looks like from the outside.
 	exportWaitsFor []string
-	kvErr     error
-	expandErr error
+	kvErr          error
+	expandErr      error
 }
 
 var _ cluster.Cluster = &fakeCluster{}
