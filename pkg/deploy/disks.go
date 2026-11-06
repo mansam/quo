@@ -378,12 +378,17 @@ func uploadDisks(
 	}
 }
 
-// upload streams one disk's member into its DataVolume through the
-// progress reporter, and records what became of it. The outcome is
-// created only when the bytes the bundle holds arrived whole. The outcome
-// is skipped when they were not the bytes the manifest recorded. The
-// outcome is failed when the upload itself failed. A dry run sends
-// nothing and only reads the member, for the verdict on its bytes.
+// upload streams one disk's member into its DataVolume, and records
+// what became of it. The outcome is created only when the bytes the
+// bundle holds arrived whole. The outcome is skipped when they were
+// not the bytes the manifest recorded. The outcome is failed when the
+// upload itself failed. A dry run sends nothing and only reads the
+// member, for the verdict on its bytes.
+//
+// Every progress report follows something that happened rather than
+// something the code assumed. The target reports what it waits on,
+// because the target is what waits. The reader the bytes pass through
+// reports how many have passed, because it is what sees them.
 func upload(
 	ctx context.Context,
 	t cluster.Target,
@@ -422,10 +427,15 @@ func upload(
 		}
 		return
 	}
-	report := newReporter(opt, disks, at)
-	report(0, false)
+	report, waiting := newReporter(opt, disks, at)
 	sent := &progressReader{in: stream, report: report, reported: time.Now()}
-	err = t.UploadDisk(ctx, opt.Namespace, disk.held.Claim, sent, stream.Size())
+	err = t.UploadDisk(ctx, cluster.Upload{
+		Namespace: opt.Namespace,
+		Name:      disk.held.Claim,
+		Content:   sent,
+		Size:      stream.Size(),
+		Waiting:   waiting,
+	})
 	if mismatch := stream.Mismatch(); mismatch != nil {
 		// The bytes that left the bundle were not the bytes the manifest
 		// recorded. What the target holds is therefore not the disk the
@@ -440,16 +450,22 @@ func upload(
 		disk.step.Reason = "the upload failed: " + err.Error()
 		return
 	}
-	report(stream.Size(), true)
 	// The step keeps the outcome createDataVolumes gave it: the
 	// DataVolume is created and now holds its bytes.
 }
 
-// newReporter returns the function that reports one disk's upload
-// progress, which does nothing when the caller asked for no progress.
-func newReporter(opt Options, disks []plannedDisk, at int) (report func(sent int64, done bool)) {
+// newReporter returns the functions that report one disk's upload
+// progress: report says the bytes moving through the reader, and waiting
+// says what the target waits on before they move. Both do nothing when
+// the caller asked for no progress.
+func newReporter(
+	opt Options,
+	disks []plannedDisk,
+	at int) (report func(state State, sent int64), waiting func(said string)) {
+	//
 	if opt.Progress == nil {
-		report = func(sent int64, done bool) {}
+		report = func(state State, sent int64) {}
+		waiting = func(said string) {}
 		return
 	}
 	p := Progress{
@@ -458,9 +474,16 @@ func newReporter(opt Options, disks []plannedDisk, at int) (report func(sent int
 		Disk:    at + 1,
 		Disks:   len(disks),
 	}
-	report = func(sent int64, done bool) {
+	report = func(state State, sent int64) {
+		p.State = state
 		p.Transferred = sent
-		p.Done = done
+		p.Said = ""
+		opt.Progress(p)
+	}
+	waiting = func(said string) {
+		p.State = StateWaiting
+		p.Transferred = 0
+		p.Said = said
 		opt.Progress(p)
 	}
 	return
@@ -470,10 +493,13 @@ func newReporter(opt Options, disks []plannedDisk, at int) (report func(sent int
 // Reports are spaced in time, because a disk is read in small pieces and
 // a report per piece would be too many. The reader that wraps the member
 // starts the clock, so a disk that arrives quickly is reported only as
-// started and as finished.
+// finished. The end of the stream is the end of the transfer, so it is
+// reported as done. The bundle's VerifiedStream reports a digest
+// mismatch in place of the end of the stream. A member that fails its
+// digest is therefore never reported done.
 type progressReader struct {
 	in       io.Reader
-	report   func(sent int64, done bool)
+	report   func(state State, sent int64)
 	sent     int64
 	reported time.Time
 }
@@ -483,10 +509,14 @@ type progressReader struct {
 func (r *progressReader) Read(b []byte) (n int, err error) {
 	n, err = r.in.Read(b)
 	r.sent += int64(n)
+	if errors.Is(err, io.EOF) {
+		r.report(StateDone, r.sent)
+		return
+	}
 	if time.Since(r.reported) < progressInterval {
 		return
 	}
 	r.reported = time.Now()
-	r.report(r.sent, false)
+	r.report(StateTransferring, r.sent)
 	return
 }

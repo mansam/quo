@@ -119,6 +119,15 @@ type fakeTarget struct {
 	// uploadErrFor is what UploadDisk reports for the named claim, so a
 	// test can make one disk's upload fail while the rest proceed.
 	uploadErrFor map[string]error
+	// uploadWaitsFor is what UploadDisk says while it waits for the
+	// claim to become ready, once per readiness check. That is what a
+	// cluster whose CDI has not bound the claim yet looks like from the
+	// outside.
+	uploadWaitsFor []string
+	// uploadReadsNothing makes UploadDisk read no bytes and still
+	// report success. That is the shape of a target that only records
+	// an upload. What is never read cannot be reported.
+	uploadReadsNothing bool
 	// deleteErrFor is what Delete reports for the named object, so a
 	// test can make one deletion fail while the rest proceed.
 	deleteErrFor map[string]error
@@ -227,34 +236,40 @@ func (r *fakeTarget) Create(ctx context.Context, object *unstructured.Unstructur
 
 // UploadDisk receives the disk the way CDI would: it reads the whole
 // stream, so a member that fails its digest fails here too. It records
-// what arrived. A cancelled context is reported the way a real client
-// does once the deploy is interrupted.
-func (r *fakeTarget) UploadDisk(
-	ctx context.Context,
-	namespace, name string,
-	content io.Reader,
-	size int64) (err error) {
+// what arrived. Before the bytes move it says what it waits on, once per
+// readiness check, when the cluster it models has not made the claim
+// ready yet. A cancelled context is reported the way a real client does
+// once the deploy is interrupted.
+func (r *fakeTarget) UploadDisk(ctx context.Context, upload cluster.Upload) (err error) {
 	//
 	err = ctx.Err()
 	if err != nil {
-		err = fmt.Errorf("upload disk %q: %w", name, err)
+		err = fmt.Errorf("upload disk %q: %w", upload.Name, err)
 		return
 	}
-	received, err := io.ReadAll(content)
+	if r.uploadReadsNothing {
+		return
+	}
+	for _, said := range r.uploadWaitsFor {
+		if upload.Waiting != nil {
+			upload.Waiting(said)
+		}
+	}
+	received, err := io.ReadAll(upload.Content)
 	if err != nil {
 		return
 	}
-	if failFor, found := r.uploadErrFor[name]; found {
+	if failFor, found := r.uploadErrFor[upload.Name]; found {
 		err = failFor
 		return
 	}
 	r.uploaded = append(r.uploaded, fakeUpload{
-		namespace: namespace,
-		name:      name,
-		size:      size,
+		namespace: upload.Namespace,
+		name:      upload.Name,
+		size:      upload.Size,
 		content:   received,
 	})
-	r.events = append(r.events, "upload "+namespace+"/"+name)
+	r.events = append(r.events, "upload "+upload.Namespace+"/"+upload.Name)
 	return
 }
 

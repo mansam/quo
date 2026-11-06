@@ -16,6 +16,26 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
+// Upload is one disk's transfer into the claim a DataVolume creates.
+type Upload struct {
+	// Namespace is the namespace the DataVolume was created in.
+	Namespace string
+	// Name is the DataVolume's own name. CDI names the claim after the
+	// DataVolume itself.
+	Name string
+	// Content is the disk's bytes. UploadDisk sends them unchanged,
+	// exactly as it reads them.
+	Content io.Reader
+	// Size is the count the bytes will add up to. UploadDisk is told
+	// the count, so that a transfer that yields fewer bytes than the
+	// count fails rather than ending early.
+	Size int64
+	// Waiting, when set, is called each time the target checks whether
+	// the claim is ready. said is what the target is waiting on, in
+	// words a person can read. No bytes have moved.
+	Waiting func(said string)
+}
+
 // quo asks for the upload token that authorizes one upload through a
 // resource of CDI's own.
 var uploadTokenRequestResource = schema.GroupVersionResource{
@@ -60,26 +80,22 @@ const (
 	phaseSucceeded   = "Succeeded"
 )
 
-// UploadDisk puts the bytes readable from content into the claim the
-// named DataVolume creates in namespace. CDI names that claim after the
-// DataVolume itself. UploadDisk sends the bytes unchanged, exactly as it
-// read them. size is the count the bytes will add up to. UploadDisk is
-// told the count, so that a transfer that yields fewer bytes than the
-// count fails rather than ending early.
+// UploadDisk puts the bytes readable from upload.Content into the claim
+// the DataVolume upload.Name creates in upload.Namespace. CDI names that
+// claim after the DataVolume itself. UploadDisk sends the bytes
+// unchanged, exactly as it read them.
 //
 // The upload waits for CDI to make the claim ready to receive the bytes.
 // A caller that creates the DataVolume and uploads into it at once
-// therefore needs no readiness loop of its own. UploadDisk offers the
-// bytes once. A transfer that fails part-way is the caller's to report.
-// The person who ran the deploy decides what happens next, because
-// nothing in quo resumes a partial one.
-func (r *KubeVirt) UploadDisk(
-	ctx context.Context,
-	namespace, name string,
-	content io.Reader,
-	size int64) (err error) {
+// therefore needs no readiness loop of its own. While the claim is not
+// ready, UploadDisk calls upload.Waiting, when set, once per check it
+// makes, saying what it waits on. UploadDisk offers the bytes once. A
+// transfer that fails part-way is the caller's to report. The person who
+// ran the deploy decides what happens next, because nothing in quo
+// resumes a partial one.
+func (r *KubeVirt) UploadDisk(ctx context.Context, upload Upload) (err error) {
 	//
-	err = r.awaitUploadReady(ctx, namespace, name)
+	err = r.awaitUploadReady(ctx, upload.Namespace, upload.Name, upload.Waiting)
 	if err != nil {
 		return
 	}
@@ -95,7 +111,7 @@ func (r *KubeVirt) UploadDisk(
 		close(tunneled.stop)
 	}()
 	client := r.uploadClient(ctx, proxy)
-	token, err := r.uploadToken(ctx, namespace, name)
+	token, err := r.uploadToken(ctx, upload.Namespace, upload.Name)
 	if err != nil {
 		return
 	}
@@ -103,17 +119,17 @@ func (r *KubeVirt) UploadDisk(
 		ctx,
 		http.MethodPost,
 		"https://"+tunneled.address+uploadPath,
-		content)
+		upload.Content)
 	if err != nil {
-		err = fmt.Errorf("build the upload of disk %q: %w", name, err)
+		err = fmt.Errorf("build the upload of disk %q: %w", upload.Name, err)
 		return
 	}
 	request.Header.Set("Authorization", "Bearer "+token)
 	request.Header.Set("Content-Type", "application/octet-stream")
-	request.ContentLength = size
+	request.ContentLength = upload.Size
 	response, err := client.Do(request)
 	if err != nil {
-		err = fmt.Errorf("upload disk %q: %w", name, err)
+		err = fmt.Errorf("upload disk %q: %w", upload.Name, err)
 		return
 	}
 	defer func() {
@@ -124,7 +140,7 @@ func (r *KubeVirt) UploadDisk(
 		said, _ = io.ReadAll(io.LimitReader(response.Body, uploadSaidLimit))
 		err = fmt.Errorf(
 			"upload disk %q: the upload proxy answered %s: %s",
-			name,
+			upload.Name,
 			response.Status,
 			strings.TrimSpace(string(said)))
 		return
@@ -135,8 +151,14 @@ func (r *KubeVirt) UploadDisk(
 // awaitUploadReady waits for CDI to make the named DataVolume ready to
 // receive its bytes: the claim bound and the upload pod placed. When the
 // DataVolume reaches a phase it never recovers from, awaitUploadReady
-// reports at once rather than letting the timeout expire.
-func (r *KubeVirt) awaitUploadReady(ctx context.Context, namespace, name string) (err error) {
+// reports at once rather than letting the timeout expire. Each check it
+// makes calls waiting, when set, saying what the DataVolume's phase is.
+// A person watching the deploy can then tell a wait from a transfer.
+func (r *KubeVirt) awaitUploadReady(
+	ctx context.Context,
+	namespace, name string,
+	waiting func(said string)) (err error) {
+	//
 	deadline := time.Now().Add(uploadReadyTimeout)
 	for {
 		var dataVolume *unstructured.Unstructured
@@ -161,6 +183,16 @@ func (r *KubeVirt) awaitUploadReady(ctx context.Context, namespace, name string)
 		case phaseSucceeded:
 			err = fmt.Errorf("DataVolume %s/%s is already populated", namespace, name)
 			return
+		}
+		if waiting != nil {
+			if phase == "" {
+				// A DataVolume straight from a create carries no phase
+				// until CDI gives it one. That is a wait like any
+				// other, and is said as one.
+				waiting("the DataVolume has no phase yet")
+			} else {
+				waiting(fmt.Sprintf("the DataVolume is %q", phase))
+			}
 		}
 		if time.Now().After(deadline) {
 			err = fmt.Errorf(

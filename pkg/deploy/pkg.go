@@ -69,7 +69,8 @@ type Options struct {
 	// created, nothing is uploaded, and no labels reach anything. The
 	// target is only read.
 	DryRun bool
-	// Progress, when set, is called while a disk uploads. A caller can
+	// Progress, when set, is called while a disk uploads: while the
+	// claim it needs becomes ready, and as its bytes move. A caller can
 	// then distinguish a deploy that takes hours from one that is hung.
 	Progress func(p Progress)
 }
@@ -85,11 +86,30 @@ type Progress struct {
 	// and Disks is how many there are.
 	Disk  int
 	Disks int
-	// Transferred is the count of bytes sent so far.
+	// State is what the upload is doing: waiting for the claim to be
+	// ready, transferring the disk, or done.
+	State State
+	// Transferred is the count of bytes sent so far. It counts only
+	// bytes that have moved.
 	Transferred int64
-	// Done reports the disk as fully sent.
-	Done bool
+	// Said is what the upload waits on, in the target's words. It is
+	// set only while the upload waits.
+	Said string
 }
+
+// State is what a disk's upload is doing.
+type State string
+
+// States
+const (
+	// StateWaiting is an upload whose claim is not ready to receive its
+	// bytes yet. Said says what it waits on.
+	StateWaiting State = "waiting"
+	// StateTransferring is an upload whose bytes are moving.
+	StateTransferring State = "transferring"
+	// StateDone is an upload whose bytes have all arrived.
+	StateDone State = "done"
+)
 
 // Outcome is what became of one object a deploy tried to create.
 type Outcome string
