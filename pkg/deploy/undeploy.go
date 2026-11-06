@@ -39,8 +39,7 @@ type Deletion struct {
 	Namespace string
 	Name      string
 	// Err is why the object is still on the cluster. It is nil for an
-	// object the undeploy deleted, and for every entry of a dry run,
-	// which attempts nothing.
+	// object the undeploy deleted, and for every entry of a dry run.
 	Err error
 }
 
@@ -67,6 +66,9 @@ func Undeploy(
 	t cluster.Target,
 	opt UndeployOptions) (deleted []Deletion, err error) {
 	//
+	if opt.DryRun {
+		t = &dryRunTarget{wrapped: t}
+	}
 	file, err := os.Open(opt.Bundle)
 	if err != nil {
 		err = fmt.Errorf("open bundle: %w", err)
@@ -93,14 +95,6 @@ func Undeploy(
 		}
 		return
 	})
-	if opt.DryRun {
-		// Nothing is attempted, so nothing can fail: the list is what
-		// the undeploy would delete, whole.
-		for i := range held {
-			deleted = append(deleted, deletionOf(held[i]))
-		}
-		return
-	}
 	for i := range held {
 		entry := deletionOf(held[i])
 		entry.Err = t.Delete(ctx, held[i])

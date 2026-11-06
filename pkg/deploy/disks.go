@@ -327,9 +327,7 @@ func checkVolumeMode(ctx context.Context, t cluster.Target, disk plannedDisk) (e
 // bundle holds that can be placed, named after the claim it backs. The
 // DataVolumes are created before anything uploads and before the
 // VirtualMachine. Nothing in the namespace then looks like a
-// VirtualMachine until its disks are in place. A dry run creates none of
-// them and still says each one as created, which is what a real deploy
-// would do with it.
+// VirtualMachine until its disks are in place.
 func createDataVolumes(
 	ctx context.Context,
 	t cluster.Target,
@@ -341,10 +339,6 @@ func createDataVolumes(
 		if disks[i].step.Outcome == OutcomeSkipped {
 			// A disk that creates nothing was decided when it was
 			// planned. The record already says why.
-			continue
-		}
-		if opt.DryRun {
-			dryRunStep(&disks[i].step)
 			continue
 		}
 		dataVolume := buildDataVolume(disks[i], opt, identity)
@@ -361,8 +355,7 @@ func createDataVolumes(
 // uploadDisks streams each held disk's bytes into its DataVolume, one at
 // a time, and finishes the deploy record's entry for it. A disk whose
 // DataVolume was not created is not uploaded. A disk that fails does not
-// stop the ones behind it. A dry run sends nothing: it reads each member
-// to its end instead, for the verdict on its bytes.
+// stop the ones behind it.
 func uploadDisks(
 	ctx context.Context,
 	t cluster.Target,
@@ -382,8 +375,7 @@ func uploadDisks(
 // what became of it. The outcome is created only when the bytes the
 // bundle holds arrived whole. The outcome is skipped when they were
 // not the bytes the manifest recorded. The outcome is failed when the
-// upload itself failed. A dry run sends nothing and only reads the
-// member, for the verdict on its bytes.
+// upload itself failed.
 //
 // Every progress report follows something that happened rather than
 // something the code assumed. The target reports what it waits on,
@@ -405,26 +397,6 @@ func upload(
 		// looks like. Nothing was uploaded from it.
 		disk.step.Outcome = OutcomeSkipped
 		disk.step.Reason = err.Error()
-		return
-	}
-	if opt.DryRun {
-		// Nothing is sent anywhere, but the member is read to its end.
-		// Its digest is the one thing about the bytes a dry run can
-		// still vouch for. A member that fails the digest is a skip in
-		// the record, exactly as a real deploy records one.
-		_, readErr := io.Copy(io.Discard, stream)
-		if mismatch := stream.Mismatch(); mismatch != nil {
-			disk.step.Outcome = OutcomeSkipped
-			disk.step.Reason = mismatch.Error()
-			return
-		}
-		if readErr != nil {
-			// A member that ends before it is whole is one a real
-			// deploy would fail to send, which is what the dry run
-			// says.
-			disk.step.Outcome = OutcomeFailed
-			disk.step.Reason = "the upload would fail: " + readErr.Error()
-		}
 		return
 	}
 	report, waiting := newReporter(opt, disks, at)

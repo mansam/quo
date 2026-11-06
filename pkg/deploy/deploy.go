@@ -44,11 +44,15 @@ import (
 // the record the real deploy would print. That record holds the objects
 // it would create, in the order it would create them, and the mappings it
 // would apply. The dry run creates nothing, uploads nothing, and applies
-// no labels. The target is only read.
+// no labels. The target is only read. Deploy works through a target that
+// writes nothing, so one write path serves a dry run and a real deploy
+// alike.
 //
-// The members are still read and verified as the real deploy reads them.
-// A member that fails its digest is a skip in the record. The error is
-// the one the real deploy's would be.
+// The closure members and the expansion are still read and still
+// verified, because a deploy reads them before it writes anything. The
+// disk members are not read, because no upload moves their bytes. A disk
+// member that fails its digest is therefore not a dry run's finding.
+// quo inspect is what verifies a bundle. It needs no cluster.
 //
 // Past the refusals the deploy is best-effort. A step that fails is
 // recorded, and the run continues. A bundle member that fails its digest
@@ -69,6 +73,9 @@ import (
 // never rolls back.
 func Deploy(ctx context.Context, t cluster.Target, opt Options) (record Record, err error) {
 	//
+	if opt.DryRun {
+		t = &dryRunTarget{wrapped: t}
+	}
 	file, err := os.Open(opt.Bundle)
 	if err != nil {
 		err = fmt.Errorf("open bundle: %w", err)
@@ -285,8 +292,7 @@ func readVirtualMachine(
 // The step is the one readVirtualMachine built. The entry a skipped
 // expansion would have recorded and the entry a created one records
 // therefore name the same object. The entry is recorded whatever became
-// of it. A dry run creates nothing and still says the machine as created,
-// which is what a real deploy would do with it.
+// of it.
 //
 // networks is what attachNetworks decided for the machine's multus
 // networks. The applied VirtualMachine carries the mappings.
@@ -300,10 +306,6 @@ func createVirtualMachine(
 	identity string,
 	networks []Requirement) (finished Step) {
 	//
-	if opt.DryRun {
-		dryRunStep(&step)
-		return step
-	}
 	vm := buildVirtualMachine(expanded, opt, provenance, identity, networks)
 	createErr := t.Create(ctx, vm)
 	if createErr != nil {

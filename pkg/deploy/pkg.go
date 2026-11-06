@@ -152,13 +152,6 @@ type Step struct {
 	Reason string
 }
 
-// dryRunStep puts on a step what a dry run did with the object it stands
-// for. Nothing is created. The step still says created, because the
-// record a dry run returns is the record a real deploy would print.
-func dryRunStep(step *Step) {
-	step.Outcome = OutcomeCreated
-}
-
 // Kind is the sort of thing a requirement asks the target for.
 type Kind string
 
