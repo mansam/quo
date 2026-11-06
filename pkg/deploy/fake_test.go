@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onsi/gomega"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/yaml"
 
@@ -94,6 +95,19 @@ const (
 func testOptions(path string) (opt Options) {
 	opt = Options{Bundle: path, Namespace: testDeployNamespace}
 	return
+}
+
+// runModes is the two ways a deploy runs: for real, and as a dry run.
+// The two share one write path, so a table that states a contract runs
+// each row in both modes. A dry run's row carries the negative beside
+// the contract, because it is what catches a write path that forgets
+// its target.
+var runModes = []struct {
+	name   string
+	dryRun bool
+}{
+	{name: "a deploy"},
+	{name: "a dry run", dryRun: true},
 }
 
 // fakeTarget is quo's one fake Target: a plain struct holding what a test
@@ -364,6 +378,16 @@ func (r *fakeTarget) holdLabeled(kind, name, identity string) {
 	r.hold(
 		cluster.ObjectRef{Kind: kind, Namespace: testDeployNamespace, Name: name},
 		deployedObject(kind, name, identity))
+}
+
+// wroteNothing asserts that nothing reached the target: nothing was
+// created, nothing was uploaded, and nothing was recorded against it.
+// A dry run's row carries this beside the contract. On a refusal both
+// modes carry it, because a refusal attempts nothing either way.
+func wroteNothing(g *gomega.GomegaWithT, fake *fakeTarget) {
+	g.Expect(fake.created).To(gomega.BeEmpty())
+	g.Expect(fake.uploaded).To(gomega.BeEmpty())
+	g.Expect(fake.events).To(gomega.BeEmpty())
 }
 
 // deployedObject builds one object of a deployment: labeled as quo's work
@@ -723,6 +747,51 @@ func writeStorageFixtureBundle(
 	if err != nil {
 		t.Fatalf("close bundle: %v", err)
 	}
+	return
+}
+
+// writeCorruptedClosureBundle writes the closure fixture bundle with
+// the sysprep answer file changed in transit. The answer's stand-in
+// content sits in the ConfigMap member alone. Replacing it keeps the
+// tar the manifest indexes aligned, while changing what the digest is
+// computed over.
+func writeCorruptedClosureBundle(t *testing.T) (path string) {
+	t.Helper()
+	path = writeBytes(t, "corrupted-closure.quo", bytes.ReplaceAll(
+		readFile(t, writeClosureFixtureBundle(t)),
+		[]byte(sysprepAnswer),
+		[]byte(sysprepMangled)))
+	return
+}
+
+// writeCorruptedExpansionBundle writes the bundle at path with one byte
+// of its expansion changed in transit. The machine type sits in the
+// expansion alone, because the declaration names an instancetype
+// instead. Its last occurrence in the bundle is therefore in the
+// member.
+func writeCorruptedExpansionBundle(t *testing.T, path string) (corrupted string) {
+	t.Helper()
+	content := bytes.Clone(readFile(t, path))
+	at := bytes.LastIndex(content, []byte(testMachineType))
+	if at < 0 {
+		t.Fatalf("the fixture bundle does not carry the machine type")
+	}
+	content[at] = 'x'
+	corrupted = writeBytes(t, "corrupted-expansion.quo", content)
+	return
+}
+
+// writeCorruptedDiskBundle writes the disk fixture bundle with the root
+// disk's bytes changed in transit. The claim's name is in every line of
+// the member's stand-in content. Replacing it keeps the tar the
+// manifest indexes aligned, while changing what the digest is computed
+// over.
+func writeCorruptedDiskBundle(t *testing.T) (path string) {
+	t.Helper()
+	path = writeBytes(t, "corrupted-disk.quo", bytes.ReplaceAll(
+		readFile(t, writeDisksFixtureBundle(t)),
+		[]byte("disk of "+testRootClaim),
+		[]byte("disk 0f "+testRootClaim)))
 	return
 }
 
