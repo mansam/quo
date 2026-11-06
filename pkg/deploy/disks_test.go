@@ -1,7 +1,6 @@
 package deploy
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"testing"
@@ -466,25 +465,27 @@ func TestDeployRefusesAStorageClassThatMapsToNothing(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			g := gomega.NewGomegaWithT(t)
-			opt := testOptions(path)
-			opt.StorageClasses = tt.mapped
+		for _, mode := range runModes {
+			t.Run(mode.name+" of "+tt.name, func(t *testing.T) {
+				g := gomega.NewGomegaWithT(t)
+				opt := testOptions(path)
+				opt.StorageClasses = tt.mapped
+				opt.DryRun = mode.dryRun
 
-			record, err := Deploy(context.TODO(), tt.target, opt)
+				record, err := Deploy(context.TODO(), tt.target, opt)
 
-			g.Expect(err).To(gomega.MatchError(&UnmappedRequirementError{}))
-			// The refusal names the requirement and what was tried.
-			g.Expect(err.Error()).To(gomega.ContainSubstring(testStorageClass))
-			g.Expect(err.Error()).To(gomega.ContainSubstring(tt.names))
-			// It refused before creating anything, so nothing was
-			// attempted and nothing was created: disks are not uploaded
-			// that cannot be placed.
-			g.Expect(record.Steps).To(gomega.BeEmpty())
-			g.Expect(record.Requirements).To(gomega.BeEmpty())
-			g.Expect(tt.target.created).To(gomega.BeEmpty())
-			g.Expect(tt.target.uploaded).To(gomega.BeEmpty())
-		})
+				g.Expect(err).To(gomega.MatchError(&UnmappedRequirementError{}))
+				// The refusal names the requirement and what was tried.
+				g.Expect(err.Error()).To(gomega.ContainSubstring(testStorageClass))
+				g.Expect(err.Error()).To(gomega.ContainSubstring(tt.names))
+				// It refused before creating anything, so nothing was
+				// attempted and nothing reached the target: disks are not
+				// uploaded that cannot be placed.
+				g.Expect(record.Steps).To(gomega.BeEmpty())
+				g.Expect(record.Requirements).To(gomega.BeEmpty())
+				wroteNothing(g, tt.target)
+			})
+		}
 	}
 }
 
@@ -547,25 +548,45 @@ func TestDeployCreatesTheDataVolumesThenUploadsThenTheVirtualMachineLast(t *test
 }
 
 func TestDeployRecordsADiskTheBundleHoldsNoBytesFor(t *testing.T) {
-	g := gomega.NewGomegaWithT(t)
-	path := writeDisksFixtureBundle(t, testGapClaim)
-	fake := storageTarget()
+	for _, mode := range runModes {
+		t.Run(mode.name, func(t *testing.T) {
+			g := gomega.NewGomegaWithT(t)
+			path := writeDisksFixtureBundle(t, testGapClaim)
+			fake := storageTarget()
+			opt := testOptions(path)
+			opt.DryRun = mode.dryRun
 
-	record, err := Deploy(context.TODO(), fake, testOptions(path))
+			record, err := Deploy(context.TODO(), fake, opt)
 
-	// A disk the bundle holds no bytes for creates nothing, the gap is
-	// recorded, and the run continues past it. The machine and the disks
-	// that were held all arrive. The error is what says the deploy was
-	// a partial one.
-	g.Expect(err).To(gomega.MatchError(&NotCreatedError{}))
-	g.Expect(err.Error()).To(gomega.ContainSubstring("4 of the 5 objects"))
-	g.Expect(record.Steps).To(gomega.HaveLen(5))
-	g.Expect(record.Steps[2].Name).To(gomega.Equal(testGapClaim))
-	g.Expect(record.Steps[2].Outcome).To(gomega.Equal(OutcomeSkipped))
-	g.Expect(record.Steps[2].Reason).To(gomega.Equal("the bundle holds no bytes for it"))
-	g.Expect(fake.created).To(gomega.HaveLen(4))
-	g.Expect(fake.uploaded).To(gomega.HaveLen(3))
-	g.Expect(fake.uploaded[2].name).To(gomega.Equal(testThinClaim))
+			// A disk the bundle holds no bytes for creates nothing, the gap is
+			// recorded, and the run continues past it. The machine and the disks
+			// that were held all arrive. The error is what says the deploy was
+			// a partial one, and a dry run's is the same error: what the dry
+			// run describes is a partial deploy, and the exit code says so the
+			// same way.
+			g.Expect(err).To(gomega.MatchError(&NotCreatedError{}))
+			g.Expect(err.Error()).To(gomega.ContainSubstring("4 of the 5 objects"))
+			g.Expect(record.Steps).To(gomega.HaveLen(5))
+			g.Expect(record.Steps[2].Name).To(gomega.Equal(testGapClaim))
+			g.Expect(record.Steps[2].Outcome).To(gomega.Equal(OutcomeSkipped))
+			g.Expect(record.Steps[2].Reason).To(gomega.Equal("the bundle holds no bytes for it"))
+			// Everything else is what a real deploy would create.
+			for i := range record.Steps {
+				if i == 2 {
+					continue
+				}
+				g.Expect(record.Steps[i].Outcome).To(gomega.Equal(OutcomeCreated))
+			}
+			if mode.dryRun {
+				// And nothing touched the target all the same.
+				wroteNothing(g, fake)
+				return
+			}
+			g.Expect(fake.created).To(gomega.HaveLen(4))
+			g.Expect(fake.uploaded).To(gomega.HaveLen(3))
+			g.Expect(fake.uploaded[2].name).To(gomega.Equal(testThinClaim))
+		})
+	}
 }
 
 func TestDeployRecordsADiskTheBundleCannotSize(t *testing.T) {
@@ -632,35 +653,32 @@ func TestDeployRefusesATargetThatCannotTakeTheDisks(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			g := gomega.NewGomegaWithT(t)
+		for _, mode := range runModes {
+			t.Run(mode.name+" of "+tt.name, func(t *testing.T) {
+				g := gomega.NewGomegaWithT(t)
+				opt := testOptions(path)
+				opt.DryRun = mode.dryRun
 
-			record, err := Deploy(context.TODO(), tt.target, testOptions(path))
+				record, err := Deploy(context.TODO(), tt.target, opt)
 
-			g.Expect(err).To(gomega.MatchError(tt.want))
-			// The refusal names what it found.
-			g.Expect(err.Error()).To(gomega.ContainSubstring(tt.names))
-			// It refused before creating anything, so nothing was
-			// attempted and nothing was created: disks are not uploaded
-			// that cannot be placed.
-			g.Expect(record.Steps).To(gomega.BeEmpty())
-			g.Expect(tt.target.created).To(gomega.BeEmpty())
-			g.Expect(tt.target.uploaded).To(gomega.BeEmpty())
-		})
+				g.Expect(err).To(gomega.MatchError(tt.want))
+				// The refusal names what it found.
+				g.Expect(err.Error()).To(gomega.ContainSubstring(tt.names))
+				// It refused before creating anything, so nothing was
+				// attempted and nothing reached the target: disks are not
+				// uploaded that cannot be placed.
+				g.Expect(record.Steps).To(gomega.BeEmpty())
+				g.Expect(record.Requirements).To(gomega.BeEmpty())
+				wroteNothing(g, tt.target)
+			})
+		}
 	}
 }
 
 func TestDeployRecordsADiskThatFailsItsDigestAndGoesOn(t *testing.T) {
 	g := gomega.NewGomegaWithT(t)
-	// The root disk's bytes changed in transit. The claim's name is in
-	// every line of the member's stand-in content. Replacing it keeps
-	// the tar the manifest indexes aligned, while changing what the
-	// digest is computed over.
-	corrupted := bytes.ReplaceAll(
-		readFile(t, writeDisksFixtureBundle(t)),
-		[]byte("disk of "+testRootClaim),
-		[]byte("disk 0f "+testRootClaim))
-	path := writeBytes(t, "corrupted-disks.quo", corrupted)
+	// The root disk's bytes changed in transit.
+	path := writeCorruptedDiskBundle(t)
 	fake := storageTarget()
 
 	record, err := Deploy(context.TODO(), fake, testOptions(path))
@@ -682,6 +700,31 @@ func TestDeployRecordsADiskThatFailsItsDigestAndGoesOn(t *testing.T) {
 	// their bytes uploaded.
 	g.Expect(fake.uploaded).To(gomega.HaveLen(3))
 	g.Expect(fake.uploaded[0].name).To(gomega.Equal(testDataClaim))
+}
+
+func TestDeployDryRunReadsNoDiskBytes(t *testing.T) {
+	g := gomega.NewGomegaWithT(t)
+	// The same corrupted bundle the test above deploys. A real deploy
+	// reports the member as failing its digest where the bytes pass
+	// through. A dry run moves no bytes, so the corruption is not its
+	// finding. quo inspect is what verifies a bundle.
+	fake := storageTarget()
+	opt := testOptions(writeCorruptedDiskBundle(t))
+	opt.DryRun = true
+
+	record, err := Deploy(context.TODO(), fake, opt)
+
+	// The run is clean. No disk byte was read, so the corruption a real
+	// deploy catches on the way through is not seen here. Every step
+	// says created, which is what a real deploy of a whole bundle would
+	// print.
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	g.Expect(record.Steps).To(gomega.HaveLen(5))
+	for i := range record.Steps {
+		g.Expect(record.Steps[i].Outcome).To(gomega.Equal(OutcomeCreated))
+	}
+	// And nothing touched the target all the same.
+	wroteNothing(g, fake)
 }
 
 func TestDeployRecordsAnUploadThatFailedAndGoesOn(t *testing.T) {

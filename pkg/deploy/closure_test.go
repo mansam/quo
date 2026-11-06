@@ -1,7 +1,6 @@
 package deploy
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"testing"
@@ -15,89 +14,120 @@ import (
 )
 
 func TestDeployAppliesTheClosure(t *testing.T) {
-	g := gomega.NewGomegaWithT(t)
-	path := writeClosureFixtureBundle(t)
-	fake := storageTarget()
+	for _, mode := range runModes {
+		t.Run(mode.name, func(t *testing.T) {
+			g := gomega.NewGomegaWithT(t)
+			path := writeClosureFixtureBundle(t)
+			fake := storageTarget()
+			opt := testOptions(path)
+			opt.DryRun = mode.dryRun
 
-	record, err := Deploy(context.TODO(), fake, testOptions(path))
+			record, err := Deploy(context.TODO(), fake, opt)
 
-	g.Expect(err).ToNot(gomega.HaveOccurred())
-	// The record says what the run did. It holds one DataVolume per disk
-	// the bundle holds, then the closure objects in the order the bundle
-	// holds them, then the VirtualMachine last.
-	g.Expect(record.Steps).To(gomega.Equal([]Step{
-		{
-			Kind:      cluster.KindDataVolume,
-			Namespace: testDeployNamespace,
-			Name:      testRootClaim,
-			Outcome:   OutcomeCreated,
-		},
-		{
-			Kind:      cluster.KindDataVolume,
-			Namespace: testDeployNamespace,
-			Name:      testDataClaim,
-			Outcome:   OutcomeCreated,
-		},
-		{
-			Kind:      cluster.KindDataVolume,
-			Namespace: testDeployNamespace,
-			Name:      testGapClaim,
-			Outcome:   OutcomeCreated,
-		},
-		{
-			Kind:      cluster.KindDataVolume,
-			Namespace: testDeployNamespace,
-			Name:      testThinClaim,
-			Outcome:   OutcomeCreated,
-		},
-		{
-			Kind:      cluster.KindConfigMap,
-			Namespace: testDeployNamespace,
-			Name:      testSysprepConfigMap,
-			Outcome:   OutcomeCreated,
-		},
-		{
-			Kind:      cluster.KindSecret,
-			Namespace: testDeployNamespace,
-			Name:      testCloudInitSecret,
-			Outcome:   OutcomeCreated,
-		},
-		{
-			Kind:      cluster.KindSecret,
-			Namespace: testDeployNamespace,
-			Name:      testRegistrySecret,
-			Outcome:   OutcomeCreated,
-		},
-		{
-			Kind:      cluster.KindServiceAccount,
-			Namespace: testDeployNamespace,
-			Name:      testServiceAccount,
-			Outcome:   OutcomeCreated,
-		},
-		{
-			Kind:      cluster.KindVirtualMachine,
-			Namespace: testDeployNamespace,
-			Name:      testVirtualMachineName,
-			Outcome:   OutcomeCreated,
-		},
-	}))
-	// Nine objects are created, and only those.
-	g.Expect(fake.created).To(gomega.HaveLen(9))
-	// Each closure object arrives as the bundle holds it, apart from the
-	// forced rewrites that apply to every created object. Those are the
-	// source cluster's metadata cleared, the namespace, the labels and
-	// the annotations. Everything else is byte-for-byte.
-	g.Expect(fake.created[4].Object).To(gomega.Equal(
-		expectedClosureObject(t, path, cluster.KindConfigMap, testSysprepConfigMap).Object))
-	g.Expect(fake.created[5].Object).To(gomega.Equal(
-		expectedClosureObject(t, path, cluster.KindSecret, testCloudInitSecret).Object))
-	g.Expect(fake.created[6].Object).To(gomega.Equal(
-		expectedClosureObject(t, path, cluster.KindSecret, testRegistrySecret).Object))
-	g.Expect(fake.created[7].Object).To(gomega.Equal(
-		expectedClosureObject(t, path, cluster.KindServiceAccount, testServiceAccount).Object))
-	// The disks arrived as they would without the closure: four uploads,
-	// unchanged.
-	g.Expect(fake.uploaded).To(gomega.HaveLen(4))
+			// A dry run of a deploy that would be clean is a clean run.
+			// The error is what says a real deploy would have created
+			// everything it tried to.
+			g.Expect(err).ToNot(gomega.HaveOccurred())
+			// The record is the one a real deploy would print. It holds
+			// every object it would create, in the order it would create
+			// them: the DataVolumes, then the closure objects, then the
+			// VirtualMachine last. Each is said as created, because that
+			// is what a real deploy would do with each.
+			g.Expect(record.Steps).To(gomega.Equal([]Step{
+				{
+					Kind:      cluster.KindDataVolume,
+					Namespace: testDeployNamespace,
+					Name:      testRootClaim,
+					Outcome:   OutcomeCreated,
+				},
+				{
+					Kind:      cluster.KindDataVolume,
+					Namespace: testDeployNamespace,
+					Name:      testDataClaim,
+					Outcome:   OutcomeCreated,
+				},
+				{
+					Kind:      cluster.KindDataVolume,
+					Namespace: testDeployNamespace,
+					Name:      testGapClaim,
+					Outcome:   OutcomeCreated,
+				},
+				{
+					Kind:      cluster.KindDataVolume,
+					Namespace: testDeployNamespace,
+					Name:      testThinClaim,
+					Outcome:   OutcomeCreated,
+				},
+				{
+					Kind:      cluster.KindConfigMap,
+					Namespace: testDeployNamespace,
+					Name:      testSysprepConfigMap,
+					Outcome:   OutcomeCreated,
+				},
+				{
+					Kind:      cluster.KindSecret,
+					Namespace: testDeployNamespace,
+					Name:      testCloudInitSecret,
+					Outcome:   OutcomeCreated,
+				},
+				{
+					Kind:      cluster.KindSecret,
+					Namespace: testDeployNamespace,
+					Name:      testRegistrySecret,
+					Outcome:   OutcomeCreated,
+				},
+				{
+					Kind:      cluster.KindServiceAccount,
+					Namespace: testDeployNamespace,
+					Name:      testServiceAccount,
+					Outcome:   OutcomeCreated,
+				},
+				{
+					Kind:      cluster.KindVirtualMachine,
+					Namespace: testDeployNamespace,
+					Name:      testVirtualMachineName,
+					Outcome:   OutcomeCreated,
+				},
+			}))
+			// The mappings are reported, because nothing maps silently.
+			// They are what a dry run is for checking before anything is
+			// created.
+			g.Expect(record.Requirements).To(gomega.Equal([]Requirement{
+				{
+					Kind: "storage class",
+					From: testStorageClass,
+					To:   testStorageClass,
+					How:  "by name",
+				},
+			}))
+			if mode.dryRun {
+				// And nothing reached the target. The target holds none
+				// of what the record says a deploy would put there.
+				wroteNothing(g, fake)
+				g.Expect(fake.holds(cluster.KindVirtualMachine, testVirtualMachineName)).To(gomega.BeFalse())
+				g.Expect(fake.holds(cluster.KindDataVolume, testRootClaim)).To(gomega.BeFalse())
+				g.Expect(fake.holds(cluster.KindConfigMap, testSysprepConfigMap)).To(gomega.BeFalse())
+				return
+			}
+			// Nine objects are created, and only those.
+			g.Expect(fake.created).To(gomega.HaveLen(9))
+			// Each closure object arrives as the bundle holds it, apart from the
+			// forced rewrites that apply to every created object. Those are the
+			// source cluster's metadata cleared, the namespace, the labels and
+			// the annotations. Everything else is byte-for-byte.
+			g.Expect(fake.created[4].Object).To(gomega.Equal(
+				expectedClosureObject(t, path, cluster.KindConfigMap, testSysprepConfigMap).Object))
+			g.Expect(fake.created[5].Object).To(gomega.Equal(
+				expectedClosureObject(t, path, cluster.KindSecret, testCloudInitSecret).Object))
+			g.Expect(fake.created[6].Object).To(gomega.Equal(
+				expectedClosureObject(t, path, cluster.KindSecret, testRegistrySecret).Object))
+			g.Expect(fake.created[7].Object).To(gomega.Equal(
+				expectedClosureObject(t, path, cluster.KindServiceAccount, testServiceAccount).Object))
+			// The disks arrived as they would without the closure: four uploads,
+			// unchanged.
+			g.Expect(fake.uploaded).To(gomega.HaveLen(4))
+		})
+	}
 }
 
 func TestDeployAppliesTheClosureBetweenTheUploadsAndTheVirtualMachine(t *testing.T) {
@@ -204,34 +234,45 @@ func TestDeployCreatesNothingTheBundleHoldsReadOnly(t *testing.T) {
 }
 
 func TestDeploySkipsAClosureMemberThatFailsItsDigest(t *testing.T) {
-	g := gomega.NewGomegaWithT(t)
-	// One byte of the sysprep answer file changed in transit. The answer's
-	// stand-in content sits in the ConfigMap member alone. Replacing it
-	// keeps the tar the manifest indexes aligned, while changing what the
-	// digest is computed over.
-	corrupted := bytes.ReplaceAll(
-		readFile(t, writeClosureFixtureBundle(t)),
-		[]byte(sysprepAnswer),
-		[]byte(sysprepMangled))
-	path := writeBytes(t, "corrupted-closure.quo", corrupted)
-	fake := storageTarget()
+	for _, mode := range runModes {
+		t.Run(mode.name, func(t *testing.T) {
+			g := gomega.NewGomegaWithT(t)
+			path := writeCorruptedClosureBundle(t)
+			fake := storageTarget()
+			opt := testOptions(path)
+			opt.DryRun = mode.dryRun
 
-	record, err := Deploy(context.TODO(), fake, testOptions(path))
+			record, err := Deploy(context.TODO(), fake, opt)
 
-	// The corrupted member is skipped and recorded, and the run continues.
-	// The closure objects behind it, the disks and the machine all
-	// arrive. The error is what says the deploy was a partial one.
-	g.Expect(err).To(gomega.MatchError(&NotCreatedError{}))
-	g.Expect(err.Error()).To(gomega.ContainSubstring("8 of the 9 objects"))
-	g.Expect(record.Steps).To(gomega.HaveLen(9))
-	g.Expect(record.Steps[4].Kind).To(gomega.Equal(cluster.KindConfigMap))
-	g.Expect(record.Steps[4].Name).To(gomega.Equal(testSysprepConfigMap))
-	g.Expect(record.Steps[4].Outcome).To(gomega.Equal(OutcomeSkipped))
-	g.Expect(record.Steps[4].Reason).To(gomega.ContainSubstring("does not match its digest"))
-	g.Expect(record.Steps[5].Outcome).To(gomega.Equal(OutcomeCreated))
-	g.Expect(record.Steps[8].Outcome).To(gomega.Equal(OutcomeCreated))
-	g.Expect(fake.created).To(gomega.HaveLen(8))
-	g.Expect(fake.uploaded).To(gomega.HaveLen(4))
+			// The corrupted member is skipped and recorded, and the run
+			// continues. The closure objects behind it, the disks and the
+			// machine all arrive. The error is what says the deploy was a
+			// partial one, and a dry run's is the same error: what the
+			// dry run describes is a partial deploy, and the exit code
+			// says so the same way.
+			g.Expect(err).To(gomega.MatchError(&NotCreatedError{}))
+			g.Expect(err.Error()).To(gomega.ContainSubstring("8 of the 9 objects"))
+			g.Expect(record.Steps).To(gomega.HaveLen(9))
+			g.Expect(record.Steps[4].Kind).To(gomega.Equal(cluster.KindConfigMap))
+			g.Expect(record.Steps[4].Name).To(gomega.Equal(testSysprepConfigMap))
+			g.Expect(record.Steps[4].Outcome).To(gomega.Equal(OutcomeSkipped))
+			g.Expect(record.Steps[4].Reason).To(gomega.ContainSubstring("does not match its digest"))
+			// Everything else is what a real deploy would create.
+			for i := range record.Steps {
+				if i == 4 {
+					continue
+				}
+				g.Expect(record.Steps[i].Outcome).To(gomega.Equal(OutcomeCreated))
+			}
+			if mode.dryRun {
+				// And nothing touched the target all the same.
+				wroteNothing(g, fake)
+				return
+			}
+			g.Expect(fake.created).To(gomega.HaveLen(8))
+			g.Expect(fake.uploaded).To(gomega.HaveLen(4))
+		})
+	}
 }
 
 func TestDeployRecordsAClosureCreateThatFailed(t *testing.T) {
@@ -262,33 +303,31 @@ func TestDeployRecordsAClosureCreateThatFailed(t *testing.T) {
 }
 
 func TestDeployAppliesNoClosureForAMachineThatCannotBeCreated(t *testing.T) {
-	g := gomega.NewGomegaWithT(t)
-	// One byte of the expansion changed in transit. The machine type sits
-	// in the expansion alone, because the declaration names an instancetype
-	// instead. Its last occurrence in the bundle is therefore in the
-	// member.
-	corrupted := bytes.Clone(readFile(t, writeClosureFixtureBundle(t)))
-	at := bytes.LastIndex(corrupted, []byte(testMachineType))
-	if at < 0 {
-		t.Fatal("the fixture bundle does not carry the machine type")
+	for _, mode := range runModes {
+		t.Run(mode.name, func(t *testing.T) {
+			g := gomega.NewGomegaWithT(t)
+			path := writeCorruptedExpansionBundle(t, writeClosureFixtureBundle(t))
+			fake := storageTarget()
+			opt := testOptions(path)
+			opt.DryRun = mode.dryRun
+
+			record, err := Deploy(context.TODO(), fake, opt)
+
+			// The run ends after recording the VirtualMachine's skipped
+			// step. The closure objects are not applied and the disks are
+			// not uploaded for a machine that cannot be created. That is
+			// the same rule that refuses a bundle holding no expansion at
+			// all. Neither mode touched the target: the run ended before
+			// the first write, and a dry run writes nothing anyway.
+			g.Expect(err).To(gomega.MatchError(&NotCreatedError{}))
+			g.Expect(err.Error()).To(gomega.ContainSubstring("0 of the 1 objects"))
+			g.Expect(record.Steps).To(gomega.HaveLen(1))
+			g.Expect(record.Steps[0].Kind).To(gomega.Equal(cluster.KindVirtualMachine))
+			g.Expect(record.Steps[0].Outcome).To(gomega.Equal(OutcomeSkipped))
+			g.Expect(record.Steps[0].Reason).To(gomega.ContainSubstring("does not match its digest"))
+			wroteNothing(g, fake)
+		})
 	}
-	corrupted[at] = 'x'
-	path := writeBytes(t, "corrupted-closure-expansion.quo", corrupted)
-	fake := storageTarget()
-
-	record, err := Deploy(context.TODO(), fake, testOptions(path))
-
-	// The run ends after recording the VirtualMachine's skipped step. The
-	// closure objects are not applied and the disks are not uploaded for a
-	// machine that cannot be created. That is the same rule that refuses
-	// a bundle holding no expansion at all.
-	g.Expect(err).To(gomega.MatchError(&NotCreatedError{}))
-	g.Expect(record.Steps).To(gomega.HaveLen(1))
-	g.Expect(record.Steps[0].Kind).To(gomega.Equal(cluster.KindVirtualMachine))
-	g.Expect(record.Steps[0].Outcome).To(gomega.Equal(OutcomeSkipped))
-	g.Expect(record.Steps[0].Reason).To(gomega.ContainSubstring("does not match its digest"))
-	g.Expect(fake.created).To(gomega.BeEmpty())
-	g.Expect(fake.uploaded).To(gomega.BeEmpty())
 }
 
 func TestDeployRefusesWhenAnythingItWouldCreateIsAlreadyThere(t *testing.T) {
@@ -362,26 +401,32 @@ func TestDeployRefusesWhenAnythingItWouldCreateIsAlreadyThere(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			g := gomega.NewGomegaWithT(t)
-			fake := storageTarget()
-			for i := range tt.held {
-				fake.hold(tt.held[i], occupied(tt.held[i]))
-			}
+		for _, mode := range runModes {
+			t.Run(mode.name+" of "+tt.name, func(t *testing.T) {
+				g := gomega.NewGomegaWithT(t)
+				fake := storageTarget()
+				for i := range tt.held {
+					fake.hold(tt.held[i], occupied(tt.held[i]))
+				}
+				opt := testOptions(path)
+				opt.DryRun = mode.dryRun
 
-			record, err := Deploy(context.TODO(), fake, testOptions(path))
+				record, err := Deploy(context.TODO(), fake, opt)
 
-			// One refusal names every colliding object, before anything
-			// is created: someone else's work is neither overwritten nor
-			// built around.
-			g.Expect(err).To(gomega.MatchError(&AlreadyExistsError{}))
-			for _, named := range tt.names {
-				g.Expect(err.Error()).To(gomega.ContainSubstring(named))
-			}
-			g.Expect(record.Steps).To(gomega.BeEmpty())
-			g.Expect(fake.created).To(gomega.BeEmpty())
-			g.Expect(fake.uploaded).To(gomega.BeEmpty())
-		})
+				// One refusal names every colliding object, before anything
+				// is created: someone else's work is neither overwritten nor
+				// built around.
+				g.Expect(err).To(gomega.MatchError(&AlreadyExistsError{}))
+				for _, named := range tt.names {
+					g.Expect(err.Error()).To(gomega.ContainSubstring(named))
+				}
+				// It refused before creating anything, so nothing was
+				// attempted and nothing reached the target.
+				g.Expect(record.Steps).To(gomega.BeEmpty())
+				g.Expect(record.Requirements).To(gomega.BeEmpty())
+				wroteNothing(g, fake)
+			})
+		}
 	}
 }
 
