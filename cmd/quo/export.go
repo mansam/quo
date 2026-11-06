@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -18,13 +19,16 @@ import (
 type exportArgs struct {
 	opt        capture.Options
 	output     string
+	dryRun     bool
 	kubeconfig string
 }
 
 // bundleExtension is what the name of a bundle file ends in.
 const bundleExtension = ".quo"
 
-// runExport captures a VirtualMachine into a bundle.
+// runExport captures a VirtualMachine into a bundle. A dry run says what a
+// capture would collect and what it would skip, and stops there: no bundle
+// is written and no disk moves.
 func runExport(args []string) (err error) {
 	parsed, err := parseExportArgs(args)
 	if err != nil {
@@ -32,6 +36,10 @@ func runExport(args []string) (err error) {
 	}
 	c, err := cluster.NewKubeVirt(parsed.kubeconfig)
 	if err != nil {
+		return
+	}
+	if parsed.dryRun {
+		err = capture.Check(context.TODO(), c, parsed.opt, os.Stdout)
 		return
 	}
 	parsed.opt.Progress = newReporter(os.Stderr)
@@ -176,10 +184,10 @@ func parseExportArgs(args []string) (parsed exportArgs, err error) {
 	fs.StringVar(&parsed.opt.Namespace, "namespace", "", "namespace of the VirtualMachine")
 	fs.StringVar(&parsed.output, "o", "", "directory or file to write the bundle to")
 	fs.StringVar(&parsed.output, "output", "", "directory or file to write the bundle to")
+	fs.BoolVar(&parsed.dryRun, "dry-run", false, "say what would be collected and collect nothing")
 	fs.StringVar(&parsed.kubeconfig, "kubeconfig", "", "path to a kubeconfig file")
 	positional, err := parseFlags(fs, args)
 	if err != nil {
-		err = errUsage
 		return
 	}
 	parsed.opt.Name, err = onlyVirtualMachine(positional)
@@ -187,6 +195,15 @@ func parseExportArgs(args []string) (parsed exportArgs, err error) {
 		return
 	}
 	err = validateVirtualMachine(parsed.opt)
+	if err != nil {
+		return
+	}
+	// A dry run writes no bundle. An output path names where a bundle would
+	// go. A command line with both is refused, because quietly ignoring
+	// the path would leave a person looking for a bundle that is not there.
+	if parsed.dryRun && parsed.output != "" {
+		err = errors.New("a dry run writes no bundle, so it takes no output path")
+	}
 	return
 }
 

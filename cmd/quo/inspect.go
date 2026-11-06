@@ -14,7 +14,6 @@ func runInspect(args []string) (err error) {
 	fs := flag.NewFlagSet("inspect", flag.ContinueOnError)
 	positional, err := parseFlags(fs, args)
 	if err != nil {
-		err = errUsage
 		return
 	}
 	path, err := onlyBundle(positional)

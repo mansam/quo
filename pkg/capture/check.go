@@ -158,7 +158,7 @@ func diskSpace(disks []checkedDisk) (scratch, provisioned int64, complete bool) 
 // from Flush, which is checked.
 func (r *check) describe(out io.Writer) (err error) {
 	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintf(tw, "Check of VirtualMachine %s/%s\n", r.opt.Namespace, r.opt.Name)
+	_, _ = fmt.Fprintf(tw, "Dry run of a capture of VirtualMachine %s/%s\n", r.opt.Namespace, r.opt.Name)
 	_, _ = fmt.Fprintf(tw, "  Status:\t%s\n", orUnreported(r.status))
 	r.describeRefusal(tw)
 	r.describeCollected(tw)

@@ -251,7 +251,6 @@ func parseDeployArgs(args []string) (parsed deployArgs, err error) {
 	fs.StringVar(&parsed.kubeconfig, "kubeconfig", "", "path to a kubeconfig file")
 	positional, err := parseFlags(fs, args)
 	if err != nil {
-		err = errUsage
 		return
 	}
 	parsed.opt.Bundle, err = onlyBundle(positional)
