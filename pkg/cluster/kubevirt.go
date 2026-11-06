@@ -3,6 +3,7 @@ package cluster
 import (
 	"context"
 	"fmt"
+	"os"
 
 	k8serr "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
@@ -101,6 +102,11 @@ func NewKubeVirt(kubeconfig string) (c *KubeVirt, err error) {
 		err = fmt.Errorf("load kubeconfig: %w", err)
 		return
 	}
+	// Every client built below shares this handler. A cluster can
+	// attach the same warning to every answer it gives, and client-go's
+	// default prints one line per answer. A wait that polls for minutes
+	// would then bury the terminal in the same warning.
+	config.WarningHandler = newWarningHandler(os.Stderr)
 	dynamicClient, err := dynamic.NewForConfig(config)
 	if err != nil {
 		err = fmt.Errorf("build cluster client: %w", err)
