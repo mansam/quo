@@ -95,7 +95,7 @@ const (
 // resumes a partial one.
 func (r *KubeVirt) UploadDisk(ctx context.Context, upload Upload) (err error) {
 	//
-	err = r.awaitUploadReady(ctx, upload.Namespace, upload.Name, upload.Waiting)
+	err = r.awaitUploadReady(ctx, upload)
 	if err != nil {
 		return
 	}
@@ -111,7 +111,7 @@ func (r *KubeVirt) UploadDisk(ctx context.Context, upload Upload) (err error) {
 		close(tunneled.stop)
 	}()
 	client := r.uploadClient(ctx, proxy)
-	token, err := r.uploadToken(ctx, upload.Namespace, upload.Name)
+	token, err := r.uploadToken(ctx, upload)
 	if err != nil {
 		return
 	}
@@ -148,26 +148,24 @@ func (r *KubeVirt) UploadDisk(ctx context.Context, upload Upload) (err error) {
 	return
 }
 
-// awaitUploadReady waits for CDI to make the named DataVolume ready to
-// receive its bytes: the claim bound and the upload pod placed. When the
-// DataVolume reaches a phase it never recovers from, awaitUploadReady
-// reports at once rather than letting the timeout expire. Each check it
-// makes calls waiting, when set, saying what the DataVolume's phase is.
-// A person watching the deploy can then tell a wait from a transfer.
-func (r *KubeVirt) awaitUploadReady(
-	ctx context.Context,
-	namespace, name string,
-	waiting func(said string)) (err error) {
+// awaitUploadReady waits for CDI to make the DataVolume upload names
+// ready to receive its bytes: the claim bound and the upload pod
+// placed. When the DataVolume reaches a phase it never recovers from,
+// awaitUploadReady reports at once rather than letting the timeout
+// expire. Each check it makes calls upload.Waiting, when set, saying
+// what the DataVolume's phase is. A person watching the deploy can then
+// tell a wait from a transfer.
+func (r *KubeVirt) awaitUploadReady(ctx context.Context, upload Upload) (err error) {
 	//
 	deadline := time.Now().Add(uploadReadyTimeout)
 	for {
 		var dataVolume *unstructured.Unstructured
 		dataVolume, err = r.dynamic.
 			Resource(dataVolumeResource).
-			Namespace(namespace).
-			Get(ctx, name, meta.GetOptions{})
+			Namespace(upload.Namespace).
+			Get(ctx, upload.Name, meta.GetOptions{})
 		if err != nil {
-			err = fmt.Errorf("get DataVolume %s/%s: %w", namespace, name, err)
+			err = fmt.Errorf("get DataVolume %s/%s: %w", upload.Namespace, upload.Name, err)
 			return
 		}
 		phase, _, _ := unstructured.NestedString(dataVolume.Object, "status", "phase")
@@ -177,28 +175,28 @@ func (r *KubeVirt) awaitUploadReady(
 		case phaseFailed:
 			err = fmt.Errorf(
 				"DataVolume %s/%s failed, so it cannot receive the disk; its status says why",
-				namespace,
-				name)
+				upload.Namespace,
+				upload.Name)
 			return
 		case phaseSucceeded:
-			err = fmt.Errorf("DataVolume %s/%s is already populated", namespace, name)
+			err = fmt.Errorf("DataVolume %s/%s is already populated", upload.Namespace, upload.Name)
 			return
 		}
-		if waiting != nil {
+		if upload.Waiting != nil {
 			if phase == "" {
 				// A DataVolume straight from a create carries no phase
 				// until CDI gives it one. That is a wait like any
 				// other, and is said as one.
-				waiting("the DataVolume has no phase yet")
+				upload.Waiting("the DataVolume has no phase yet")
 			} else {
-				waiting(fmt.Sprintf("the DataVolume is %q", phase))
+				upload.Waiting(fmt.Sprintf("the DataVolume is %q", phase))
 			}
 		}
 		if time.Now().After(deadline) {
 			err = fmt.Errorf(
 				"DataVolume %s/%s is %q after %s, expected %q",
-				namespace,
-				name,
+				upload.Namespace,
+				upload.Name,
 				phase,
 				uploadReadyTimeout,
 				phaseUploadReady)
@@ -288,27 +286,27 @@ func (r *KubeVirt) uploadCertPool(ctx context.Context, namespace string) (pool *
 // uploadToken asks CDI for the token that authorizes one upload. The token
 // names the claim it opens and lives five minutes. Only an upload that
 // fails outlives it.
-func (r *KubeVirt) uploadToken(ctx context.Context, namespace, name string) (token string, err error) {
+func (r *KubeVirt) uploadToken(ctx context.Context, upload Upload) (token string, err error) {
 	request := &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": uploadTokenRequestResource.GroupVersion().String(),
 		"kind":       "UploadTokenRequest",
 		"metadata": map[string]any{
 			"generateName": uploadTokenPrefix,
-			"namespace":    namespace,
+			"namespace":    upload.Namespace,
 		},
-		"spec": map[string]any{"pvcName": name},
+		"spec": map[string]any{"pvcName": upload.Name},
 	}}
 	granted, err := r.dynamic.
 		Resource(uploadTokenRequestResource).
-		Namespace(namespace).
+		Namespace(upload.Namespace).
 		Create(ctx, request, meta.CreateOptions{})
 	if err != nil {
-		err = fmt.Errorf("request an upload token for %s/%s: %w", namespace, name, err)
+		err = fmt.Errorf("request an upload token for %s/%s: %w", upload.Namespace, upload.Name, err)
 		return
 	}
 	token, _, _ = unstructured.NestedString(granted.Object, "status", "token")
 	if token == "" {
-		err = fmt.Errorf("request an upload token for %s/%s: CDI granted none", namespace, name)
+		err = fmt.Errorf("request an upload token for %s/%s: CDI granted none", upload.Namespace, upload.Name)
 		return
 	}
 	return

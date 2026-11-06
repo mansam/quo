@@ -249,11 +249,13 @@ func (r *fakeTarget) Create(ctx context.Context, object *unstructured.Unstructur
 }
 
 // UploadDisk receives the disk the way CDI would: it reads the whole
-// stream, so a member that fails its digest fails here too. It records
-// what arrived. Before the bytes move it says what it waits on, once per
-// readiness check, when the cluster it models has not made the claim
-// ready yet. A cancelled context is reported the way a real client does
-// once the deploy is interrupted.
+// stream, so a member that fails its digest fails here too. It asks the
+// stream once more after its end, because the transport that carries a
+// real upload drains what is left. It records what arrived. Before the
+// bytes move it says what it waits on, once per readiness check, when
+// the cluster it models has not made the claim ready yet. A cancelled
+// context is reported the way a real client does once the deploy is
+// interrupted.
 func (r *fakeTarget) UploadDisk(ctx context.Context, upload cluster.Upload) (err error) {
 	//
 	err = ctx.Err()
@@ -273,6 +275,9 @@ func (r *fakeTarget) UploadDisk(ctx context.Context, upload cluster.Upload) (err
 	if err != nil {
 		return
 	}
+	// A real upload asks the body again after its end. The ask reads
+	// nothing and returns the end again.
+	_, _ = upload.Content.Read(make([]byte, 1))
 	if failFor, found := r.uploadErrFor[upload.Name]; found {
 		err = failFor
 		return
@@ -783,9 +788,8 @@ func writeCorruptedExpansionBundle(t *testing.T, path string) (corrupted string)
 
 // writeCorruptedDiskBundle writes the disk fixture bundle with the root
 // disk's bytes changed in transit. The claim's name is in every line of
-// the member's stand-in content. Replacing it keeps the tar the
-// manifest indexes aligned, while changing what the digest is computed
-// over.
+// the member's stand-in content. Replacing it has the effect
+// writeCorruptedClosureBundle describes.
 func writeCorruptedDiskBundle(t *testing.T) (path string) {
 	t.Helper()
 	path = writeBytes(t, "corrupted-disk.quo", bytes.ReplaceAll(

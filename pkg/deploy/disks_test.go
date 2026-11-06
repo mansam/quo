@@ -787,6 +787,36 @@ func TestDeployReportsTheProgressOfEachUpload(t *testing.T) {
 	g.Expect(reported[1].Volumes).To(gomega.Equal([]string{"data"}))
 }
 
+func TestDeployReportsTheEndOfAnUploadOnce(t *testing.T) {
+	g := gomega.NewGomegaWithT(t)
+	// One disk, so the reports the run makes are its reports alone.
+	path := writeStorageFixtureBundle(t, bundle.StorageRequirement{
+		Claim:        testRootClaim,
+		StorageClass: testStorageClass,
+		Size:         "32Gi",
+		VolumeMode:   "Block",
+	})
+	fake := storageTarget()
+	var reported []Progress
+	opt := testOptions(path)
+	opt.Progress = func(p Progress) {
+		reported = append(reported, p)
+	}
+
+	_, err := Deploy(context.TODO(), fake, opt)
+
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	// The target asks the stream past its end, the way a real upload
+	// does: the read that empties the member carries bytes and the end
+	// together, and the ask that follows returns only the end. The end
+	// is reported once, and nothing is reported for the ask after it.
+	member := memberOf(t, path, bundle.DiskPath(testRootClaim, bundle.DiskGzip))
+	g.Expect(reported).To(gomega.HaveLen(1))
+	g.Expect(reported[0].State).To(gomega.Equal(StateDone))
+	g.Expect(reported[0].Claim).To(gomega.Equal(testRootClaim))
+	g.Expect(reported[0].Transferred).To(gomega.BeEquivalentTo(len(member)))
+}
+
 func TestDeployReportsNothingForATargetThatTransfersNothing(t *testing.T) {
 	g := gomega.NewGomegaWithT(t)
 	path := writeDisksFixtureBundle(t)

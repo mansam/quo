@@ -465,15 +465,20 @@ func newReporter(
 // Reports are spaced in time, because a disk is read in small pieces and
 // a report per piece would be too many. The reader that wraps the member
 // starts the clock, so a disk that arrives quickly is reported only as
-// finished. The end of the stream is the end of the transfer, so it is
-// reported as done. The bundle's VerifiedStream reports a digest
-// mismatch in place of the end of the stream. A member that fails its
-// digest is therefore never reported done.
+// finished. The end of the stream is the end of what the bundle had to
+// give, so it is reported as done. The target may still be finishing
+// with the bytes. The end is reported once. Nothing is reported after
+// it, whatever the reader is asked. The bundle's VerifiedStream reports
+// a digest mismatch in place of the end of the stream. A member that
+// fails its digest is therefore never reported done.
 type progressReader struct {
 	in       io.Reader
 	report   func(state State, sent int64)
 	sent     int64
 	reported time.Time
+	// done says the end of the stream has been reported. Nothing is
+	// reported after it.
+	done bool
 }
 
 // Read reads from the stream it wraps and reports how much is sent so
@@ -481,7 +486,11 @@ type progressReader struct {
 func (r *progressReader) Read(b []byte) (n int, err error) {
 	n, err = r.in.Read(b)
 	r.sent += int64(n)
+	if r.done {
+		return
+	}
 	if errors.Is(err, io.EOF) {
+		r.done = true
 		r.report(StateDone, r.sent)
 		return
 	}
