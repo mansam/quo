@@ -121,6 +121,45 @@ func TestExportProgressCoversTheLineItReplaces(t *testing.T) {
 	g.Expect(len(lines[1])).To(gomega.Equal(len(lines[0])))
 }
 
+func TestTheExportReporterSaysWhatTheCaptureWaitsFor(t *testing.T) {
+	g := gomega.NewGomegaWithT(t)
+	reported := &bytes.Buffer{}
+	report := newReporter(reported)
+
+	waitingLine := `waiting for the export server, the VirtualMachineExport is "Pending"`
+	report(capture.Progress{
+		State: capture.StateWaiting,
+		Said:  `the VirtualMachineExport is "Pending"`,
+	})
+	movingLine := "disk 1/1 disk-0 (vol-0): 512 B"
+	report(capture.Progress{
+		Claim:       "disk-0",
+		Volumes:     []string{"vol-0"},
+		Disk:        1,
+		Disks:       1,
+		State:       capture.StateTransferring,
+		Transferred: 512,
+	})
+	report(capture.Progress{
+		Claim:       "disk-0",
+		Volumes:     []string{"vol-0"},
+		Disk:        1,
+		Disks:       1,
+		State:       capture.StateDone,
+		Transferred: 1024,
+	})
+
+	// The line says the capture waits and what it waits on. Once bytes
+	// move it counts them, and it says the disk done at the end of the
+	// stream. The byte count is shorter than the wait it replaces, so
+	// the line is padded over it.
+	padding := strings.Repeat(" ", len(waitingLine)-len(movingLine))
+	g.Expect(reported.String()).To(gomega.Equal(
+		waitingLine + "\r" +
+			movingLine + padding + "\r" +
+			"disk 1/1 disk-0 (vol-0): 1.0 KiB" + "\n"))
+}
+
 func TestExportSaysNothingAboutSkippedObjectsWhenItCollectedEverything(t *testing.T) {
 	g := gomega.NewGomegaWithT(t)
 	record := bundle.CaptureRecord{

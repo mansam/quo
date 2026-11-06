@@ -77,6 +77,10 @@ type fakeCluster struct {
 	vmErr     error
 	infoErr   error
 	exportErr error
+	// exportWaitsFor is what ExportDisks says while the export becomes
+	// ready, once per check. That is what a cluster whose export server
+	// has not come up yet looks like from the outside.
+	exportWaitsFor []string
 	kvErr     error
 	expandErr error
 }
@@ -167,13 +171,18 @@ func (r *fakeCluster) GetInfo(ctx context.Context) (info cluster.Info, err error
 	return
 }
 
-func (r *fakeCluster) ExportDisks(ctx context.Context, namespace, name string) (export cluster.DiskExport, err error) {
+func (r *fakeCluster) ExportDisks(ctx context.Context, export cluster.Export) (disk cluster.DiskExport, err error) {
 	if r.exportErr != nil {
 		err = r.exportErr
 		return
 	}
+	for i := range r.exportWaitsFor {
+		if export.Waiting != nil {
+			export.Waiting(r.exportWaitsFor[i])
+		}
+	}
 	r.export.created++
-	export = r.export
+	disk = r.export
 	return
 }
 

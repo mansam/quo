@@ -60,6 +60,18 @@ const (
 	phaseTerminated = "Terminated"
 )
 
+// Export is one VirtualMachine's disks, asked of the cluster as a
+// VirtualMachineExport.
+type Export struct {
+	// Namespace and Name say which VirtualMachine the export serves.
+	Namespace string
+	Name      string
+	// Waiting, when set, is called each time the cluster checks whether
+	// the export is ready to serve its disks. said is what the capture
+	// waits on, in words a person can read. No bytes have moved.
+	Waiting func(said string)
+}
+
 // vmExport is a VirtualMachineExport, its token secret, and the connection
 // to the export server that serves its disks.
 type vmExport struct {
@@ -69,6 +81,9 @@ type vmExport struct {
 	namespace   string
 	vm          string
 	name        string
+	// waiting, when set, is called each time the export is checked for
+	// readiness, saying what it waits on.
+	waiting     func(said string)
 	token       string
 	offered     []ExportedDisk
 	linkByClaim map[string]string
@@ -79,23 +94,24 @@ type vmExport struct {
 // newVMExport builds an export's name from the VirtualMachine it exports
 // and a random suffix. The suffix keeps two captures of one VirtualMachine
 // from colliding.
-func newVMExport(c *KubeVirt, namespace, vm string) (export *vmExport, err error) {
+func newVMExport(c *KubeVirt, export Export) (created *vmExport, err error) {
 	suffix, err := newRandom(4)
 	if err != nil {
 		return
 	}
-	name := "quo-" + vm
+	name := "quo-" + export.Name
 	limit := exportNameLimit - len(suffix) - 1
 	if len(name) > limit {
 		name = name[:limit]
 	}
-	export = &vmExport{
+	created = &vmExport{
 		dynamic:     c.dynamic,
 		core:        c.core,
 		config:      c.config,
-		namespace:   namespace,
-		vm:          vm,
+		namespace:   export.Namespace,
+		vm:          export.Name,
 		name:        name + "-" + suffix,
+		waiting:     export.Waiting,
 		linkByClaim: map[string]string{},
 	}
 	return
@@ -263,6 +279,17 @@ func (r *vmExport) awaitReady(ctx context.Context) (export *unstructured.Unstruc
 		err = r.refused(phase)
 		if err != nil {
 			return
+		}
+		if r.waiting != nil {
+			if phase == "" {
+				// An export straight from a create carries no phase
+				// until the export controller gives it one. That is a
+				// wait like any other: it says so rather than saying
+				// nothing.
+				r.waiting("the VirtualMachineExport has no phase yet")
+			} else {
+				r.waiting(fmt.Sprintf("the VirtualMachineExport is %q", phase))
+			}
 		}
 		if time.Now().After(deadline) {
 			err = fmt.Errorf(

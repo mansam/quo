@@ -96,7 +96,11 @@ func Export(
 	}
 	// The export is created before anything is written and removed whatever
 	// happens afterwards.
-	export, err := c.ExportDisks(ctx, opt.Namespace, opt.Name)
+	export, err := c.ExportDisks(ctx, cluster.Export{
+		Namespace: opt.Namespace,
+		Name:      opt.Name,
+		Waiting:   waitingReport(opt),
+	})
 	if err != nil {
 		return
 	}

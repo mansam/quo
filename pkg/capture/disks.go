@@ -160,6 +160,20 @@ func (r *transfer) download(ctx context.Context, staged io.Writer) (size int64, 
 	return
 }
 
+// waitingReport returns the function that reports what the capture waits
+// on before any disk moves, which does nothing when the caller asked for
+// no progress.
+func waitingReport(opt Options) (waiting func(said string)) {
+	if opt.Progress == nil {
+		waiting = func(said string) {}
+		return
+	}
+	waiting = func(said string) {
+		opt.Progress(Progress{State: StateWaiting, Said: said})
+	}
+	return
+}
+
 // newReporter returns the function that reports one disk's progress,
 // which does nothing when the caller asked for no progress.
 func newReporter(opt Options, transfers []transfer, at int) (report func(state State, received int64)) {

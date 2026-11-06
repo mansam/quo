@@ -236,10 +236,10 @@ func (r *KubeVirt) GetInfo(ctx context.Context) (info Info, err error) {
 	return
 }
 
-// ExportDisks creates a VirtualMachineExport for the named VirtualMachine and
-// waits for it to become ready.
-func (r *KubeVirt) ExportDisks(ctx context.Context, namespace, name string) (export DiskExport, err error) {
-	created, err := newVMExport(r, namespace, name)
+// ExportDisks creates a VirtualMachineExport for the VirtualMachine the
+// export names and waits for it to become ready.
+func (r *KubeVirt) ExportDisks(ctx context.Context, export Export) (disk DiskExport, err error) {
+	created, err := newVMExport(r, export)
 	if err != nil {
 		return
 	}
@@ -249,7 +249,7 @@ func (r *KubeVirt) ExportDisks(ctx context.Context, namespace, name string) (exp
 		_ = created.Close()
 		return
 	}
-	export = created
+	disk = created
 	return
 }
 

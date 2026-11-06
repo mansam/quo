@@ -154,13 +154,18 @@ func newReporter(out io.Writer) (report func(p capture.Progress)) {
 	// "1.1 GiBMiB" without the padding.
 	written := 0
 	report = func(p capture.Progress) {
-		line := fmt.Sprintf(
-			"disk %d/%d %s (%s): %s",
-			p.Disk,
-			p.Disks,
-			p.Claim,
-			strings.Join(p.Volumes, ", "),
-			capture.FormatSize(p.Transferred))
+		var line string
+		if p.State == capture.StateWaiting {
+			line = "waiting for the export server, " + p.Said
+		} else {
+			line = fmt.Sprintf(
+				"disk %d/%d %s (%s): %s",
+				p.Disk,
+				p.Disks,
+				p.Claim,
+				strings.Join(p.Volumes, ", "),
+				capture.FormatSize(p.Transferred))
+		}
 		padding := ""
 		if len(line) < written {
 			padding = strings.Repeat(" ", written-len(line))

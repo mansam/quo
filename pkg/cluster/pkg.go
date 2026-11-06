@@ -47,10 +47,12 @@ type Cluster interface {
 	ExpandSpec(ctx context.Context, namespace, name string) (expanded *unstructured.Unstructured, err error)
 	// GetInfo returns what a bundle records about the cluster it came from.
 	GetInfo(ctx context.Context) (info Info, err error)
-	// ExportDisks creates a VirtualMachineExport for the named VirtualMachine
-	// and waits for it to become ready. The caller closes the result, which
-	// deletes the export from the cluster.
-	ExportDisks(ctx context.Context, namespace, name string) (export DiskExport, err error)
+	// ExportDisks creates a VirtualMachineExport for the VirtualMachine
+	// the export names and waits for it to become ready. The caller
+	// closes the result, which deletes the export from the cluster.
+	// While the export becomes ready, ExportDisks calls export.Waiting,
+	// when set, once per check it makes, saying what it waits on.
+	ExportDisks(ctx context.Context, export Export) (disk DiskExport, err error)
 }
 
 // ObjectRef names one object quo reads from a cluster. A cluster-scoped
