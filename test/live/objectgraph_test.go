@@ -18,7 +18,7 @@ import (
 const (
 	// subresourceGroupVersion is where virt-api serves the subresources that
 	// belong to a VirtualMachine. They are served by virt-api rather than by
-	// the API server, so none of them is a field of the VirtualMachine
+	// the API server. So none of them is a field of the VirtualMachine
 	// resource.
 	subresourceGroupVersion = "subresources.kubevirt.io/v1"
 	// objectGraphResource is how discovery lists the subresource. A
@@ -28,35 +28,35 @@ const (
 )
 
 // errGateOff reports the ObjectGraph feature gate being off on a cluster that
-// otherwise serves the subresource. It is off by default, so this is the
+// otherwise serves the subresource. It is off by default. So this is the
 // likeliest reason a suitable-looking cluster cannot answer.
 var errGateOff = errors.New("KubeVirt's ObjectGraph feature gate is not enabled")
 
-// Kinds KubeVirt's graph names that quo's traversal does not follow, because
-// a stopped VirtualMachine has neither and quo captures nothing else.
+// Kinds KubeVirt's graph names that quo's traversal does not follow. A
+// stopped VirtualMachine has neither, and quo captures nothing else.
 var runtimeKinds = map[string]bool{
 	"Pod":                    true,
 	"VirtualMachineInstance": true,
 }
 
-// graphNode is one node of the graph the objectgraph subresource returns: an
-// object the VirtualMachine depends on, and what that object depends on in
-// turn.
+// graphNode is one node of the graph the objectgraph subresource returns.
+// A node is an object the VirtualMachine depends on. It also holds what
+// that object depends on in turn.
 //
 // This mirrors the fields of KubeVirt's own ObjectGraphNode that the
-// comparison reads, rather than importing the type, because quo takes no
-// dependency on KubeVirt's Go API. Pinning the field names here is part of
-// what the suite checks: a rename upstream arrives as a graph that decodes to
-// nothing.
+// comparison reads. The suite does not import the type, because quo takes
+// no dependency on KubeVirt's Go API. Pinning the field names here is part
+// of what the suite checks. A rename upstream arrives as a graph that
+// decodes to nothing.
 type graphNode struct {
 	ObjectReference objectReference `json:"objectReference"`
 	Children        []graphNode     `json:"children,omitempty"`
 }
 
 // objectReference names the object one node stands for. Namespace is a
-// pointer upstream and empty on a cluster-scoped object, so a node naming no
-// namespace is one that names no namespace rather than one that failed to
-// decode.
+// pointer upstream and empty on a cluster-scoped object. So a node naming
+// no namespace is one that names no namespace. It is not one that failed
+// to decode.
 type objectReference struct {
 	APIGroup  *string `json:"apiGroup"`
 	Kind      string  `json:"kind"`
@@ -67,10 +67,10 @@ type objectReference struct {
 // objectGraph returns KubeVirt's own account of what the named VirtualMachine
 // depends on.
 //
-// It goes through the REST client rather than the dynamic one because what
-// the subresource returns is a graph node and not a Kubernetes object: it
-// carries no apiVersion and no kind, which the dynamic client's decoder
-// requires of everything it reads.
+// objectGraph uses the REST client rather than the dynamic one, because the
+// subresource returns a graph node and not a Kubernetes object. The node
+// carries no apiVersion and no kind. The dynamic client's decoder requires
+// both of everything it reads.
 func (r *suite) objectGraph(
 	ctx context.Context,
 	namespace, name string) (root graphNode, err error) {
@@ -82,9 +82,9 @@ func (r *suite) objectGraph(
 		name)
 	body, err := r.core.Discovery().RESTClient().Get().AbsPath(path).DoRaw(ctx)
 	if err != nil {
-		// virt-api serves the route whether or not the gate is on and
-		// refuses the request with a bad request when it is off, which is
-		// the only way this endpoint answers with one.
+		// virt-api serves the route whether or not the gate is on. It
+		// refuses the request with a bad request when the gate is off.
+		// That is the only way this endpoint answers with one.
 		if k8serr.IsBadRequest(err) {
 			err = fmt.Errorf("%w: %s", errGateOff, err)
 			return
@@ -103,8 +103,8 @@ func (r *suite) objectGraph(
 // refs flattens the graph into the objects it names, in the order it names
 // them and without duplicates.
 //
-// Each one is reported under the kind, namespace and name quo would use for
-// it, so that the two traversals can be compared directly.
+// Each one is reported under the kind, namespace and name quo would use
+// for it. So the two traversals can be compared directly.
 func (r *graphNode) refs() (refs []cluster.ObjectRef) {
 	seen := map[cluster.ObjectRef]bool{}
 	r.collect(seen, &refs)
@@ -114,10 +114,10 @@ func (r *graphNode) refs() (refs []cluster.ObjectRef) {
 // collect adds the object a node names and then the objects its children
 // name.
 //
-// A node that names nothing quo would follow is passed over, but its children
-// are still read: a VirtualMachineInstance quo ignores is the parent of a Pod
-// in KubeVirt's graph, and nothing says a kind quo does follow will not
-// appear under one it does not.
+// collect skips a node that names nothing quo would follow. It still reads
+// the children of that node. A VirtualMachineInstance quo ignores is the
+// parent of a Pod in KubeVirt's graph. Nothing says a kind quo does follow
+// will not appear under one it does not.
 func (r *graphNode) collect(seen map[cluster.ObjectRef]bool, refs *[]cluster.ObjectRef) {
 	ref := r.ObjectReference.ref()
 	if followed(ref) && !seen[ref] {

@@ -1,14 +1,14 @@
 // Package bundle defines quo's bundle format and reads and writes it.
 //
-// A bundle is an uncompressed tar. Its first member is always the manifest, so
-// a reader learns the format version, where the bundle came from, and what else
-// the bundle holds before any other member arrives. Remaining members are
-// grouped by what they are: collected resources under "resources", disks under
-// "disks", and the source cluster's expansion of the VirtualMachine in a member
-// of its own.
+// A bundle is an uncompressed tar. Its first member is always the manifest.
+// Before any other member arrives, a reader learns the format version, where
+// the bundle came from, and what else the bundle holds. The bundle groups the
+// remaining members by what they are. Collected resources sit under
+// "resources". Disks sit under "disks". The source cluster's expansion of the
+// VirtualMachine sits in a member of its own.
 //
-// quo compresses nothing itself. Objects are plain YAML so that a bundle opens
-// with ordinary tools, and disk members hold the already-compressed bytes the
+// quo compresses nothing itself. Objects are plain YAML, so a bundle opens
+// with ordinary tools. Disk members hold the already-compressed bytes the
 // export server produced.
 package bundle
 
@@ -17,8 +17,8 @@ import (
 	"strings"
 )
 
-// FormatVersion is the bundle format this build writes, and the only one it
-// knows how to read.
+// FormatVersion is the bundle format this build writes. It is the only
+// format this build reads.
 const FormatVersion = "v1"
 
 // Member paths
@@ -38,10 +38,10 @@ const (
 // Kinds the bundle format names for itself, rather than because quo reads
 // an object of that kind from a cluster.
 const (
-	// KindContainerDisk is how the capture record names a container image a
-	// volume is served from. No Kubernetes object stands for it: it is a
-	// thing a target has to be able to pull, so it is named by its image
-	// reference.
+	// KindContainerDisk is how the capture record names a container image
+	// that serves a volume. No Kubernetes object stands for it. A target
+	// has to be able to pull it, so the capture record names it by its
+	// image reference.
 	KindContainerDisk = "ContainerDisk"
 	// KindExpandedSpec is how the capture record names the source cluster's
 	// expansion of the VirtualMachine. Recording it under a kind of its own
@@ -64,7 +64,7 @@ const (
 	OutcomeSkipped Outcome = "skipped"
 )
 
-// outcomes in the order a reader is shown them.
+// outcomes in the order a reader sees them.
 var outcomes = []Outcome{
 	OutcomeCollected,
 	OutcomeRequired,
@@ -90,8 +90,8 @@ const (
 	SkipUnreadable SkipReason = "unreadable"
 )
 
-// DiskFormat names the form a disk is stored in. quo compresses nothing
-// itself, so this records what the export server sent.
+// DiskFormat names the form a bundle stores a disk in. quo compresses
+// nothing itself, so this records what the export server sent.
 type DiskFormat string
 
 // Disk formats
@@ -99,7 +99,7 @@ const (
 	// DiskGzip is a gzip-compressed raw disk image.
 	DiskGzip DiskFormat = "gzip"
 	// DiskArchiveGzip is a gzip-compressed tar of a filesystem volume's
-	// content, which is the compressed form offered for a volume that holds
+	// content. It is the compressed form offered for a volume that holds
 	// files rather than a block device.
 	DiskArchiveGzip DiskFormat = "tar.gz"
 )

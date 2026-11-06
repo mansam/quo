@@ -111,9 +111,9 @@ func recordedFormat(claim string, format cluster.DiskFormat) (recorded bundle.Di
 // stage downloads one disk and writes it into the bundle.
 //
 // The disk is staged in a file, which establishes its compressed size and
-// digest, written into the bundle, and deleted before the next one starts.
-// The most local disk space in use at once is therefore the largest single
-// compressed disk rather than the total.
+// digest. The staged file is then written into the bundle and deleted
+// before the next one starts. The most local disk space in use at once is
+// therefore the largest single compressed disk rather than the total.
 func (r *transfer) stage(ctx context.Context, writer *bundle.Writer) (err error) {
 	staged, err := os.CreateTemp(r.scratch, ".quo-disk-*")
 	if err != nil {
@@ -161,7 +161,7 @@ func (r *transfer) download(ctx context.Context, staged io.Writer) (size int64, 
 }
 
 // newReporter returns the function that reports one disk's progress, which
-// does nothing when the caller asked for no progress.
+// does nothing when the caller requested no progress.
 func newReporter(opt Options, transfers []transfer, at int) (report func(transferred int64, done bool)) {
 	if opt.Progress == nil {
 		report = func(transferred int64, done bool) {}
@@ -182,7 +182,7 @@ func newReporter(opt Options, transfers []transfer, at int) (report func(transfe
 }
 
 // progressReader reports how much of a disk has arrived while it is being
-// read. Reports are spaced out in time, because a disk is read in small
+// read. Reports are separated in time, because a disk is read in small
 // pieces and a report per piece would be too many. The caller sets reported
 // to the time the transfer started, so a disk that arrives quickly is
 // reported only as started and as finished.

@@ -13,9 +13,9 @@ import (
 )
 
 // The provisioned sizes of the two disks the fixture VirtualMachine has, as
-// their claims give them, and what a capture of them would cost: the largest
-// single disk in local scratch space, because disks are staged one at a time,
-// and the two together in transfer.
+// their claims give them. A capture of them would cost the largest single
+// disk in local scratch space, because disks are staged one at a time. It
+// would also cost the two together in transfer.
 const (
 	testRootSize    = "32Gi"
 	testDataSize    = "100Gi"
@@ -164,8 +164,8 @@ func TestCheckSaysAVirtualMachineThatIsRunningWouldBeRefused(t *testing.T) {
 	checked, err := runCheck(t, clusterWithStatus(t, "Running"), testOptions())
 
 	// Being asked about a running VirtualMachine is not a failure of the
-	// check: saying that a capture would refuse it is the most useful thing
-	// a check can say about one.
+	// check. Saying that a capture would refuse it is the most useful
+	// thing a check can say about one.
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	g.Expect(checked).To(gomega.MatchRegexp(`Status:\s+Running`))
 	g.Expect(checked).To(gomega.ContainSubstring("virtctl stop -n support-cases db-01"))

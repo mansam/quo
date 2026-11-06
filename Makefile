@@ -1,8 +1,8 @@
 # Build and test quo. The default target builds the binary into bin/.
 #
-# The test targets match what CI runs, so a green `make check` here is the
-# same work the test workflow does on a pull request. The live suite needs a
-# KubeVirt cluster and is kept out of `check` for that reason; see
+# The test targets match what CI runs. So a passing `make check` here is
+# the same work the test workflow does on a pull request. The live suite
+# needs a KubeVirt cluster. That is why `check` does not run it. See
 # docs/testing-against-a-cluster.md.
 
 GO ?= go
@@ -38,8 +38,8 @@ vet:
 fmt:
 	$(GO) fmt ./...
 
-# The live suite is excluded from the default test run, so it is vetted and
-# compiled here to catch a change that stops it building.
+# The default test run excludes the live suite. So this target vets and
+# compiles it, to catch a change that stops it building.
 .PHONY: vet-live
 vet-live:
 	$(GO) vet -tags live ./...
@@ -49,8 +49,8 @@ build-live:
 	$(GO) test -tags live -run '^$$' ./test/live/...
 
 # The live suite itself. This needs a KubeVirt cluster with the ObjectGraph
-# feature gate enabled, named by QUO_LIVE_KUBECONFIG. Tests that need a
-# cluster skip and say so when there is none.
+# feature gate enabled. QUO_LIVE_KUBECONFIG names the kubeconfig to connect
+# with. Tests that need a cluster skip and say so when there is none.
 .PHONY: test-live
 test-live:
 	$(GO) test -tags live -v -timeout 40m ./test/live/...

@@ -16,7 +16,27 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
-// The upload token that authorizes one upload is asked for through a
+// Upload is one disk's transfer into the claim a DataVolume creates.
+type Upload struct {
+	// Namespace is the namespace the DataVolume was created in.
+	Namespace string
+	// Name is the DataVolume's own name. CDI names the claim after the
+	// DataVolume itself.
+	Name string
+	// Content is the disk's bytes. UploadDisk sends them unchanged,
+	// exactly as it reads them.
+	Content io.Reader
+	// Size is the count the bytes will add up to. UploadDisk is told
+	// the count, so that a transfer that yields fewer bytes than the
+	// count fails rather than ending early.
+	Size int64
+	// Waiting, when set, is called each time the target checks whether
+	// the claim is ready. said is what the target is waiting on, in
+	// words a person can read. No bytes have moved.
+	Waiting func(said string)
+}
+
+// quo asks for the upload token that authorizes one upload through a
 // resource of CDI's own.
 var uploadTokenRequestResource = schema.GroupVersionResource{
 	Group:    "upload.cdi.kubevirt.io",
@@ -26,30 +46,30 @@ var uploadTokenRequestResource = schema.GroupVersionResource{
 
 // Upload settings
 const (
-	// uploadPath is where CDI's upload proxy takes a synchronous upload:
-	// the connection stays open until CDI has finished processing the
-	// bytes, so a response that arrived is a disk that landed.
+	// uploadPath is where CDI's upload proxy takes a synchronous upload.
+	// The connection stays open until CDI finishes processing the bytes.
+	// A response that arrived therefore means a disk that arrived.
 	uploadPath = "/v1beta1/upload"
 	// uploadTokenPrefix names the token requests quo makes, so that a
 	// cluster administrator reading them knows what asked.
 	uploadTokenPrefix = "quo-upload-"
 	// uploadReadyTimeout bounds the wait for a fresh DataVolume to become
 	// ready to receive its bytes. A claim has to be bound and an upload
-	// pod placed before CDI will take the bytes, and a cluster short on
-	// room or images can take a while about either.
+	// pod placed before CDI takes the bytes. A cluster short on room or
+	// images can take a while about either.
 	uploadReadyTimeout = 10 * time.Minute
-	// uploadPollInterval is how often the DataVolume is read while waiting
-	// for it.
+	// uploadPollInterval is how often the loop reads the DataVolume during
+	// the wait.
 	uploadPollInterval = 2 * time.Second
-	// uploadProxyService is the name CDI gives the Service publishing its
-	// upload proxy, and uploadProxyBundle is the ConfigMap in the same
-	// namespace holding the authority the proxy's certificate is signed
-	// by.
+	// uploadProxyService is the name CDI gives the Service that publishes
+	// its upload proxy. uploadProxyBundle is the ConfigMap in the same
+	// namespace. It holds the authority that signed the proxy's
+	// certificate.
 	uploadProxyService = "cdi-uploadproxy"
 	uploadProxyBundle  = "cdi-uploadproxy-signer-bundle"
 	uploadProxyCA      = "ca-bundle.crt"
-	// uploadSaidLimit is how much of the upload proxy's answer is read
-	// into an error, which is where the proxy says why it refused.
+	// uploadSaidLimit is how much of the upload proxy's answer quo reads
+	// into an error. That answer is where the proxy says why it refused.
 	uploadSaidLimit = 1024
 )
 
@@ -60,25 +80,22 @@ const (
 	phaseSucceeded   = "Succeeded"
 )
 
-// UploadDisk puts the bytes readable from content into the claim the named
-// DataVolume creates in namespace, which CDI names after the DataVolume
-// itself. The bytes are sent unchanged, exactly as they were read; size is
-// the count they will add up to, which the upload is told so that a
-// transfer which comes up short fails rather than ending early.
+// UploadDisk puts the bytes readable from upload.Content into the claim
+// the DataVolume upload.Name creates in upload.Namespace. CDI names that
+// claim after the DataVolume itself. UploadDisk sends the bytes
+// unchanged, exactly as it read them.
 //
-// The upload waits for CDI to make the claim ready to receive the bytes,
-// so a caller that creates the DataVolume and uploads into it at once
-// needs no readiness loop of its own. The bytes are offered once: a
-// transfer that fails part-way is the caller's to report, and the person
-// who ran the deploy decides what happens next, because nothing in quo
+// The upload waits for CDI to make the claim ready to receive the bytes.
+// A caller that creates the DataVolume and uploads into it at once
+// therefore needs no readiness loop of its own. While the claim is not
+// ready, UploadDisk calls upload.Waiting, when set, once per check it
+// makes, saying what it waits on. UploadDisk offers the bytes once. A
+// transfer that fails part-way is the caller's to report. The person who
+// ran the deploy decides what happens next, because nothing in quo
 // resumes a partial one.
-func (r *KubeVirt) UploadDisk(
-	ctx context.Context,
-	namespace, name string,
-	content io.Reader,
-	size int64) (err error) {
+func (r *KubeVirt) UploadDisk(ctx context.Context, upload Upload) (err error) {
 	//
-	err = r.awaitUploadReady(ctx, namespace, name)
+	err = r.awaitUploadReady(ctx, upload)
 	if err != nil {
 		return
 	}
@@ -94,7 +111,7 @@ func (r *KubeVirt) UploadDisk(
 		close(tunneled.stop)
 	}()
 	client := r.uploadClient(ctx, proxy)
-	token, err := r.uploadToken(ctx, namespace, name)
+	token, err := r.uploadToken(ctx, upload)
 	if err != nil {
 		return
 	}
@@ -102,17 +119,17 @@ func (r *KubeVirt) UploadDisk(
 		ctx,
 		http.MethodPost,
 		"https://"+tunneled.address+uploadPath,
-		content)
+		upload.Content)
 	if err != nil {
-		err = fmt.Errorf("build the upload of disk %q: %w", name, err)
+		err = fmt.Errorf("build the upload of disk %q: %w", upload.Name, err)
 		return
 	}
 	request.Header.Set("Authorization", "Bearer "+token)
 	request.Header.Set("Content-Type", "application/octet-stream")
-	request.ContentLength = size
+	request.ContentLength = upload.Size
 	response, err := client.Do(request)
 	if err != nil {
-		err = fmt.Errorf("upload disk %q: %w", name, err)
+		err = fmt.Errorf("upload disk %q: %w", upload.Name, err)
 		return
 	}
 	defer func() {
@@ -123,7 +140,7 @@ func (r *KubeVirt) UploadDisk(
 		said, _ = io.ReadAll(io.LimitReader(response.Body, uploadSaidLimit))
 		err = fmt.Errorf(
 			"upload disk %q: the upload proxy answered %s: %s",
-			name,
+			upload.Name,
 			response.Status,
 			strings.TrimSpace(string(said)))
 		return
@@ -131,20 +148,24 @@ func (r *KubeVirt) UploadDisk(
 	return
 }
 
-// awaitUploadReady waits for CDI to make the named DataVolume ready to
-// receive its bytes: the claim bound and the upload pod placed. A phase
-// the DataVolume will not come back from is reported at once rather than
-// waited out.
-func (r *KubeVirt) awaitUploadReady(ctx context.Context, namespace, name string) (err error) {
+// awaitUploadReady waits for CDI to make the DataVolume upload names
+// ready to receive its bytes: the claim bound and the upload pod
+// placed. When the DataVolume reaches a phase it never recovers from,
+// awaitUploadReady reports at once rather than letting the timeout
+// expire. Each check it makes calls upload.Waiting, when set, saying
+// what the DataVolume's phase is. A person watching the deploy can then
+// tell a wait from a transfer.
+func (r *KubeVirt) awaitUploadReady(ctx context.Context, upload Upload) (err error) {
+	//
 	deadline := time.Now().Add(uploadReadyTimeout)
 	for {
 		var dataVolume *unstructured.Unstructured
 		dataVolume, err = r.dynamic.
 			Resource(dataVolumeResource).
-			Namespace(namespace).
-			Get(ctx, name, meta.GetOptions{})
+			Namespace(upload.Namespace).
+			Get(ctx, upload.Name, meta.GetOptions{})
 		if err != nil {
-			err = fmt.Errorf("get DataVolume %s/%s: %w", namespace, name, err)
+			err = fmt.Errorf("get DataVolume %s/%s: %w", upload.Namespace, upload.Name, err)
 			return
 		}
 		phase, _, _ := unstructured.NestedString(dataVolume.Object, "status", "phase")
@@ -154,18 +175,28 @@ func (r *KubeVirt) awaitUploadReady(ctx context.Context, namespace, name string)
 		case phaseFailed:
 			err = fmt.Errorf(
 				"DataVolume %s/%s failed, so it cannot receive the disk; its status says why",
-				namespace,
-				name)
+				upload.Namespace,
+				upload.Name)
 			return
 		case phaseSucceeded:
-			err = fmt.Errorf("DataVolume %s/%s is already populated", namespace, name)
+			err = fmt.Errorf("DataVolume %s/%s is already populated", upload.Namespace, upload.Name)
 			return
+		}
+		if upload.Waiting != nil {
+			if phase == "" {
+				// A DataVolume straight from a create carries no phase
+				// until CDI gives it one. That is a wait like any
+				// other, and is said as one.
+				upload.Waiting("the DataVolume has no phase yet")
+			} else {
+				upload.Waiting(fmt.Sprintf("the DataVolume is %q", phase))
+			}
 		}
 		if time.Now().After(deadline) {
 			err = fmt.Errorf(
 				"DataVolume %s/%s is %q after %s, expected %q",
-				namespace,
-				name,
+				upload.Namespace,
+				upload.Name,
 				phase,
 				uploadReadyTimeout,
 				phaseUploadReady)
@@ -181,9 +212,9 @@ func (r *KubeVirt) awaitUploadReady(ctx context.Context, namespace, name string)
 }
 
 // findUploadProxy returns the Service CDI publishes its upload proxy
-// behind. CDI's namespace is wherever its operator was installed, so the
-// Service is looked for by name across the cluster rather than guessed
-// at.
+// behind. CDI's namespace is wherever its operator was installed.
+// findUploadProxy therefore looks for the Service by name across the
+// cluster, rather than guessing.
 func (r *KubeVirt) findUploadProxy(ctx context.Context) (service *core.Service, err error) {
 	list, err := r.core.CoreV1().Services(meta.NamespaceAll).List(ctx, meta.ListOptions{
 		FieldSelector: "metadata.name=" + uploadProxyService,
@@ -202,20 +233,22 @@ func (r *KubeVirt) findUploadProxy(ctx context.Context) (service *core.Service, 
 	return
 }
 
-// uploadClient returns the client that uploads disks. It has no timeout of
-// its own: a disk can take hours, and the context governs instead.
+// uploadClient returns the client that uploads disks. The client has no
+// timeout of its own. A disk can take hours, so the context governs
+// instead.
 //
-// The proxy's certificate is signed by an authority the cluster keeps in a
-// ConfigMap beside it; where that can be read the connection is verified
-// against it. Where it cannot, the connection is carried unverified: it
-// runs inside a tunnel to the API server that the kubeconfig already
-// authenticated, which is the same trust the port forward itself rests on.
+// An authority the cluster keeps in a ConfigMap beside it signs the
+// proxy's certificate. Where that authority can be read, the client
+// verifies the connection against it. Where it cannot, the connection is
+// carried unverified: it runs inside a tunnel to the API server that the
+// kubeconfig already authenticated. That is the same trust the port
+// forward itself rests on.
 func (r *KubeVirt) uploadClient(ctx context.Context, proxy *core.Service) (client *http.Client) {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	tlsConfig := &tls.Config{
-		// A forwarded port makes the address local, but the certificate
-		// the upload proxy presents is still the one the cluster issued
-		// it, for its Service's name.
+		// A forwarded port makes the address local. The certificate the
+		// upload proxy presents is still the one the cluster issued it,
+		// for its Service's name.
 		ServerName: proxy.Name + "." + proxy.Namespace + ".svc",
 		MinVersion: tls.VersionTLS12,
 	}
@@ -230,10 +263,10 @@ func (r *KubeVirt) uploadClient(ctx context.Context, proxy *core.Service) (clien
 	return
 }
 
-// uploadCertPool returns the authority the upload proxy's certificate is
-// signed by, nil when it cannot be read. The ConfigMap is CDI's own
-// arrangement rather than an API, so a cluster is allowed to have moved
-// it, and the upload falls back to the tunnel's own authentication.
+// uploadCertPool returns the authority that signed the upload proxy's
+// certificate, nil when it cannot be read. The ConfigMap is CDI's own
+// arrangement rather than an API, so a cluster may have moved it. The
+// upload then relies on the tunnel's own authentication.
 func (r *KubeVirt) uploadCertPool(ctx context.Context, namespace string) (pool *x509.CertPool) {
 	bundle, err := r.core.CoreV1().ConfigMaps(namespace).Get(ctx, uploadProxyBundle, meta.GetOptions{})
 	if err != nil {
@@ -251,29 +284,29 @@ func (r *KubeVirt) uploadCertPool(ctx context.Context, namespace string) (pool *
 }
 
 // uploadToken asks CDI for the token that authorizes one upload. The token
-// names the claim it opens and lives five minutes, which one upload
-// outlives only by failing.
-func (r *KubeVirt) uploadToken(ctx context.Context, namespace, name string) (token string, err error) {
+// names the claim it opens and lives five minutes. Only an upload that
+// fails outlives it.
+func (r *KubeVirt) uploadToken(ctx context.Context, upload Upload) (token string, err error) {
 	request := &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": uploadTokenRequestResource.GroupVersion().String(),
 		"kind":       "UploadTokenRequest",
 		"metadata": map[string]any{
 			"generateName": uploadTokenPrefix,
-			"namespace":    namespace,
+			"namespace":    upload.Namespace,
 		},
-		"spec": map[string]any{"pvcName": name},
+		"spec": map[string]any{"pvcName": upload.Name},
 	}}
 	granted, err := r.dynamic.
 		Resource(uploadTokenRequestResource).
-		Namespace(namespace).
+		Namespace(upload.Namespace).
 		Create(ctx, request, meta.CreateOptions{})
 	if err != nil {
-		err = fmt.Errorf("request an upload token for %s/%s: %w", namespace, name, err)
+		err = fmt.Errorf("request an upload token for %s/%s: %w", upload.Namespace, upload.Name, err)
 		return
 	}
 	token, _, _ = unstructured.NestedString(granted.Object, "status", "token")
 	if token == "" {
-		err = fmt.Errorf("request an upload token for %s/%s: CDI granted none", namespace, name)
+		err = fmt.Errorf("request an upload token for %s/%s: CDI granted none", upload.Namespace, upload.Name)
 		return
 	}
 	return

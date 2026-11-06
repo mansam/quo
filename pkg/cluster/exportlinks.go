@@ -38,9 +38,10 @@ func getLinks(export *unstructured.Unstructured) (links map[string]any, external
 // getCompressed returns the compressed download link for every volume the
 // links cover.
 //
-// A volume holding a block device is offered raw and gzip; a volume holding
-// files is offered dir and tar.gz. quo always takes the compressed one, so
-// that a sparsely used volume transfers at roughly its used size.
+// The export offers a volume holding a block device as raw and gzip. It
+// offers a volume holding files as dir and tar.gz. quo always takes the
+// compressed one, so that a sparsely used volume transfers at roughly its
+// used size.
 func getCompressed(links map[string]any) (offers []offer, err error) {
 	volumes, _, _ := unstructured.NestedSlice(links, "volumes")
 	for i := range volumes {
@@ -65,7 +66,7 @@ func getCompressed(links map[string]any) (offers []offer, err error) {
 	return
 }
 
-// getFormat returns the compressed format one volume is offered in.
+// getFormat returns the compressed format the export offers for one volume.
 func getFormat(volume map[string]any) (found offer, matched bool) {
 	formats, _, _ := unstructured.NestedSlice(volume, "formats")
 	for i := range formats {
@@ -88,9 +89,9 @@ func getFormat(volume map[string]any) (found offer, matched bool) {
 	return
 }
 
-// buildCertPool returns the authority the export server's certificate is
-// signed by, nil where the link carries none and the system authorities
-// apply.
+// buildCertPool returns the authority that signed the export server's
+// certificate. It returns nil where the link carries none and the system
+// authorities apply.
 func buildCertPool(links map[string]any) (pool *x509.CertPool, err error) {
 	encoded, _, _ := unstructured.NestedString(links, "cert")
 	if encoded == "" {
@@ -105,13 +106,14 @@ func buildCertPool(links map[string]any) (pool *x509.CertPool, err error) {
 	return
 }
 
-// buildClient returns the client that downloads disks. It has no timeout of
-// its own: a single disk can take hours, and the context governs instead.
+// buildClient returns the client that downloads disks. The client has no
+// timeout of its own. A single disk can take hours, so the context governs
+// instead.
 func buildClient(certs *x509.CertPool, server string) (client *http.Client) {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.TLSClientConfig = &tls.Config{
 		RootCAs: certs,
-		// A forwarded port makes the address local, but the certificate the
+		// A forwarded port makes the address local. The certificate the
 		// export server presents is still the one the cluster issued it.
 		ServerName: server,
 		MinVersion: tls.VersionTLS12,
@@ -120,7 +122,7 @@ func buildClient(certs *x509.CertPool, server string) (client *http.Client) {
 	return
 }
 
-// redirect points a link at an address, leaving the rest of it alone.
+// redirect points a link at an address and changes nothing else in it.
 func redirect(link, address string) (redirected string, err error) {
 	parsed, err := url.Parse(link)
 	if err != nil {

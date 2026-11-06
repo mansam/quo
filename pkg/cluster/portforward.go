@@ -23,8 +23,8 @@ import (
 const (
 	// forwardReadyTimeout bounds the wait for a forwarded port to open.
 	forwardReadyTimeout = time.Minute
-	// dataServicePort is the port the data services quo reaches publish:
-	// the export server's Service and CDI's upload proxy both serve on
+	// dataServicePort is the port the data services quo reaches publish.
+	// The export server's Service and CDI's upload proxy both serve on
 	// 443.
 	dataServicePort = 443
 )
@@ -41,8 +41,8 @@ type server struct {
 	port int32
 }
 
-// forwardTo forwards a local port to the pod behind a cluster's Service,
-// so that a server inside the cluster can be reached without the cluster
+// forwardTo forwards a local port to the pod behind a cluster's Service.
+// A caller can then reach a server inside the cluster, without the cluster
 // publishing a route to it. The forward is the caller's to stop.
 func forwardTo(
 	ctx context.Context,
@@ -106,9 +106,9 @@ func forwardTo(
 	return
 }
 
-// forwardTo forwards a local port to the pod behind the export's Service,
-// so that a disk can be downloaded from a cluster that publishes no route
-// to it.
+// forwardTo forwards a local port to the pod behind the export's Service.
+// quo can then download a disk from a cluster that publishes no route to
+// it.
 func (r *vmExport) forwardTo(ctx context.Context, service string) (err error) {
 	r.forward, err = forwardTo(ctx, r.core, r.config, r.namespace, service)
 	return
@@ -117,8 +117,9 @@ func (r *vmExport) forwardTo(ctx context.Context, service string) (err error) {
 // getServer returns the pod behind a Service and the port the server
 // listens on inside it.
 //
-// A port is forwarded to a pod rather than to a Service, so the port to ask
-// for is the one the Service forwards to and not the one it publishes.
+// A port forward goes to a pod rather than to a Service. The port to ask
+// for is therefore the one the Service forwards to, not the one it
+// publishes.
 func getServer(
 	ctx context.Context,
 	client kubernetes.Interface,
@@ -152,8 +153,9 @@ func getServer(
 	return
 }
 
-// targetPort returns the port on pod that service forwards the data port
-// to, resolving a port named rather than numbered against the pod itself.
+// targetPort returns the port on the pod that the Service forwards the
+// data port to. Where the Service names a port rather than numbering it,
+// targetPort resolves the name against the pod.
 func targetPort(service *core.Service, pod *core.Pod) (port int32, err error) {
 	published := servicePort(service)
 	if published == nil {
@@ -177,7 +179,7 @@ func targetPort(service *core.Service, pod *core.Pod) (port int32, err error) {
 	return
 }
 
-// servicePort returns the port the server is published on.
+// servicePort returns the port the Service publishes for the server.
 func servicePort(service *core.Service) (found *core.ServicePort) {
 	for i := range service.Spec.Ports {
 		if service.Spec.Ports[i].Port != dataServicePort {

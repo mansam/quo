@@ -17,19 +17,19 @@ import (
 const labelManagedBy = "app.kubernetes.io/managed-by"
 
 // labelBundle says which bundle this object was deployed from. Its key is
-// frozen: undeploy will select on it, and so will anyone cleaning up with
-// kubectl.
+// frozen: undeploy selects on it, and so does anyone who removes objects
+// with kubectl.
 const labelBundle = "quo.mansam.dev/bundle"
 
-// Annotations a deploy records on what it creates, carrying what a support
-// engineer needs to tie a running machine back to the case it was
+// Annotations a deploy records on what it creates. They carry what a
+// support engineer needs to trace a running machine to the case it was
 // captured for.
 const (
 	// annotationBundleFile is the exact filename the bundle was deployed
 	// from, on every created object.
 	annotationBundleFile = "quo.mansam.dev/bundle-file"
-	// The rest land on the VirtualMachine alone, saying where it came
-	// from and when.
+	// A deploy writes the rest on the VirtualMachine alone, saying
+	// where it came from and when.
 	annotationSourceCluster        = "quo.mansam.dev/source-cluster"
 	annotationSourceNamespace      = "quo.mansam.dev/source-namespace"
 	annotationSourceVirtualMachine = "quo.mansam.dev/source-virtualmachine"
@@ -57,15 +57,18 @@ func virtualMachineName(opt Options, manifest *bundle.Manifest) (name string) {
 }
 
 // buildVirtualMachine returns the VirtualMachine to create: the expanded
-// spec carrying the forced rewrites — the source cluster's metadata
-// cleared, the name when renaming, the namespace, the dataVolumeTemplates
-// removed, and the labels and annotations — and nothing else changed. The
-// expanded spec is rewritten in place; a deploy uses it once.
+// spec carrying the forced rewrites and nothing else changed. The forced
+// rewrites are the source cluster's metadata cleared, the name when
+// renaming, the namespace, and the labels and annotations. They are also
+// the instancetype and preference matchers removed, the multus network
+// names from the mapping, and the dataVolumeTemplates removed. The
+// expanded spec is rewritten in place. A deploy uses it once.
 func buildVirtualMachine(
 	expanded *unstructured.Unstructured,
 	opt Options,
 	provenance bundle.Provenance,
-	identity string) (vm *unstructured.Unstructured) {
+	identity string,
+	networks []Requirement) (vm *unstructured.Unstructured) {
 	//
 	vm = expanded
 	clearSourceMetadata(vm)
@@ -73,9 +76,17 @@ func buildVirtualMachine(
 		vm.SetName(opt.Name)
 	}
 	vm.SetNamespace(opt.Namespace)
+	rewriteNetworks(vm, networks)
+	// The expansion is the source cluster's own resolution of the machine,
+	// so what the instancetype and the preference named is already folded
+	// into the spec. A matcher that survives the expansion is removed,
+	// because the applied VirtualMachine names none. No
+	// ControllerRevision is created on the target, and none is needed.
+	unstructured.RemoveNestedField(vm.Object, "spec", "instancetype")
+	unstructured.RemoveNestedField(vm.Object, "spec", "preference")
 	// The templates became standalone DataVolumes, created before the
-	// VirtualMachine, so the volume stanzas that named them are satisfied
-	// unchanged and the machine creates no disks of its own.
+	// VirtualMachine. The volume stanzas that named them are therefore
+	// satisfied unchanged, and the machine creates no disks of its own.
 	unstructured.RemoveNestedField(vm.Object, "spec", "dataVolumeTemplates")
 	labelAsDeployed(vm, opt, identity)
 	annotations := vm.GetAnnotations()
@@ -88,48 +99,95 @@ func buildVirtualMachine(
 	return
 }
 
+// rewriteNetworks puts the network mappings onto the multus networks of
+// the VirtualMachine being applied. Each one's networkName names the
+// NetworkAttachmentDefinition it was mapped onto, as the mapping says.
+// The name is namespace-qualified only when the definition lives outside
+// the deploy namespace, because an unqualified name means the namespace
+// of the VirtualMachine itself.
+//
+// The pod network names no object and is never mapped. A network the
+// deploy holds no mapping for keeps what the expansion carries.
+func rewriteNetworks(vm *unstructured.Unstructured, networks []Requirement) {
+	attachedByName := make(map[string]string, len(networks))
+	for i := range networks {
+		attachedByName[networks[i].From] = networks[i].To
+	}
+	// The slice is taken without a copy, because what it holds is
+	// rewritten in place. NestedSlice hands back a copy of what it
+	// finds, and rewriting a copy would rewrite nothing.
+	declared, _, _ := unstructured.NestedFieldNoCopy(
+		vm.Object, "spec", "template", "spec", "networks")
+	declaredNetworks, cast := declared.([]any)
+	if !cast {
+		return
+	}
+	for i := range declaredNetworks {
+		network, cast := declaredNetworks[i].(map[string]any)
+		if !cast {
+			continue
+		}
+		if _, found, _ := unstructured.NestedMap(network, "multus"); !found {
+			// The pod network, which every cluster has and which names
+			// nothing to map.
+			continue
+		}
+		name, _, _ := unstructured.NestedString(network, "name")
+		attachment, found := attachedByName[name]
+		if !found {
+			continue
+		}
+		err := unstructured.SetNestedField(network, attachment, "multus", "networkName")
+		if err != nil {
+			// A network stanza is a map of strings. The field always
+			// takes.
+			continue
+		}
+	}
+}
+
 // buildDataVolume returns the DataVolume that receives one of the bundle's
 // disks.
 //
-// The DataVolume is named after the claim the disk backs, so the
-// VirtualMachine's volume stanzas find the claim CDI creates without a
-// rewrite of their own: CDI names the claim after the DataVolume. Its
-// source is always upload, because a claim cannot be populated on its
-// own; its size, volume mode and storage class come from the requirement
-// recorded at capture; and its content type follows the compressed form
-// the bundle holds the disk in, because the target's CDI reads the bytes
-// as what they are.
+// The DataVolume is named after the claim the disk backs. The
+// VirtualMachine's volume stanzas therefore find the claim CDI creates
+// without a rewrite of their own. CDI names the claim after the
+// DataVolume. Its source is always upload, because a claim cannot be
+// populated on its own. Its size and volume mode come from the
+// requirement recorded at capture. Its storage class is the target's
+// class the requirement was mapped onto. Its content type follows the
+// compressed form the bundle holds the disk in, because the target's CDI
+// reads the bytes as what they are.
 //
 // The DataVolume also asks CDI to bind its claim at once. The machine it
 // belongs to is deployed stopped, so nothing will ever be the first
-// consumer a WaitForFirstConsumer class waits for, and the upload cannot
+// consumer a WaitForFirstConsumer class waits for. The upload cannot
 // start until the claim is bound.
 func buildDataVolume(
-	held bundle.Disk,
-	required bundle.StorageRequirement,
+	disk plannedDisk,
 	opt Options,
 	identity string) (dataVolume *unstructured.Unstructured) {
 	//
 	contentType := "kubevirt"
-	if held.Format == bundle.DiskArchiveGzip {
-		// A tar of a filesystem volume's content, which CDI unpacks
-		// rather than writes as a disk image.
+	if disk.held.Format == bundle.DiskArchiveGzip {
+		// A tar of a filesystem volume's content. CDI unpacks it rather
+		// than writing it as a disk image.
 		contentType = "archive"
 	}
 	storage := map[string]any{
 		"resources": map[string]any{
-			"requests": map[string]any{"storage": required.Size},
+			"requests": map[string]any{"storage": disk.required.Size},
 		},
-		"storageClassName": required.StorageClass,
+		"storageClassName": disk.storageClass,
 	}
-	if required.VolumeMode != "" {
-		storage["volumeMode"] = required.VolumeMode
+	if disk.required.VolumeMode != "" {
+		storage["volumeMode"] = disk.required.VolumeMode
 	}
 	dataVolume = &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": dataVolumeAPIVersion,
 		"kind":       cluster.KindDataVolume,
 		"metadata": map[string]any{
-			"name":      held.Claim,
+			"name":      disk.held.Claim,
 			"namespace": opt.Namespace,
 		},
 		"spec": map[string]any{
@@ -145,10 +203,27 @@ func buildDataVolume(
 	return
 }
 
+// buildClosureObject returns the closure object to create: the bundle's
+// member carrying the forced rewrites that apply to every created
+// object, and nothing else changed. Those rewrites are the source
+// cluster's metadata cleared, the namespace, and the labels and
+// annotations. The member is rewritten in place. A deploy uses it once.
+func buildClosureObject(
+	member *unstructured.Unstructured,
+	opt Options,
+	identity string) (object *unstructured.Unstructured) {
+	//
+	object = member
+	clearSourceMetadata(object)
+	object.SetNamespace(opt.Namespace)
+	labelAsDeployed(object, opt, identity)
+	return
+}
+
 // labelAsDeployed marks one object as quo's work from one bundle: the
 // managed-by label, the bundle identity label, and the annotation naming
-// the exact bundle file. What the VirtualMachine additionally carries —
-// where it came from and when — is set where the VirtualMachine is built.
+// the exact bundle file. What the VirtualMachine additionally carries,
+// where it came from and when, is set where the VirtualMachine is built.
 func labelAsDeployed(object *unstructured.Unstructured, opt Options, identity string) {
 	labels := object.GetLabels()
 	if labels == nil {
@@ -165,28 +240,26 @@ func labelAsDeployed(object *unstructured.Unstructured, opt Options, identity st
 	object.SetAnnotations(annotations)
 }
 
-// clearSourceMetadata removes the metadata the source cluster assigned the
-// expansion, none of which a target can recreate: it mints its own uid,
-// creation timestamp, generation and resourceVersion when it creates, and
-// records its own managed fields — and it refuses a create that arrives
-// carrying a resourceVersion. Where the machine came from is already said
-// by the provenance annotations, so none of the source's bookkeeping is
-// sent.
-func clearSourceMetadata(vm *unstructured.Unstructured) {
-	vm.SetResourceVersion("")
-	vm.SetUID("")
-	vm.SetCreationTimestamp(meta.Time{})
-	vm.SetGeneration(0)
-	vm.SetManagedFields(nil)
+// clearSourceMetadata removes the metadata the source cluster assigned an
+// object the bundle holds, none of which a target can recreate. The
+// target mints its own uid, creation timestamp, generation and
+// resourceVersion when it creates. It records its own managed fields. It
+// refuses a create that arrives carrying a resourceVersion.
+func clearSourceMetadata(object *unstructured.Unstructured) {
+	object.SetResourceVersion("")
+	object.SetUID("")
+	object.SetCreationTimestamp(meta.Time{})
+	object.SetGeneration(0)
+	object.SetManagedFields(nil)
 }
 
 // bundleIdentity is the value that labels every object created from one
 // bundle: the SHA-256 of the manifest member, encoded to fit a label
 // value. A hex SHA-256 is 64 characters and label values are limited to
-// 63; base64url is 43, and the prefix makes 50.
+// 63. base64url is 43, and the prefix makes 50.
 //
 // The manifest carries the digest of every other member, so its own hash
-// identifies the bundle: two objects carrying the same value came from
+// identifies the bundle. Two objects carrying the same value came from
 // byte-for-byte the same bundle.
 func bundleIdentity(manifest []byte) (identity string) {
 	summed := sha256.Sum256(manifest)

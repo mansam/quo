@@ -207,7 +207,7 @@ func TestInspectListsTheResourcesByKindAndName(t *testing.T) {
 	report := described.String()
 	g.Expect(report).To(gomega.ContainSubstring("Resources (2)"))
 	g.Expect(report).To(gomega.MatchRegexp(`VirtualMachine\s+db-01\n`))
-	// An object from another namespace is named with it; one from the
+	// An object from another namespace is named with it. An object from the
 	// VirtualMachine's own namespace is not.
 	g.Expect(report).To(gomega.MatchRegexp(`NetworkAttachmentDefinition\s+shared-networks/storage-net\n`))
 }
@@ -232,33 +232,41 @@ func TestInspectNamesTheMemberHoldingTheExpandedSpec(t *testing.T) {
 
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	report := described.String()
-	// The expansion is not a resource, so it is named on its own and the
-	// VirtualMachine is listed once rather than twice under one name.
+	// The expansion is not a resource, so it is named on its own. The
+	// VirtualMachine is therefore listed once rather than twice under one
+	// name.
 	g.Expect(report).To(gomega.ContainSubstring("Resources (1)"))
 	g.Expect(report).To(gomega.ContainSubstring("Expanded spec"))
 	g.Expect(report).To(gomega.ContainSubstring(ExpandedSpecPath))
 	listed := regexp.MustCompile(`VirtualMachine\s+db-01\n`).FindAllString(report, -1)
 	g.Expect(listed).To(gomega.HaveLen(1))
+	// A bundle holding the expansion is deployable material, so nothing
+	// says otherwise.
+	g.Expect(report).ToNot(gomega.ContainSubstring("cannot be deployed"))
 }
 
-func TestInspectSaysNothingAboutTheExpandedSpecWhenABundleHoldsNone(t *testing.T) {
+func TestInspectSaysABundleHoldingNoExpandedSpecCannotBeDeployed(t *testing.T) {
 	g := gomega.NewGomegaWithT(t)
 	described := &bytes.Buffer{}
 
 	err := Inspect(bytes.NewReader(validBundle(t)), described)
 
+	// The expansion is what a deploy applies, so a bundle holding none
+	// will be refused by one. Saying so here is how a recipient learns it
+	// before trying, rather than from the refusal itself.
 	g.Expect(err).ToNot(gomega.HaveOccurred())
-	g.Expect(described.String()).ToNot(gomega.ContainSubstring("Expanded spec"))
+	g.Expect(described.String()).To(gomega.ContainSubstring(
+		"Expanded spec\n  none, so the bundle cannot be deployed\n"))
 }
 
 func TestInspectPrintsWhatABundleNeedsFromItsLeadingManifestAlone(t *testing.T) {
 	g := gomega.NewGomegaWithT(t)
 	manifest := indexing(t)
 	manifest.Requirements = testRequirements()
-	// Nothing but the manifest. This is what a support engineer has once the
-	// first bytes of a transfer have arrived and before anything the manifest
-	// indexes has, which is the moment they want to know whether their
-	// cluster can satisfy the bundle at all.
+	// Nothing but the manifest. This is what a support engineer has once
+	// the first bytes of a transfer have arrived, and before anything the
+	// manifest indexes has. That is the moment they want to know whether
+	// their cluster can satisfy the bundle at all.
 	archive := tarball(t, rawMember{path: ManifestPath, data: encodeManifest(t, manifest)})
 	described := &bytes.Buffer{}
 
@@ -266,13 +274,13 @@ func TestInspectPrintsWhatABundleNeedsFromItsLeadingManifestAlone(t *testing.T) 
 
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	report := described.String()
-	// Nothing was extracted and no disk was waited for: what a target would
-	// have to provide is in the first member.
+	// The test extracted nothing and waited for no disk. What a target
+	// would have to provide is in the first member.
 	g.Expect(report).To(gomega.ContainSubstring("Members (1), 1 not yet arrived"))
 	g.Expect(report).To(gomega.MatchRegexp(resourcePath + `\s+\d+ bytes\s+\(not yet arrived\)\n`))
 	g.Expect(report).To(gomega.ContainSubstring("Networks required (2)"))
-	// Every cluster has a pod network; a secondary one names the attachment
-	// the source cluster backed it with.
+	// Every cluster has a pod network. A secondary network names the
+	// attachment the source cluster backed it with.
 	g.Expect(report).To(gomega.MatchRegexp(`default\s+pod\n`))
 	g.Expect(report).To(gomega.MatchRegexp(`secondary\s+multus\s+shared-networks/storage-net\n`))
 	g.Expect(report).To(gomega.ContainSubstring("Storage required (2)"))
@@ -283,6 +291,10 @@ func TestInspectPrintsWhatABundleNeedsFromItsLeadingManifestAlone(t *testing.T) 
 	g.Expect(report).To(gomega.MatchRegexp(`db-01-data\s+\(unknown\)\s+\(unknown\)\s+class: \(unknown\)\n`))
 	g.Expect(report).To(gomega.ContainSubstring("Container disk images required (1)"))
 	g.Expect(report).To(gomega.MatchRegexp(`containerdisk\s+quay\.io/example/fedora:41\n`))
+	// The statement that a bundle cannot be deployed is in the manifest
+	// too. A recipient of a transfer that is still running therefore learns
+	// it before any disk arrives.
+	g.Expect(report).To(gomega.ContainSubstring("cannot be deployed"))
 }
 
 func TestInspectDescribesATransferThatStoppedPartWayThroughADisk(t *testing.T) {
@@ -295,7 +307,8 @@ func TestInspectDescribesATransferThatStoppedPartWayThroughADisk(t *testing.T) {
 
 	// Where a transfer still running actually is: the manifest and the objects
 	// have arrived and the disk is still coming. Refusing to say anything
-	// about it would withhold the part the reader is waiting on the rest for.
+	// would withhold the part that has arrived. The reader is waiting for the
+	// rest of it.
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	report := described.String()
 	g.Expect(report).To(gomega.ContainSubstring("Members (2), 1 not yet arrived"))
@@ -309,9 +322,10 @@ func TestReadStillRefusesABundleThatStoppedPartWayThroughADisk(t *testing.T) {
 
 	read, err := Read(bytes.NewReader(arrived(t, archive)))
 
-	// Describing the part of a bundle that arrived is one thing. Handing back
-	// a manifest as though the bundle behind it were whole is another: every
-	// other caller reads one to work with the members it indexes.
+	// Describing the part of a bundle that arrived is one thing. Returning a
+	// manifest as though the bundle behind it were whole is another matter.
+	// Every other caller reads a manifest to work with the members it
+	// indexes.
 	g.Expect(err).To(gomega.MatchError(&FormatError{}))
 	g.Expect(err.Error()).To(gomega.ContainSubstring(DiskPath(diskClaim, DiskGzip)))
 	g.Expect(read).To(gomega.BeNil())
@@ -347,7 +361,7 @@ func TestWriterRecordsTheRequirementsInTheManifest(t *testing.T) {
 	manifest, err := Read(bytes.NewReader(archive))
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	// The room reserved for the manifest is sized from what it holds, so
-	// requirements declared before the bundle was opened come back whole.
+	// requirements declared before the bundle was opened return whole.
 	g.Expect(manifest.Requirements).To(gomega.Equal(testRequirements()))
 }
 
@@ -453,7 +467,7 @@ func TestWriterStagesADiskWithoutHoldingItInMemory(t *testing.T) {
 	manifest, err := Read(bytes.NewReader(archive))
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	g.Expect(manifest.Disks).To(gomega.Equal([]Disk{disk}))
-	// The disk is indexed with the size and digest it turned out to have, not
+	// The disk is indexed with the size and digest it actually has, not
 	// the widest values the reservation was sized from.
 	g.Expect(manifest.Members).To(gomega.ContainElement(Member{
 		Path:   disk.Path,
@@ -541,7 +555,7 @@ func TestReaderReadsTheManifestAndHandsBackTheMembersOneAtATime(t *testing.T) {
 	content, err := reader.Read(resourcePath)
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	// The member is verified against the digest the manifest records for
-	// it, and its content is what is handed back.
+	// it, and its content is what is returned.
 	g.Expect(content).To(gomega.Equal(objectBody))
 }
 
@@ -565,7 +579,7 @@ func TestReaderReportsAMemberThatFailsItsDigestAndGoesOnReading(t *testing.T) {
 	g.Expect(err.Error()).To(gomega.ContainSubstring(resourcePath))
 
 	// The failed member is behind the reader, so the members that follow
-	// are still readable. A caller that records the corruption can go on
+	// are still readable. A caller that records the corruption can continue
 	// to what arrived whole.
 	content, err := reader.Read(ExpandedSpecPath)
 	g.Expect(err).ToNot(gomega.HaveOccurred())
@@ -642,7 +656,7 @@ func TestReaderHandsBackTheManifestsOwnBytes(t *testing.T) {
 
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	// No member indexes the manifest, so nothing inside the bundle records
-	// its digest; a reader that needs to say which bundle it is holding
+	// its digest. A reader that needs to say which bundle it is holding
 	// hashes these bytes.
 	g.Expect(reader.ManifestBytes()).To(gomega.Equal(data))
 }
@@ -658,7 +672,7 @@ func TestReaderStreamsAMemberAndVerifiesItAsItIsRead(t *testing.T) {
 	stream, err := reader.OpenStream(resourcePath)
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	// The member's recorded size is told up front, so a caller that hands
-	// the stream to a transfer can say what it will add up to.
+	// the stream to a transfer can say what the total will be.
 	g.Expect(stream.Size()).To(gomega.BeEquivalentTo(len(objectBody)))
 	// Until the stream is consumed there is no digest to report.
 	g.Expect(stream.Mismatch()).ToNot(gomega.HaveOccurred())
@@ -688,15 +702,16 @@ func TestReaderReportsAStreamedMemberThatFailsItsDigestAtItsEnd(t *testing.T) {
 	stream, err := reader.OpenStream(ExpandedSpecPath)
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 
-	// The whole member is read before the digest can be compared, so the
-	// mismatch surfaces from the read at the end of the stream rather
-	// than before any of it...
+	// The whole member is read before the digest can be compared. The
+	// mismatch therefore surfaces from the read at the end of the stream,
+	// and not before any of it.
 	_, err = io.ReadAll(stream)
 	g.Expect(err).To(gomega.MatchError(&DigestMismatchError{}))
 	g.Expect(err.Error()).To(gomega.ContainSubstring(ExpandedSpecPath))
-	// ...and it is still readable afterwards, so a caller that handed the
-	// stream to something else which consumed it — an upload, which may
-	// wrap the error beyond recognising — learns the verdict here.
+	// The mismatch is still readable afterwards. A caller that handed the
+	// stream to something else which consumed it learns the verdict here.
+	// Such a consumer may be an upload, which may wrap the error beyond
+	// recognising.
 	g.Expect(stream.Mismatch()).To(gomega.MatchError(&DigestMismatchError{}))
 }
 
@@ -720,16 +735,16 @@ func TestReaderStreamsTheMembersOneAtATimeLikeReadDoes(t *testing.T) {
 	_, err = io.ReadAll(stream)
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 
-	// The members arrive in written order and the reader walks forward
-	// only, so a streamed member leaves the reader positioned after it
-	// and the members that follow are still streamable.
+	// The members arrive in written order, and the reader walks forward
+	// only. A streamed member therefore leaves the reader positioned after
+	// it. The members that follow are still streamable.
 	next, err := reader.OpenStream(ExpandedSpecPath)
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	content, err := io.ReadAll(next)
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	g.Expect(content).To(gomega.Equal(expandedBody))
 
-	// And a member already gone by is refused, exactly as Read refuses
+	// A member already gone by is refused as well, exactly as Read refuses
 	// one.
 	_, err = reader.OpenStream(resourcePath)
 	g.Expect(err).To(gomega.HaveOccurred())
@@ -773,9 +788,9 @@ func tarball(t *testing.T, members ...rawMember) (archive []byte) {
 	return
 }
 
-// arrived returns the leading bytes of a bundle: everything up to the point
-// where the disk's content begins, which is where a transfer that is still
-// running has got to.
+// arrived returns the leading bytes of a bundle. It returns everything up to
+// the point where the disk's content begins. That is the current end of a
+// transfer that is still running.
 func arrived(t *testing.T, archive []byte) (head []byte) {
 	t.Helper()
 	at := bytes.Index(archive, diskBody)
@@ -850,8 +865,8 @@ func testResource() (resource Resource) {
 }
 
 // testRequirements is what the fixtures declare a target would have to
-// provide: one of each kind of requirement, and one disk whose claim quo
-// could not read.
+// provide. It holds one of each kind of requirement, and one disk whose
+// claim quo could not read.
 func testRequirements() (required Requirements) {
 	required = Requirements{
 		Networks: []NetworkRequirement{
@@ -890,7 +905,7 @@ func testDisk() (disk Disk) {
 	return
 }
 
-// staged writes the fixture disk content to a file for the writer to pick up.
+// staged writes the fixture disk content to a file for the writer to read.
 func staged(t *testing.T, disk Disk) (ready stagedDisk) {
 	t.Helper()
 	source := filepath.Join(t.TempDir(), "disk")

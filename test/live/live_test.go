@@ -2,18 +2,20 @@
 
 // Package live tests quo against a real KubeVirt cluster.
 //
-// Two things the everyday suite cannot check happen here. The first is that
-// quo's own closure traversal finds what KubeVirt's objectgraph subresource
-// finds for the same VirtualMachine: quo traverses for itself because that
-// subresource sits behind a feature gate that is off by default, and quo's
-// copy of KubeVirt's logic is not maintained alongside the original. The
-// second is that the real cluster adapter works against a real API, which the
-// everyday suite deliberately bypasses by substituting a fake. The adapter is
-// mostly field names and subresource paths, and no test that substitutes a
-// fake for it can tell a correct one from a wrong one.
+// Two things the everyday suite cannot check happen here. The first is
+// that quo's own closure traversal finds what KubeVirt's objectgraph
+// subresource finds for the same VirtualMachine. quo traverses for
+// itself, because that subresource sits behind a feature gate that is off
+// by default. quo's copy of KubeVirt's logic is not maintained alongside
+// the original.
 //
-// The suite is behind the "live" build tag and is excluded from the default
-// test run, so local development never needs a cluster. See
+// The second is that the real cluster adapter works against a real API.
+// The everyday suite deliberately bypasses that by substituting a fake.
+// The adapter is mostly field names and subresource paths. No test that
+// substitutes a fake for it can tell a correct one from a wrong one.
+//
+// The suite is behind the "live" build tag. The default test run excludes
+// it. So local development never needs a cluster. See
 // docs/testing-against-a-cluster.md for how to run it and what the cluster
 // must have.
 package live
@@ -23,7 +25,10 @@ import (
 	"fmt"
 	"os"
 	"testing"
+	"time"
 
+	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
@@ -39,7 +44,7 @@ const (
 	// ambient configuration the Kubernetes tooling would use.
 	envKubeconfig = "QUO_LIVE_KUBECONFIG"
 	// envNamespace names an existing namespace to build the fixture in.
-	// Empty means the suite creates one and removes it again, which needs
+	// Empty means the suite creates one and deletes it again. That needs
 	// permission to create a namespace.
 	envNamespace = "QUO_LIVE_NAMESPACE"
 	// envStorageClass names the storage class the fixture disk is
@@ -67,8 +72,9 @@ type suite struct {
 	capture sharedCapture
 }
 
-// prerequisite is one thing the suite needs from a cluster: the resource
-// whose presence says it is there, and what to report when it is absent.
+// prerequisite is one thing the suite needs from a cluster. It names the
+// resource whose presence says the thing is there. It also carries what to
+// report when the thing is absent.
 type prerequisite struct {
 	groupVersion string
 	resource     string
@@ -78,10 +84,10 @@ type prerequisite struct {
 // prerequisites are what a cluster must offer before the suite will run, in
 // the order they are reported.
 //
-// The ObjectGraph feature gate is not among them. Nothing in discovery says
-// whether it is on, because virt-api serves the route either way and refuses
-// the request when the gate is off, so the traversal comparison finds out by
-// asking and skips for itself.
+// The ObjectGraph feature gate is not among them. Nothing in discovery
+// says whether it is on. virt-api serves the route either way, and refuses
+// the request when the gate is off. So the traversal comparison learns by
+// asking. It skips for itself.
 var prerequisites = []prerequisite{
 	{
 		groupVersion: "kubevirt.io/v1",
@@ -104,14 +110,14 @@ func TestMain(m *testing.M) {
 	os.Exit(run(m))
 }
 
-// run connects to the cluster, builds the fixture, runs the suite, and takes
-// the fixture down again.
+// run connects to the cluster, builds the fixture, runs the suite, and
+// deletes the fixture again.
 //
-// A cluster the suite cannot use is not a failure: the reason is recorded and
-// every test skips with it, so that a run on a machine with no cluster says
-// what it would have needed. A cluster that meets the requirements and then
-// cannot host the fixture is a failure, because something that was supposed
-// to work did not.
+// A cluster the suite cannot use is not a failure. run records the
+// reason. Every test skips with it. So a run on a machine with no cluster
+// says what it would have needed. A cluster that meets the requirements
+// and then cannot host the fixture is a failure, because something that
+// was supposed to work did not.
 func run(m *testing.M) (code int) {
 	ctx := context.Background()
 	s, reason := connect()
@@ -132,8 +138,9 @@ func run(m *testing.M) (code int) {
 	return
 }
 
-// delete takes down everything a run created: the fixture on the cluster,
-// and the directory the bundle the tests share was written to.
+// delete undoes everything a run created. It deletes the fixture on the
+// cluster. It also deletes the scratch directory that holds the bundle the
+// tests share.
 func (r *suite) delete(ctx context.Context) {
 	r.fixture.delete(ctx, r)
 	if r.capture.scratch == "" {
@@ -153,13 +160,13 @@ func live(t *testing.T) (s *suite) {
 	return
 }
 
-// connect builds the clients the suite needs and reports what it needs and
-// the cluster does not have.
+// connect builds the clients the suite needs. It reports what the suite
+// needs and the cluster does not have.
 //
-// A reason is not an error. Every way of failing to reach a usable cluster —
-// no kubeconfig, an unreachable API, a component that is not installed — is
-// something to skip on rather than fail on, because none of them says
-// anything about quo.
+// A reason is not an error. Every way of failing to reach a usable cluster
+// is a reason to skip, not a failure. None of them says anything about
+// quo. Examples are no kubeconfig, an unreachable API, and a component
+// that is not installed.
 func connect() (s *suite, reason string) {
 	config, err := loadConfig()
 	if err != nil {
@@ -246,6 +253,42 @@ func (r *suite) serves(groupVersion, name string) (served bool) {
 	return
 }
 
+// await reads one object back, in the namespace given, until it reaches the
+// state that ready reports. It returns the last thing it read.
+func (r *suite) await(
+	ctx context.Context,
+	gvr schema.GroupVersionResource,
+	namespace, name string,
+	awaited string,
+	timeout time.Duration,
+	ready func(object *unstructured.Unstructured) (done bool)) (object *unstructured.Unstructured, err error) {
+	//
+	deadline := time.Now().Add(timeout)
+	for {
+		object, err = r.dynamic.
+			Resource(gvr).
+			Namespace(namespace).
+			Get(ctx, name, meta.GetOptions{})
+		if err != nil {
+			err = fmt.Errorf("get %s %q: %w", gvr.Resource, name, err)
+			return
+		}
+		if ready(object) {
+			return
+		}
+		if time.Now().After(deadline) {
+			err = fmt.Errorf("%s %q did not %s within %s", gvr.Resource, name, awaited, timeout)
+			return
+		}
+		select {
+		case <-ctx.Done():
+			err = ctx.Err()
+			return
+		case <-time.After(pollInterval):
+		}
+	}
+}
+
 // loadConfig reads the kubeconfig the suite connects with.
 func loadConfig() (config *rest.Config, err error) {
 	rules := clientcmd.NewDefaultClientConfigLoadingRules()
@@ -267,9 +310,9 @@ func loadConfig() (config *rest.Config, err error) {
 // unmet renders why the suite will not run, followed by what a cluster would
 // have to offer.
 //
-// The ObjectGraph feature gate is named and the command to enable it is given
-// because the gate is off by default, which makes it the likeliest reason a
-// cluster that looks suitable turns out not to be.
+// The ObjectGraph feature gate is off by default. That makes the gate the
+// likeliest reason a cluster that looks suitable turns out not to be. For
+// that reason, unmet names the gate and gives the command to enable it.
 func unmet(detail string) (reason string) {
 	reason = "no cluster the live suite can use: " + detail + "\n" +
 		"\n" +

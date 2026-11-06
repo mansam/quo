@@ -100,8 +100,8 @@ func TestExportCapturesTheExpandedFormWithoutUsingItToRewriteTheVirtualMachine(t
 	// The VirtualMachine the bundle carries is the one the cluster holds,
 	// unexpanded. Expansion is version-dependent, and a difference between
 	// what the source cluster resolved and what a target resolves is a
-	// plausible cause of the problem, so quo records it rather than settling
-	// it.
+	// plausible cause of the problem. quo therefore records it rather than
+	// settling it.
 	held := nested(t, decodeMember(t, content, testVMMember),
 		"spec", "template", "spec", "domain")
 	g.Expect(held).ToNot(gomega.HaveKey("machine"))
@@ -177,9 +177,10 @@ func TestExportRecordsEveryForbiddenClusterScopedReadAndCapturesAnyway(t *testin
 	_, content := captureWithDisks(t, c, testOptions())
 
 	manifest := capturedManifest(t, content)
-	// Failing a capture that may have taken hours over an object nobody is
-	// entitled to would be unacceptable, and omitting it in silence would be
-	// worse: the reader could not tell it from a cluster that had none.
+	// Failing a capture that may have taken hours over an object nobody
+	// is entitled to would be unacceptable. Omitting it in silence would
+	// be worse: the reader could not tell it from a cluster that had
+	// none.
 	for _, attempt := range manifest.CaptureRecord.Skipped() {
 		g.Expect(attempt.Reason).To(gomega.Equal(bundle.SkipForbidden))
 	}
@@ -292,8 +293,8 @@ func TestExportSeeksNoStorageAClaimDoesNotName(t *testing.T) {
 }
 
 // provisionedCluster builds a cluster whose stopped VirtualMachine has one
-// disk, backed by a claim bound to a PersistentVolume of a StorageClass the
-// cluster holds along with its CDI StorageProfile.
+// disk. The disk is backed by a claim bound to a PersistentVolume of a
+// StorageClass the cluster holds along with its CDI StorageProfile.
 func provisionedCluster(t *testing.T) (c *fakeCluster) {
 	t.Helper()
 	c = stoppedCluster(t)

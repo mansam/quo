@@ -13,11 +13,12 @@ import (
 // what it holds to out. It contacts no cluster.
 //
 // A bundle that ends before its last member is described anyway, out of the
-// manifest at its front, and the members that have not arrived are named. The
-// manifest is the first member precisely so that a support engineer can read
-// what a bundle would need from a target — its networks, its storage, the
-// images it is served from — from the first bytes of a transfer, rather than
-// having to wait out the hours the disks take.
+// manifest at its front. The members that have not arrived are named. The
+// manifest is the first member so that a support engineer can read what a
+// bundle would need from a target. The engineer reads it from the first
+// bytes of a transfer, before any disk arrives. The engineer does not have
+// to wait the hours the disks take. The needs are its networks, its storage,
+// and the images that serve it.
 func Inspect(in io.Reader, out io.Writer) (err error) {
 	manifest, absent, err := readArrived(in)
 	if err != nil {
@@ -60,9 +61,9 @@ func describe(out io.Writer, manifest *Manifest, absent []string) (err error) {
 // describeMembers writes the member index, saying which members have not
 // arrived.
 //
-// A member with no digest checked against it is one the reader does not have,
-// which is not the same as one that failed, so it is named rather than
-// counted among the verified.
+// A member with no digest checked against it is one the reader does not
+// have. That is not the same as one that failed. Such a member is named
+// rather than counted among the verified.
 func describeMembers(out io.Writer, manifest *Manifest, absent []string) {
 	missing := make(map[string]bool, len(absent))
 	for i := range absent {
@@ -102,21 +103,25 @@ func describeResources(out io.Writer, manifest *Manifest) {
 
 // describeExpandedSpec names the member holding the source cluster's
 // expansion of the VirtualMachine. A bundle whose capture could not read it
-// produces no output here.
+// says so rather than staying silent. The expansion is what a deploy applies,
+// so a bundle holding none cannot be deployed, and this is where a reader
+// learns it. The statement comes from the manifest, so it is said even while
+// the rest of the bundle is still arriving.
 func describeExpandedSpec(out io.Writer, manifest *Manifest) {
+	_, _ = fmt.Fprintf(out, "\nExpanded spec\n")
 	if manifest.ExpandedSpec == "" {
+		_, _ = fmt.Fprintf(out, "  none, so the bundle cannot be deployed\n")
 		return
 	}
-	_, _ = fmt.Fprintf(out, "\nExpanded spec\n")
 	_, _ = fmt.Fprintf(out, "  %s\n", manifest.ExpandedSpec)
 }
 
 // describeRequirements writes what a bundle needs a target cluster to
 // provide, in three sections of its own.
 //
-// All of it comes from the manifest, which is the first member of a bundle,
-// so a reader learns whether their cluster can satisfy a bundle without any
-// disk being read.
+// All of it comes from the manifest, which is the first member of a bundle.
+// A reader therefore learns whether their cluster can satisfy a bundle
+// without any disk being read.
 func describeRequirements(out io.Writer, required Requirements) {
 	describeNetworks(out, required.Networks)
 	describeStorage(out, required.Storage)
@@ -124,9 +129,9 @@ func describeRequirements(out io.Writer, required Requirements) {
 }
 
 // describeNetworks writes the networks a VirtualMachine expects. A Multus
-// network is shown with the NetworkAttachmentDefinition it was backed by on
-// the source cluster, which is what a target has to be able to offer
-// something equivalent to.
+// network is shown with the NetworkAttachmentDefinition that backed it on
+// the source cluster. A target has to be able to offer something equivalent
+// to that.
 func describeNetworks(out io.Writer, networks []NetworkRequirement) {
 	if len(networks) == 0 {
 		return
@@ -171,8 +176,8 @@ func describeStorage(out io.Writer, storage []StorageRequirement) {
 	}
 }
 
-// describeContainerDisks writes the container images the VirtualMachine is
-// served from, which a target has to be able to pull.
+// describeContainerDisks writes the container images that serve the
+// VirtualMachine, which a target has to be able to pull.
 func describeContainerDisks(out io.Writer, disks []ContainerDiskRequirement) {
 	if len(disks) == 0 {
 		return
@@ -186,7 +191,7 @@ func describeContainerDisks(out io.Writer, disks []ContainerDiskRequirement) {
 }
 
 // qualified renders an object's name. Its namespace is shown only when it is
-// not the one the VirtualMachine was captured from, which is how a reader
+// not the one the VirtualMachine was captured from. That is how a reader
 // spots an object from elsewhere in the cluster.
 func qualified(namespace, name, captured string) (rendered string) {
 	rendered = name
@@ -223,9 +228,9 @@ func describeDisks(out io.Writer, manifest *Manifest) {
 // describeRecord writes the capture record: how many objects got each
 // outcome, and then every skipped object in a section of its own.
 //
-// Skipped objects are what a reader has to act on, so they are listed rather
-// than counted and sit under their own heading instead of among the dozens of
-// objects that were collected without incident.
+// Skipped objects are what a reader has to act on. They are therefore listed
+// rather than counted, and sit under their own heading. They do not sit among
+// the dozens of objects that were collected without incident.
 func describeRecord(out io.Writer, manifest *Manifest) {
 	if len(manifest.CaptureRecord) == 0 {
 		return

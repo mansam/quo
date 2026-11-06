@@ -29,8 +29,8 @@ func (r *DiskNotExportedError) Is(err error) (matched bool) {
 
 // NotStoppedError reports a VirtualMachine that quo will not capture because
 // it is not stopped. Capturing a running VirtualMachine would read its disks
-// while the guest is writing to them, producing a bundle that cannot be
-// trusted to reproduce anything.
+// while the guest is writing to them. That would produce a bundle that
+// cannot be trusted to reproduce anything.
 type NotStoppedError struct {
 	Namespace string
 	Name      string

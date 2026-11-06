@@ -20,7 +20,7 @@ const (
 	testName      = "db-01"
 )
 
-// Identity values a bundle must carry through untouched. Any of them could be
+// Identity values a bundle must carry unchanged. Any of them could be
 // the thing causing the problem a bundle was captured for.
 const (
 	testMAC     = "52:54:00:3a:7b:1c"
@@ -61,12 +61,13 @@ type fakeCluster struct {
 	// Anything asked for and not held is reported as not found, which is what
 	// a reference to a deleted object looks like.
 	objects map[cluster.ObjectRef]*unstructured.Unstructured
-	// errByRef is what the cluster reports in place of an object, so a test
-	// can make one object forbidden or its kind absent while the rest of the
-	// closure reads normally.
+	// errByRef is what the cluster reports in place of an object. A test
+	// can therefore make one object forbidden or its kind absent while the
+	// rest of the closure reads normally.
 	errByRef map[cluster.ObjectRef]error
-	// requested records every reference the capture asked for, in order, so a
-	// test can see what the traversal looked for as well as what it found.
+	// requested records every reference the capture asked for, in order.
+	// A test can see what the traversal requested as well as what it
+	// found.
 	requested []cluster.ObjectRef
 	// kubevirt is KubeVirt's own configuration, and expanded is what the
 	// cluster resolves the VirtualMachine to. Neither is addressed by
@@ -99,8 +100,8 @@ func (r *fakeCluster) GetObject(ctx context.Context, ref cluster.ObjectRef) (obj
 	r.requested = append(r.requested, ref)
 	err = ctx.Err()
 	if err != nil {
-		// What a real client does once the capture has been cancelled or has
-		// run out of time.
+		// What a real client does once the capture has been cancelled or
+		// its deadline has passed.
 		err = fmt.Errorf("get %s %q: %w", ref.Kind, ref.Name, err)
 		return
 	}
@@ -182,8 +183,8 @@ type fakeExport struct {
 	offered []cluster.ExportedDisk
 	content map[string][]byte
 	openErr error
-	// scratch is where the capture stages disks. The export counts what is in
-	// it as each transfer starts, which is how a test sees that disks are
+	// scratch is where the capture stages disks. The export counts what is
+	// in it as each transfer starts. That is how a test sees that disks are
 	// staged one at a time.
 	scratch string
 	staged  int
@@ -234,8 +235,9 @@ func (r *fakeExport) observe() {
 	}
 }
 
-// apiVersionByKind is the apiVersion the fake stamps on each kind it serves,
-// so that a carried object reads as the Kubernetes object it stands for.
+// apiVersionByKind is the apiVersion the fake stamps on each kind it
+// serves. A carried object therefore reads as the Kubernetes object it
+// stands for.
 var apiVersionByKind = map[string]string{
 	cluster.KindConfigMap:                         "v1",
 	cluster.KindControllerRevision:                "apps/v1",
@@ -293,8 +295,8 @@ func (r *fakeCluster) hold(object cluster.ObjectRef, fields map[string]any) {
 	r.objects[object] = &unstructured.Unstructured{Object: held}
 }
 
-// refuse makes the cluster report err in place of an object, the way a real
-// cluster reports a read the caller is not allowed to make.
+// refuse makes the cluster report err in place of an object. This is the
+// way a real cluster reports a read the caller is not allowed to make.
 func (r *fakeCluster) refuse(object cluster.ObjectRef, err error) {
 	if r.errByRef == nil {
 		r.errByRef = map[cluster.ObjectRef]error{}
@@ -332,8 +334,8 @@ func stoppedCluster(t *testing.T) (c *fakeCluster) {
 // given printable status. An empty status means it reports none at all.
 //
 // The cluster has KubeVirt installed and serves expand-spec, because every
-// cluster quo captures from does, and a fixture missing either would make
-// every bundle look as though a capture had gone wrong.
+// cluster quo captures from does. A fixture missing either would make every
+// bundle look as though a capture had gone wrong.
 func clusterWithStatus(t *testing.T, status string) (c *fakeCluster) {
 	t.Helper()
 	c = &fakeCluster{
@@ -392,8 +394,9 @@ func attach(t *testing.T, vm *unstructured.Unstructured, volumes []volume) {
 // content of its own. quo never looks inside a disk.
 var offeredContent = []byte("\x1f\x8b\x08 a disk")
 
-// offer adds a disk to what the fake export serves, so that a VirtualMachine
-// referencing a claim can be captured without the test caring about disks.
+// offer adds a disk to what the fake export serves. A VirtualMachine
+// referencing a claim can then be captured without the test caring about
+// disks.
 func (r *fakeCluster) offer(claim string) {
 	r.export.offered = append(r.export.offered, cluster.ExportedDisk{
 		Claim:  claim,
@@ -429,7 +432,7 @@ func backVolume(t *testing.T, vm *unstructured.Unstructured, name string, backin
 }
 
 // kubeVirtConfiguration builds KubeVirt's own configuration. Its feature
-// gates are what a support engineer reads it for, and its namespace and name
+// gates are what a support engineer reads it for. Its namespace and name
 // are an installation's rather than something quo knows in advance.
 func kubeVirtConfiguration(t *testing.T) (kv *unstructured.Unstructured) {
 	t.Helper()

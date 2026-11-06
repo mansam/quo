@@ -32,21 +32,24 @@ var virtualMachineExportResource = schema.GroupVersionResource{
 // Export settings
 const (
 	// exportTTL is how long the cluster keeps a VirtualMachineExport alive.
-	// KubeVirt defaults to two hours, which a large transfer can outlast, and
-	// an export that expires part-way through would waste the whole capture.
+	// KubeVirt defaults to two hours. A large transfer can outlast two hours.
+	// An export that expires part-way through would waste the whole capture.
 	exportTTL = 48 * time.Hour
-	// exportReadyTimeout bounds the wait for the export server to come up.
+	// exportReadyTimeout bounds the wait for the export server to become
+	// ready.
 	exportReadyTimeout = 10 * time.Minute
-	// exportPollInterval is how often the export is read while waiting for it.
+	// exportPollInterval is how often the loop reads the export during the
+	// wait.
 	exportPollInterval = 2 * time.Second
 	// exportTokenHeader carries the export token on a download request.
 	exportTokenHeader = "x-kubevirt-export-token"
-	// exportTokenKey is where KubeVirt reads the token out of the secret.
+	// exportTokenKey is the key that holds the token in the secret.
 	exportTokenKey = "token"
-	// exportServicePrefix is what KubeVirt names an export's Service after.
+	// exportServicePrefix is the prefix of the name KubeVirt gives an
+	// export's Service.
 	exportServicePrefix = "virt-export-"
-	// exportNameLimit keeps that derived Service name within the 63
-	// characters Kubernetes allows a name.
+	// exportNameLimit keeps the derived Service name within the 63
+	// characters that Kubernetes allows a name.
 	exportNameLimit = 63 - len(exportServicePrefix)
 )
 
@@ -57,8 +60,8 @@ const (
 	phaseTerminated = "Terminated"
 )
 
-// vmExport is a VirtualMachineExport, the token secret that goes with it, and
-// the connection to the export server serving its disks.
+// vmExport is a VirtualMachineExport, its token secret, and the connection
+// to the export server that serves its disks.
 type vmExport struct {
 	dynamic     dynamic.Interface
 	core        kubernetes.Interface
@@ -73,8 +76,9 @@ type vmExport struct {
 	forward     *forward
 }
 
-// newVMExport names an export after the VirtualMachine it exports, with a
-// random suffix so that two captures of one VirtualMachine do not collide.
+// newVMExport builds an export's name from the VirtualMachine it exports
+// and a random suffix. The suffix keeps two captures of one VirtualMachine
+// from colliding.
 func newVMExport(c *KubeVirt, namespace, vm string) (export *vmExport, err error) {
 	suffix, err := newRandom(4)
 	if err != nil {
@@ -153,8 +157,9 @@ func (r *vmExport) OpenDisk(ctx context.Context, claim string) (stream io.ReadCl
 	return
 }
 
-// Close removes the export and its token secret from the cluster and stops
-// the port forward. Both deletions are attempted whatever either one does.
+// Close deletes the export and its token secret from the cluster and stops
+// the port forward. Close attempts both deletions. The result of one does
+// not stop the other.
 func (r *vmExport) Close() (err error) {
 	if r.forward != nil {
 		close(r.forward.stop)
@@ -278,8 +283,8 @@ func (r *vmExport) awaitReady(ctx context.Context) (export *unstructured.Unstruc
 	}
 }
 
-// refused reports a phase the export will not come back from, so that a
-// capture fails at once rather than waiting out the timeout.
+// refused reports a phase the export never recovers from. A capture then
+// fails at once, rather than waiting until the timeout ends.
 func (r *vmExport) refused(phase string) (err error) {
 	switch phase {
 	case phaseSkipped:
@@ -308,11 +313,11 @@ func (r *vmExport) get(ctx context.Context) (export *unstructured.Unstructured, 
 	return
 }
 
-// connect works out where the export server is and how to reach it.
+// connect finds where the export server is and how to reach it.
 //
-// An external link is used where the cluster publishes one. Where it does
-// not, quo forwards a port to the export server's pod, so that capturing
-// needs no ingress or route on the cluster.
+// connect uses an external link where the cluster publishes one. Where the
+// cluster publishes none, quo forwards a port to the export server's pod.
+// Capturing then needs no ingress or route on the cluster.
 func (r *vmExport) connect(ctx context.Context, export *unstructured.Unstructured) (err error) {
 	links, external, err := getLinks(export)
 	if err != nil {
@@ -356,8 +361,8 @@ func (r *vmExport) connect(ctx context.Context, export *unstructured.Unstructure
 }
 
 // serviceName returns the Service the export published its internal links
-// against. The export names it in its status; the host of a link is the
-// fallback for a cluster that does not.
+// against. The export names the Service in its status. The host of a link
+// is the fallback for a cluster that does not.
 func serviceName(export *unstructured.Unstructured, host string) (name string) {
 	name, _, _ = unstructured.NestedString(export.Object, "status", "serviceName")
 	if name != "" {

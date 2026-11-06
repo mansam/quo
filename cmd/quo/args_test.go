@@ -1,6 +1,8 @@
 package main
 
 import (
+	"flag"
+	"io"
 	"testing"
 
 	"github.com/onsi/gomega"
@@ -13,6 +15,7 @@ func TestExportAcceptsFlagsOnEitherSideOfTheName(t *testing.T) {
 		wantNamespace string
 		wantVM        string
 		wantOutput    string
+		wantDryRun    bool
 	}{
 		{
 			name:          "the documented form, with the output flag after the name",
@@ -49,6 +52,20 @@ func TestExportAcceptsFlagsOnEitherSideOfTheName(t *testing.T) {
 			wantVM:        "db-01",
 			wantOutput:    "",
 		},
+		{
+			name:          "a dry run, with the flag after the name",
+			args:          []string{"-n", "support-cases", "db-01", "--dry-run"},
+			wantNamespace: "support-cases",
+			wantVM:        "db-01",
+			wantDryRun:    true,
+		},
+		{
+			name:          "a dry run, with the flag before the name",
+			args:          []string{"--dry-run", "-n", "support-cases", "db-01"},
+			wantNamespace: "support-cases",
+			wantVM:        "db-01",
+			wantDryRun:    true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -61,6 +78,7 @@ func TestExportAcceptsFlagsOnEitherSideOfTheName(t *testing.T) {
 			g.Expect(parsed.opt.Namespace).To(gomega.Equal(tt.wantNamespace))
 			g.Expect(parsed.opt.Name).To(gomega.Equal(tt.wantVM))
 			g.Expect(parsed.output).To(gomega.Equal(tt.wantOutput))
+			g.Expect(parsed.dryRun).To(gomega.Equal(tt.wantDryRun))
 		})
 	}
 }
@@ -81,6 +99,10 @@ func TestExportRejectsACommandLineItCannotActOn(t *testing.T) {
 		{
 			name: "a second VirtualMachine name is rejected",
 			args: []string{"-n", "support-cases", "db-01", "db-02", "-o", "/tmp/db-01.bundle"},
+		},
+		{
+			name: "an output path with a dry run is rejected, because a dry run writes no bundle",
+			args: []string{"-n", "support-cases", "db-01", "-o", "/tmp/db-01.bundle", "--dry-run"},
 		},
 	}
 
@@ -131,6 +153,40 @@ func TestInspectTakesOneBundlePath(t *testing.T) {
 			}
 			g.Expect(err).ToNot(gomega.HaveOccurred())
 			g.Expect(path).To(gomega.Equal(tt.want))
+		})
+	}
+}
+
+// The flag package says a command's flags when it reads -h, and says a bad
+// flag when it cannot parse the command line. parseFlags tells the two
+// apart: one asks for help, so it is not a usage error.
+func TestParseFlagsTellsHelpFromAUsageError(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want error
+	}{
+		{
+			name: "a help flag, after a positional argument, is help",
+			args: []string{"db-01", "-h"},
+			want: errHelp,
+		},
+		{
+			name: "an unknown flag is a usage error",
+			args: []string{"--not-a-flag"},
+			want: errUsage,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := gomega.NewGomegaWithT(t)
+
+			fs := flag.NewFlagSet("export", flag.ContinueOnError)
+			fs.SetOutput(io.Discard)
+			_, err := parseFlags(fs, tt.args)
+
+			g.Expect(err).To(gomega.Equal(tt.want))
 		})
 	}
 }

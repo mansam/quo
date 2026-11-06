@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onsi/gomega"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/yaml"
 
@@ -26,9 +27,9 @@ const (
 	testBundleFilename     = "db-01.quo"
 )
 
-// Identity values the expanded spec carries, any of which could be the
-// thing causing the problem a bundle was captured for, and the values
-// only the source cluster's resolution knows.
+// Identity values the expanded spec carries. Any of them could be the
+// thing causing the problem a bundle was captured for. These are also
+// the values only the source cluster's resolution knows.
 const (
 	testMAC         = "52:54:00:3a:7b:1c"
 	testUUID        = "5d307ca9-b3ef-428c-8861-06e72d69f223"
@@ -40,13 +41,18 @@ const (
 var testCapturedAt = time.Date(2026, 3, 14, 15, 9, 26, 0, time.UTC)
 
 // The storage class the disk fixtures' claims were provisioned from, as
-// the target holds it.
-const testStorageClass = "fast-rbd"
+// the target holds it. The class of a second disk, which a target may
+// hold or not. And the class a mapping places disks onto.
+const (
+	testStorageClass       = "fast-rbd"
+	testSlowStorageClass   = "slow-nfs"
+	testMappedStorageClass = "ceph-rbd"
+)
 
 // Claims the disk fixture's volumes are backed by: a claim serving two
 // volumes, a claim a dataVolumeTemplate provisions, and two plain claims.
-// The gap and unsized-disk tests leave bytes or requirements out around
-// them.
+// The gap and unsized-disk tests omit the bytes or the requirements
+// around them.
 const (
 	testRootClaim = "db-01-root"
 	testDataClaim = "db-01-data"
@@ -54,12 +60,35 @@ const (
 	testThinClaim = "db-01-scratch"
 )
 
+// Names of the closure fixture's objects. The ConfigMap holds the
+// machine's sysprep answer file. The Secrets hold its cloud-init
+// userdata and its registry credentials. The ServiceAccount is the one
+// one of its volumes names.
+const (
+	testSysprepConfigMap = "db-01-sysprep"
+	testCloudInitSecret  = "db-01-cloud-init"
+	testRegistrySecret   = "db-01-registry"
+	testServiceAccount   = "db-01-serviceaccount"
+)
+
 // versionAnnotation is an annotation whose value a general YAML library
-// would be liable to reinterpret as a number, so a test can see that a
-// deploy carries what the source wrote through unchanged.
+// would be liable to reinterpret as a number. A test can therefore see
+// that a deploy carries what the source wrote through unchanged.
 const (
 	versionAnnotation = "example.com/schema-version"
 	versionValue      = "1.30"
+)
+
+// The VirtualMachine's own name for its multus network. The
+// NetworkAttachmentDefinition the network was backed by on the source
+// cluster. The one a mapping can attach it to outside the deploy
+// namespace. And the image a container disk volume is served from.
+const (
+	testMultusNetwork       = "lab"
+	testAttachment          = "lab-net"
+	testAttachmentElsewhere = "diagnostic-net"
+	testOutsideNamespace    = "infrastructure"
+	testContainerDiskImage  = "quay.io/example/support-tools:6.0"
 )
 
 // testOptions deploys the bundle at path into the deploy namespace.
@@ -68,9 +97,22 @@ func testOptions(path string) (opt Options) {
 	return
 }
 
+// runModes is the two ways a deploy runs: for real, and as a dry run.
+// The two share one write path, so a table that states a contract runs
+// each row in both modes. A dry run's row carries the negative beside
+// the contract, because it is what catches a write path that forgets
+// its target.
+var runModes = []struct {
+	name   string
+	dryRun bool
+}{
+	{name: "a deploy"},
+	{name: "a dry run", dryRun: true},
+}
+
 // fakeTarget is quo's one fake Target: a plain struct holding what a test
-// wants a cluster to have and recording everything created on it. Nothing
-// in it touches a network.
+// wants a cluster to have and recording everything created on it.
+// Nothing in it touches a network.
 type fakeTarget struct {
 	// namespaces is the namespaces the cluster has. A deploy into any
 	// other namespace is told the namespace is not there.
@@ -83,11 +125,26 @@ type fakeTarget struct {
 	// createErr is what Create reports in place of creating, so a test
 	// can make a create fail while the reads behave normally.
 	createErr error
+	// createErrFor is what Create reports for the named object, so a
+	// test can make one create fail while the rest proceed.
+	createErrFor map[cluster.ObjectRef]error
 	// uploaded records every disk the deploy uploaded, in order.
 	uploaded []fakeUpload
 	// uploadErrFor is what UploadDisk reports for the named claim, so a
 	// test can make one disk's upload fail while the rest proceed.
 	uploadErrFor map[string]error
+	// uploadWaitsFor is what UploadDisk says while it waits for the
+	// claim to become ready, once per readiness check. That is what a
+	// cluster whose CDI has not bound the claim yet looks like from the
+	// outside.
+	uploadWaitsFor []string
+	// uploadReadsNothing makes UploadDisk read no bytes and still
+	// report success. That is the shape of a target that only records
+	// an upload. What is never read cannot be reported.
+	uploadReadsNothing bool
+	// deleteErrFor is what Delete reports for the named object, so a
+	// test can make one deletion fail while the rest proceed.
+	deleteErrFor map[string]error
 	// events records what the deploy did and in what order: every create
 	// and every upload, interleaved.
 	events []string
@@ -109,26 +166,28 @@ func target() (t *fakeTarget) {
 	t = &fakeTarget{
 		namespaces:   map[string]bool{testDeployNamespace: true},
 		objects:      map[cluster.ObjectRef]*unstructured.Unstructured{},
+		createErrFor: map[cluster.ObjectRef]error{},
 		uploadErrFor: map[string]error{},
+		deleteErrFor: map[string]error{},
 	}
 	return
 }
 
 // storageTarget returns a fake target that can take the disk fixtures'
-// storage: the CDI configuration, the storage class their claims were
-// provisioned from, and the target's own account of what that class can
-// provide.
+// storage. It holds the CDI configuration, the storage class their claims
+// were provisioned from, and the target's own account of what that class
+// can provide.
 func storageTarget() (t *fakeTarget) {
 	t = target()
 	t.hold(cluster.ObjectRef{Kind: cluster.KindCDIConfig, Name: cluster.CDIConfigName}, cdiConfig())
-	t.hold(cluster.ObjectRef{Kind: cluster.KindStorageClass, Name: testStorageClass}, storageClass())
+	t.hold(cluster.ObjectRef{Kind: cluster.KindStorageClass, Name: testStorageClass}, storageClassNamed(testStorageClass))
 	t.hold(cluster.ObjectRef{Kind: cluster.KindStorageProfile, Name: testStorageClass},
-		storageProfile("Block", "Filesystem"))
+		storageProfile(testStorageClass, "Block", "Filesystem"))
 	return
 }
 
 // GetNamespace returns the named namespace, reporting a cancelled context
-// the way a real client does once the deploy has been interrupted.
+// the way a real client does once the deploy is interrupted.
 func (r *fakeTarget) GetNamespace(ctx context.Context, name string) (namespace *unstructured.Unstructured, err error) {
 	err = ctx.Err()
 	if err != nil {
@@ -148,7 +207,7 @@ func (r *fakeTarget) GetNamespace(ctx context.Context, name string) (namespace *
 }
 
 // GetObject returns the object the reference names, reporting a cancelled
-// context the way a real client does once the deploy has been interrupted.
+// context the way a real client does once the deploy is interrupted.
 func (r *fakeTarget) GetObject(ctx context.Context, ref cluster.ObjectRef) (object *unstructured.Unstructured, err error) {
 	err = ctx.Err()
 	if err != nil {
@@ -165,11 +224,19 @@ func (r *fakeTarget) GetObject(ctx context.Context, ref cluster.ObjectRef) (obje
 }
 
 // Create records the object, reporting a cancelled context the way a real
-// client does once the deploy has been interrupted.
+// client does once the deploy is interrupted.
 func (r *fakeTarget) Create(ctx context.Context, object *unstructured.Unstructured) (err error) {
 	err = ctx.Err()
 	if err != nil {
 		err = fmt.Errorf("create %s %q: %w", object.GetKind(), object.GetName(), err)
+		return
+	}
+	if failFor, found := r.createErrFor[cluster.ObjectRef{
+		Kind:      object.GetKind(),
+		Namespace: object.GetNamespace(),
+		Name:      object.GetName(),
+	}]; found {
+		err = failFor
 		return
 	}
 	if r.createErr != nil {
@@ -182,35 +249,113 @@ func (r *fakeTarget) Create(ctx context.Context, object *unstructured.Unstructur
 }
 
 // UploadDisk receives the disk the way CDI would: it reads the whole
-// stream, so a member that fails its digest fails here too, and records
-// what arrived. A cancelled context is reported the way a real client
-// does once the deploy has been interrupted.
-func (r *fakeTarget) UploadDisk(
-	ctx context.Context,
-	namespace, name string,
-	content io.Reader,
-	size int64) (err error) {
+// stream, so a member that fails its digest fails here too. It asks the
+// stream once more after its end, because the transport that carries a
+// real upload drains what is left. It records what arrived. Before the
+// bytes move it says what it waits on, once per readiness check, when
+// the cluster it models has not made the claim ready yet. A cancelled
+// context is reported the way a real client does once the deploy is
+// interrupted.
+func (r *fakeTarget) UploadDisk(ctx context.Context, upload cluster.Upload) (err error) {
 	//
 	err = ctx.Err()
 	if err != nil {
-		err = fmt.Errorf("upload disk %q: %w", name, err)
+		err = fmt.Errorf("upload disk %q: %w", upload.Name, err)
 		return
 	}
-	received, err := io.ReadAll(content)
+	if r.uploadReadsNothing {
+		return
+	}
+	for _, said := range r.uploadWaitsFor {
+		if upload.Waiting != nil {
+			upload.Waiting(said)
+		}
+	}
+	received, err := io.ReadAll(upload.Content)
 	if err != nil {
 		return
 	}
-	if failFor, found := r.uploadErrFor[name]; found {
+	// A real upload asks the body again after its end. The ask reads
+	// nothing and returns the end again.
+	_, _ = upload.Content.Read(make([]byte, 1))
+	if failFor, found := r.uploadErrFor[upload.Name]; found {
 		err = failFor
 		return
 	}
 	r.uploaded = append(r.uploaded, fakeUpload{
-		namespace: namespace,
-		name:      name,
-		size:      size,
+		namespace: upload.Namespace,
+		name:      upload.Name,
+		size:      upload.Size,
 		content:   received,
 	})
-	r.events = append(r.events, "upload "+namespace+"/"+name)
+	r.events = append(r.events, "upload "+upload.Namespace+"/"+upload.Name)
+	return
+}
+
+// ListByLabel returns the objects the namespace holds carrying key=value,
+// reporting a cancelled context the way a real client does once the
+// undeploy is interrupted. Only the kinds a deploy can leave are
+// selected, the way the real adapter scans DeployedKinds.
+func (r *fakeTarget) ListByLabel(
+	ctx context.Context,
+	namespace, key, value string) (objects []*unstructured.Unstructured, err error) {
+	//
+	err = ctx.Err()
+	if err != nil {
+		err = fmt.Errorf("list %s in namespace %q: %w", key, namespace, err)
+		return
+	}
+	deployed := make(map[string]bool, len(cluster.DeployedKinds))
+	for _, kind := range cluster.DeployedKinds {
+		deployed[kind] = true
+	}
+	for ref, held := range r.objects {
+		if ref.Namespace != namespace || !deployed[ref.Kind] {
+			continue
+		}
+		if held.GetLabels()[key] != value {
+			continue
+		}
+		objects = append(objects, held.DeepCopy())
+	}
+	return
+}
+
+// Delete deletes one object, reporting a cancelled context the way a real
+// client does once the undeploy is interrupted.
+//
+// Deleting a DataVolume takes its claim with it. CDI names the claim
+// after the DataVolume and owns it through an owner reference. The
+// cluster therefore deletes the claim with the DataVolume. That is the
+// cluster's doing, not quo's, and an undeploy never selects the claim on
+// its own. The fake models it the same way.
+func (r *fakeTarget) Delete(ctx context.Context, object *unstructured.Unstructured) (err error) {
+	//
+	err = ctx.Err()
+	if err != nil {
+		err = fmt.Errorf("delete %s %q: %w", object.GetKind(), object.GetName(), err)
+		return
+	}
+	ref := cluster.ObjectRef{
+		Kind:      object.GetKind(),
+		Namespace: object.GetNamespace(),
+		Name:      object.GetName(),
+	}
+	if failFor, found := r.deleteErrFor[object.GetName()]; found {
+		err = failFor
+		return
+	}
+	delete(r.objects, ref)
+	if object.GetKind() == cluster.KindDataVolume {
+		// CDI names the claim after the DataVolume and owns it, so the
+		// cluster takes the claim with the DataVolume.
+		delete(r.objects, cluster.ObjectRef{
+			Kind:      cluster.KindPersistentVolumeClaim,
+			Namespace: ref.Namespace,
+			Name:      ref.Name,
+		})
+	}
+	r.events = append(r.events, "delete "+object.GetKind()+" "+object.GetNamespace()+"/"+object.GetName())
 	return
 }
 
@@ -220,16 +365,88 @@ func (r *fakeTarget) hold(ref cluster.ObjectRef, object *unstructured.Unstructur
 	r.objects[ref] = object
 }
 
+// holds reports whether the fake target still holds the named object of
+// the deploy namespace.
+func (r *fakeTarget) holds(kind, name string) (held bool) {
+	_, held = r.objects[cluster.ObjectRef{
+		Kind:      kind,
+		Namespace: testDeployNamespace,
+		Name:      name,
+	}]
+	return
+}
+
+// holdLabeled holds one object carrying a bundle's identity label in the
+// deploy namespace. It is an object of a deployment, or the claim CDI
+// made for one of its DataVolumes.
+func (r *fakeTarget) holdLabeled(kind, name, identity string) {
+	r.hold(
+		cluster.ObjectRef{Kind: kind, Namespace: testDeployNamespace, Name: name},
+		deployedObject(kind, name, identity))
+}
+
+// wroteNothing asserts that nothing reached the target: nothing was
+// created, nothing was uploaded, and nothing was recorded against it.
+// A dry run's row carries this beside the contract. On a refusal both
+// modes carry it, because a refusal attempts nothing either way.
+func wroteNothing(g *gomega.GomegaWithT, fake *fakeTarget) {
+	g.Expect(fake.created).To(gomega.BeEmpty())
+	g.Expect(fake.uploaded).To(gomega.BeEmpty())
+	g.Expect(fake.events).To(gomega.BeEmpty())
+}
+
+// deployedObject builds one object of a deployment: labeled as quo's work
+// from one bundle, the way a deploy leaves it on the cluster.
+func deployedObject(kind, name, identity string) (held *unstructured.Unstructured) {
+	held = &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": apiVersionByKind[kind],
+		"kind":       kind,
+		"metadata": map[string]any{
+			"name":      name,
+			"namespace": testDeployNamespace,
+		},
+	}}
+	held.SetLabels(map[string]string{
+		labelManagedBy: "quo",
+		labelBundle:    identity,
+	})
+	return
+}
+
+// apiVersionByKind is the apiVersion each kind a deployment can hold
+// carries, so a held fixture looks the way a cluster holds it.
+var apiVersionByKind = map[string]string{
+	cluster.KindConfigMap:             "v1",
+	cluster.KindDataVolume:            "cdi.kubevirt.io/v1beta1",
+	cluster.KindPersistentVolumeClaim: "v1",
+	cluster.KindSecret:                "v1",
+	cluster.KindServiceAccount:        "v1",
+	cluster.KindVirtualMachine:        "kubevirt.io/v1",
+}
+
 // writeFixtureBundle writes a bundle holding what a capture of the fixture
-// VirtualMachine would hold: the declaration, the instancetype and
-// preference it names, the revisions that pinned them, and the source
-// cluster's expansion of the machine. It goes through the same writer a
-// capture does, so the fixture is built by the same code that builds real
-// bundles.
+// VirtualMachine would hold. The bundle holds the declaration, the
+// instancetype and preference it names, and the revisions that pinned
+// them. It also holds the source cluster's expansion of the machine. It
+// uses the same writer a capture does, so the fixture is built by the
+// same code that builds real bundles.
 //
-// expand tells it to leave the expansion out, which is what a capture
-// whose expand-spec read failed produces.
+// expand tells it to omit the expansion, which is what a capture whose
+// expand-spec read failed produces.
 func writeFixtureBundle(t *testing.T, expand bool) (path string) {
+	t.Helper()
+	var expanded *unstructured.Unstructured
+	if expand {
+		expanded = expandedSpec()
+	}
+	return writeExpandedBundle(t, expanded)
+}
+
+// writeExpandedBundle writes the fixture bundle around the expansion
+// given. It holds the collected objects writeFixtureBundle holds, with
+// the expansion member swapped for whichever form a source cluster's
+// expand-spec read produced. A nil expansion omits the member.
+func writeExpandedBundle(t *testing.T, expanded *unstructured.Unstructured) (path string) {
 	t.Helper()
 	path = filepath.Join(t.TempDir(), testBundleFilename)
 	file, err := os.Create(path)
@@ -244,12 +461,12 @@ func writeFixtureBundle(t *testing.T, expand bool) (path string) {
 	collect(t, writer, instancetype())
 	collect(t, writer, preference())
 	collect(t, writer, controllerRevision())
-	if expand {
-		expanded, marshalErr := yaml.Marshal(expandedSpec().Object)
+	if expanded != nil {
+		encoded, marshalErr := yaml.Marshal(expanded.Object)
 		if marshalErr != nil {
 			t.Fatalf("marshal the expanded spec: %v", marshalErr)
 		}
-		writer.AddExpandedSpec(expanded)
+		writer.AddExpandedSpec(encoded)
 	}
 	err = writer.Open(fixtureProvenance())
 	if err != nil {
@@ -279,14 +496,19 @@ func collect(t *testing.T, writer *bundle.Writer, object *unstructured.Unstructu
 	}
 }
 
-// writeDisksFixtureBundle writes a bundle for a VirtualMachine with four
-// disks, covering the forms a capture produces: a claim serving two
-// volumes, a claim a dataVolumeTemplate provisions, and two plain claims.
-// gaps names the claims the bundle holds no bytes for, which is what a
-// capture leaves when the export server offered a claim nothing. It goes
-// through the same writer a capture does, so the fixture is built by the
-// same code that builds real bundles.
-func writeDisksFixtureBundle(t *testing.T, gaps ...string) (path string) {
+// writeMachineBundle writes a bundle for the fixture VirtualMachine
+// holding the collected objects and its four disks. They go in the
+// order a capture writes them: the collected resources, then the
+// expansion, then the disks. gaps names the claims the bundle holds no
+// bytes for, which is what a capture leaves when the export server
+// offered a claim nothing. It uses the same writer a capture does, so
+// the fixture is built by the same code that builds real bundles.
+func writeMachineBundle(
+	t *testing.T,
+	expansion *unstructured.Unstructured,
+	collected []*unstructured.Unstructured,
+	gaps ...string) (path string) {
+	//
 	t.Helper()
 	held := map[string]bool{
 		testRootClaim: true,
@@ -332,7 +554,10 @@ func writeDisksFixtureBundle(t *testing.T, gaps ...string) (path string) {
 		_ = file.Close()
 	}()
 	writer := bundle.NewWriter(file)
-	expanded, marshalErr := yaml.Marshal(disksExpandedSpec().Object)
+	for i := range collected {
+		collect(t, writer, collected[i])
+	}
+	expanded, marshalErr := yaml.Marshal(expansion.Object)
 	if marshalErr != nil {
 		t.Fatalf("marshal the expanded spec: %v", marshalErr)
 	}
@@ -390,9 +615,48 @@ func writeDisksFixtureBundle(t *testing.T, gaps ...string) (path string) {
 	return
 }
 
+// writeDisksFixtureBundle writes a bundle for a VirtualMachine with four
+// disks, covering the forms a capture produces. Those forms are a claim
+// serving two volumes, a claim a dataVolumeTemplate provisions, and two
+// plain claims. gaps names the claims the bundle holds no bytes for,
+// which is what a capture leaves when the export server offered a claim
+// nothing.
+func writeDisksFixtureBundle(t *testing.T, gaps ...string) (path string) {
+	t.Helper()
+	path = writeMachineBundle(t, disksExpandedSpec(), nil, gaps...)
+	return
+}
+
+// writeClosureFixtureBundle writes a bundle for a VirtualMachine whose
+// closure a deploy applies. The closure holds the ConfigMap with its
+// sysprep answer file, and the Secrets with its cloud-init userdata and
+// its registry credentials. It also holds the ServiceAccount one of its
+// volumes names. The bundle holds them alongside the disk fixtures and
+// the read-only kinds a capture collects around them. Those kinds are
+// the declaration, the instancetype and preference it names, and the
+// ControllerRevision that pinned them. They are also the
+// NetworkAttachmentDefinition behind its network, and the storage class
+// its claims were provisioned from.
+func writeClosureFixtureBundle(t *testing.T) (path string) {
+	t.Helper()
+	path = writeMachineBundle(t, closureExpandedSpec(), []*unstructured.Unstructured{
+		declaration(),
+		instancetype(),
+		preference(),
+		controllerRevision(),
+		sysprepConfigMap(),
+		cloudInitSecret(),
+		registrySecret(),
+		serviceAccount(),
+		networkAttachmentDefinition(),
+		storageClassNamed(testStorageClass),
+	})
+	return
+}
+
 // writeUnsizedDiskBundle writes a bundle holding one disk whose
-// requirement could record nothing but the claim's name, which is what a
-// claim the capture was not allowed to read leaves behind: the bytes are
+// requirement could record nothing but the claim's name. That is what a
+// claim the capture was not allowed to read leaves behind. The bytes are
 // held, and nothing says how big a target has to make them.
 func writeUnsizedDiskBundle(t *testing.T) (path string) {
 	t.Helper()
@@ -436,18 +700,118 @@ func writeUnsizedDiskBundle(t *testing.T) (path string) {
 	return
 }
 
+// writeStorageFixtureBundle writes a bundle holding one disk for each
+// storage requirement given, which is the smallest bundle that exercises
+// how a deploy places classes. The requirements say what each disk needs
+// and the members hold its bytes. It uses the same writer a capture
+// does, so the fixture is built by the same code that builds real
+// bundles.
+func writeStorageFixtureBundle(
+	t *testing.T,
+	required ...bundle.StorageRequirement) (path string) {
+	t.Helper()
+	path = filepath.Join(t.TempDir(), testBundleFilename)
+	file, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("create bundle: %v", err)
+	}
+	defer func() {
+		_ = file.Close()
+	}()
+	writer := bundle.NewWriter(file)
+	expanded, marshalErr := yaml.Marshal(disksExpandedSpec().Object)
+	if marshalErr != nil {
+		t.Fatalf("marshal the expanded spec: %v", marshalErr)
+	}
+	writer.AddExpandedSpec(expanded)
+	disks := make([]bundle.Disk, 0, len(required))
+	for i := range required {
+		disks = append(disks, bundle.Disk{
+			Claim:   required[i].Claim,
+			Path:    bundle.DiskPath(required[i].Claim, bundle.DiskGzip),
+			Format:  bundle.DiskGzip,
+			Volumes: []string{required[i].Claim},
+		})
+	}
+	writer.Require(bundle.Requirements{Storage: required})
+	for i := range disks {
+		writer.Reserve(disks[i])
+	}
+	err = writer.Open(fixtureProvenance())
+	if err != nil {
+		t.Fatalf("open bundle: %v", err)
+	}
+	for i := range disks {
+		content := diskBody(disks[i].Claim)
+		err = writer.Stage(disks[i].Path, bytes.NewReader(content), int64(len(content)))
+		if err != nil {
+			t.Fatalf("stage disk %q: %v", disks[i].Claim, err)
+		}
+	}
+	err = writer.Close()
+	if err != nil {
+		t.Fatalf("close bundle: %v", err)
+	}
+	return
+}
+
+// writeCorruptedClosureBundle writes the closure fixture bundle with
+// the sysprep answer file changed in transit. The answer's stand-in
+// content sits in the ConfigMap member alone. Replacing it keeps the
+// tar the manifest indexes aligned, while changing what the digest is
+// computed over.
+func writeCorruptedClosureBundle(t *testing.T) (path string) {
+	t.Helper()
+	path = writeBytes(t, "corrupted-closure.quo", bytes.ReplaceAll(
+		readFile(t, writeClosureFixtureBundle(t)),
+		[]byte(sysprepAnswer),
+		[]byte(sysprepMangled)))
+	return
+}
+
+// writeCorruptedExpansionBundle writes the bundle at path with one byte
+// of its expansion changed in transit. The machine type sits in the
+// expansion alone, because the declaration names an instancetype
+// instead. Its last occurrence in the bundle is therefore in the
+// member.
+func writeCorruptedExpansionBundle(t *testing.T, path string) (corrupted string) {
+	t.Helper()
+	content := bytes.Clone(readFile(t, path))
+	at := bytes.LastIndex(content, []byte(testMachineType))
+	if at < 0 {
+		t.Fatalf("the fixture bundle does not carry the machine type")
+	}
+	content[at] = 'x'
+	corrupted = writeBytes(t, "corrupted-expansion.quo", content)
+	return
+}
+
+// writeCorruptedDiskBundle writes the disk fixture bundle with the root
+// disk's bytes changed in transit. The claim's name is in every line of
+// the member's stand-in content. Replacing it has the effect
+// writeCorruptedClosureBundle describes.
+func writeCorruptedDiskBundle(t *testing.T) (path string) {
+	t.Helper()
+	path = writeBytes(t, "corrupted-disk.quo", bytes.ReplaceAll(
+		readFile(t, writeDisksFixtureBundle(t)),
+		[]byte("disk of "+testRootClaim),
+		[]byte("disk 0f "+testRootClaim)))
+	return
+}
+
 // diskBody is the compressed bytes the fixture holds for one claim. It is
-// stand-in content — opaque to quo, which streams it unchanged — but
-// different for every claim, so a test can tell one disk from another.
+// stand-in content, opaque to quo, which streams it unchanged. It is
+// different for every claim, though, so a test can tell one disk from
+// another.
 func diskBody(claim string) (content []byte) {
 	content = bytes.Repeat([]byte("disk of "+claim+"\n"), 256)
 	return
 }
 
 // disksExpandedSpec builds the form a source cluster resolves the disk
-// fixture's VirtualMachine to: the identity values and the source
-// cluster's own metadata, plus the volumes and dataVolumeTemplates that
-// make its disks.
+// fixture's VirtualMachine to. It holds the identity values and the
+// source cluster's own metadata, plus the volumes and dataVolumeTemplates
+// that make its disks.
 func disksExpandedSpec() (expanded *unstructured.Unstructured) {
 	expanded = &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": "kubevirt.io/v1",
@@ -461,9 +825,9 @@ func disksExpandedSpec() (expanded *unstructured.Unstructured) {
 		},
 		"spec": map[string]any{
 			"running": false,
-			// The template provisions the data disk, which a deploy
-			// recreates as a DataVolume of its own and removes from the
-			// applied machine.
+			// The template provisions the data disk. A deploy
+			// recreates it as a DataVolume of its own and deletes the
+			// template from the applied machine.
 			"dataVolumeTemplates": []any{
 				map[string]any{
 					"metadata": map[string]any{"name": testDataClaim},
@@ -517,6 +881,161 @@ func disksExpandedSpec() (expanded *unstructured.Unstructured) {
 	return
 }
 
+// writeNetworksFixtureBundle writes a bundle for a VirtualMachine with
+// the networks a capture records. Those are the cluster's own pod
+// network and a multus network backed by a NetworkAttachmentDefinition.
+// attachment
+// names the definition the requirement records, which is what a deploy
+// maps by. Empty is what a multus network naming no attachment leaves
+// behind. It uses the same writer a capture does, so the fixture is
+// built by the same code that builds real bundles.
+func writeNetworksFixtureBundle(t *testing.T, attachment string) (path string) {
+	t.Helper()
+	path = filepath.Join(t.TempDir(), testBundleFilename)
+	file, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("create bundle: %v", err)
+	}
+	defer func() {
+		_ = file.Close()
+	}()
+	writer := bundle.NewWriter(file)
+	expanded, marshalErr := yaml.Marshal(networksExpandedSpec(t, attachment).Object)
+	if marshalErr != nil {
+		t.Fatalf("marshal the expanded spec: %v", marshalErr)
+	}
+	writer.AddExpandedSpec(expanded)
+	writer.Require(bundle.Requirements{Networks: []bundle.NetworkRequirement{
+		{Name: "default", Type: bundle.NetworkPod},
+		{
+			Name:       testMultusNetwork,
+			Type:       bundle.NetworkMultus,
+			Namespace:  testSourceNamespace,
+			Attachment: attachment,
+		},
+	}})
+	err = writer.Open(fixtureProvenance())
+	if err != nil {
+		t.Fatalf("open bundle: %v", err)
+	}
+	err = writer.Close()
+	if err != nil {
+		t.Fatalf("close bundle: %v", err)
+	}
+	return
+}
+
+// networksExpandedSpec builds the form a source cluster resolves the
+// network fixture's VirtualMachine to. It holds the identity values of
+// the plain fixture, plus the networks its interfaces bind to. Those are
+// the
+// cluster's own pod network and a multus network whose networkName is
+// the source cluster's own qualified form of the attachment.
+func networksExpandedSpec(t *testing.T, attachment string) (expanded *unstructured.Unstructured) {
+	t.Helper()
+	expanded = expandedSpec()
+	networkName := ""
+	if attachment != "" {
+		networkName = testSourceNamespace + "/" + attachment
+	}
+	err := unstructured.SetNestedSlice(expanded.Object, []any{
+		map[string]any{"name": "default", "pod": map[string]any{}},
+		map[string]any{
+			"name":   testMultusNetwork,
+			"multus": map[string]any{"networkName": networkName},
+		},
+	}, "spec", "template", "spec", "networks")
+	if err != nil {
+		t.Fatalf("set the networks of the expanded spec: %v", err)
+	}
+	return
+}
+
+// writeContainerDiskFixtureBundle writes a bundle for a VirtualMachine
+// one of whose volumes is served from a container disk image. A capture
+// records such an image as a requirement and never holds it: the target
+// has to be able to pull the image itself. It uses the same writer a
+// capture does, so the fixture is built by the same code that builds
+// real bundles.
+func writeContainerDiskFixtureBundle(t *testing.T) (path string) {
+	t.Helper()
+	path = filepath.Join(t.TempDir(), testBundleFilename)
+	file, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("create bundle: %v", err)
+	}
+	defer func() {
+		_ = file.Close()
+	}()
+	writer := bundle.NewWriter(file)
+	expanded := expandedSpec()
+	err = unstructured.SetNestedSlice(expanded.Object, []any{
+		map[string]any{
+			"name":          "tools",
+			"containerDisk": map[string]any{"image": testContainerDiskImage},
+		},
+	}, "spec", "template", "spec", "volumes")
+	if err != nil {
+		t.Fatalf("set the volumes of the expanded spec: %v", err)
+	}
+	encoded, marshalErr := yaml.Marshal(expanded.Object)
+	if marshalErr != nil {
+		t.Fatalf("marshal the expanded spec: %v", marshalErr)
+	}
+	writer.AddExpandedSpec(encoded)
+	writer.Require(bundle.Requirements{ContainerDisks: []bundle.ContainerDiskRequirement{
+		{Volume: "tools", Image: testContainerDiskImage},
+	}})
+	err = writer.Open(fixtureProvenance())
+	if err != nil {
+		t.Fatalf("open bundle: %v", err)
+	}
+	err = writer.Close()
+	if err != nil {
+		t.Fatalf("close bundle: %v", err)
+	}
+	return
+}
+
+// heldAttachment is a NetworkAttachmentDefinition the target holds, as a
+// multus network attaches through.
+func heldAttachment(namespace, name string) (held *unstructured.Unstructured) {
+	held = &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "k8s.cni.cncf.io/v1",
+		"kind":       cluster.KindNetworkAttachmentDefinition,
+		"metadata":   map[string]any{"name": name, "namespace": namespace},
+		"spec": map[string]any{
+			"config": `{"cniVersion":"1.0.0","name":"lab","type":"bridge"}`,
+		},
+	}}
+	return
+}
+
+// closureExpandedSpec builds the form a source cluster resolves the
+// closure fixture's VirtualMachine to. It is the disk fixture's machine
+// plus the volumes that name its ConfigMaps, Secrets and ServiceAccounts.
+// That is why a capture of it collected them and a deploy applies them.
+func closureExpandedSpec() (expanded *unstructured.Unstructured) {
+	expanded = disksExpandedSpec()
+	volumes, _, _ := unstructured.NestedSlice(expanded.Object, "spec", "template", "spec", "volumes")
+	volumes = append(volumes,
+		map[string]any{
+			"name":    "sysprep",
+			"sysprep": map[string]any{"configMap": map[string]any{"name": testSysprepConfigMap}},
+		},
+		map[string]any{
+			"name":             "cloud-init",
+			"cloudInitNoCloud": map[string]any{"secretRef": map[string]any{"name": testCloudInitSecret}},
+		},
+		map[string]any{
+			"name":           "service",
+			"serviceAccount": map[string]any{"serviceAccountName": testServiceAccount},
+		},
+	)
+	unstructured.SetNestedSlice(expanded.Object, volumes, "spec", "template", "spec", "volumes")
+	return
+}
+
 // cdiConfig is CDI's own configuration, which the deploy reads to tell a
 // target that has CDI from one that does not.
 func cdiConfig() (held *unstructured.Unstructured) {
@@ -528,20 +1047,22 @@ func cdiConfig() (held *unstructured.Unstructured) {
 	return
 }
 
-// storageClass is the class the disk fixtures' claims were provisioned
-// from, as the target holds it.
-func storageClass() (held *unstructured.Unstructured) {
+// storageClassNamed is a storage class of the given name, as the target
+// holds it. The bundle collected the class the disk fixtures' claims
+// were provisioned from. The target holds one of its own under the same
+// name, which is what a mapping by name rests on.
+func storageClassNamed(name string) (held *unstructured.Unstructured) {
 	held = &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": "storage.k8s.io/v1",
 		"kind":       "StorageClass",
-		"metadata":   map[string]any{"name": testStorageClass},
+		"metadata":   map[string]any{"name": name},
 	}}
 	return
 }
 
-// storageProfile is the target's own account of what its storage class
-// can provide. modes says which volume modes it offers.
-func storageProfile(modes ...string) (held *unstructured.Unstructured) {
+// storageProfile is the target's own account of what the named storage
+// class can provide. modes says which volume modes it offers.
+func storageProfile(name string, modes ...string) (held *unstructured.Unstructured) {
 	sets := make([]any, 0, len(modes))
 	for _, mode := range modes {
 		sets = append(sets, map[string]any{
@@ -552,7 +1073,7 @@ func storageProfile(modes ...string) (held *unstructured.Unstructured) {
 	held = &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": "cdi.kubevirt.io/v1beta1",
 		"kind":       "StorageProfile",
-		"metadata":   map[string]any{"name": testStorageClass},
+		"metadata":   map[string]any{"name": name},
 		"status":     map[string]any{"claimPropertySets": sets},
 	}}
 	return
@@ -572,9 +1093,10 @@ func fixtureProvenance() (provenance bundle.Provenance) {
 	return
 }
 
-// declaration is the captured VirtualMachine object the bundle holds: the
-// declaration of record, naming an instancetype and preference the source
-// cluster resolved into the expanded spec. A deploy never applies it.
+// declaration is the captured VirtualMachine object the bundle holds. It
+// is the declaration of record, naming an instancetype and preference
+// the source cluster resolved into the expanded spec. A deploy never
+// applies it.
 func declaration() (captured *unstructured.Unstructured) {
 	captured = &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": "kubevirt.io/v1",
@@ -611,11 +1133,11 @@ func declaration() (captured *unstructured.Unstructured) {
 }
 
 // expandedSpec builds the form a source cluster resolves the fixture
-// VirtualMachine to: the identity values, annotations and metadata the
-// cluster returned — including the resourceVersion, uid, creation
-// timestamp, generation and managed fields it assigned itself, which a
-// deploy clears because no target can recreate them — plus the machine
-// type and CPU topology that only the resolution knows.
+// VirtualMachine to. It holds the identity values, annotations and
+// metadata the cluster returned, plus the machine type and CPU topology
+// that only the resolution knows. The metadata includes the resourceVersion, uid,
+// creation timestamp, generation and managed fields the cluster assigned
+// itself. A deploy clears those, because no target can recreate them.
 func expandedSpec() (expanded *unstructured.Unstructured) {
 	expanded = &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": "kubevirt.io/v1",
@@ -663,9 +1185,38 @@ func expandedSpec() (expanded *unstructured.Unstructured) {
 	return
 }
 
-// instancetype is a resource the bundle collected that a deploy must never
-// create: the target runs the source cluster's resolution, so it needs no
-// instancetype of its own.
+// matcherExpandedSpec builds the form a source cluster resolves the
+// fixture VirtualMachine to. That form applies when the expand-spec read
+// leaves the instancetype and preference matchers on the spec it
+// resolved. Whether that happens is a
+// fact the live round-trip observes rather than assumes, so the deploy is
+// built to name no matcher either way.
+func matcherExpandedSpec(t *testing.T) (expanded *unstructured.Unstructured) {
+	t.Helper()
+	expanded = expandedSpec()
+	for matcher, named := range map[string]map[string]any{
+		"instancetype": {
+			"kind":         "VirtualMachineInstancetype",
+			"name":         "standard-large",
+			"revisionName": "db-01-4f5e6d7c",
+		},
+		"preference": {
+			"kind":         "VirtualMachinePreference",
+			"name":         "windows-defaults",
+			"revisionName": "db-01-9c2d3e4f",
+		},
+	} {
+		err := unstructured.SetNestedField(expanded.Object, named, "spec", matcher)
+		if err != nil {
+			t.Fatalf("set the %s matcher of the expanded spec: %v", matcher, err)
+		}
+	}
+	return
+}
+
+// instancetype is a resource the bundle collected that a deploy must
+// never create. The target runs the source cluster's resolution, so it
+// needs no instancetype of its own.
 func instancetype() (held *unstructured.Unstructured) {
 	held = &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": "instancetype.kubevirt.io/v1beta1",
@@ -696,6 +1247,177 @@ func controllerRevision() (held *unstructured.Unstructured) {
 		"kind":       "ControllerRevision",
 		"metadata":   map[string]any{"name": "db-01-4f5e6d7c", "namespace": testSourceNamespace},
 		"data":       map[string]any{},
+	}}
+	return
+}
+
+// sysprepAnswer is the stand-in content of the sysprep ConfigMap's answer
+// file. It sits in that member alone. A test can therefore corrupt it,
+// with a same-length stand-in. The corruption makes the member fail its
+// digest while the tar the manifest indexes stays aligned.
+const (
+	sysprepAnswer  = "<unattend/>"
+	sysprepMangled = "<unattEnd/>"
+)
+
+// cloudInitUserdata is the fixture machine's cloud-init userdata, base64
+// as the source cluster stores a Secret's data: "#cloud-config".
+const cloudInitUserdata = "I2Nsb3VkLWNvbmZpZw=="
+
+// registryCredentials is the docker config JSON the registry Secret
+// holds, base64 as the source cluster stores it: `{"auths":{}}`.
+const registryCredentials = "eyJhdXRocyI6e319"
+
+// sysprepConfigMap is the ConfigMap holding the fixture machine's sysprep
+// answer file, as the source cluster holds it. It carries its own
+// metadata, labels and annotations. A deploy carries them through apart
+// from the forced rewrites.
+func sysprepConfigMap() (held *unstructured.Unstructured) {
+	held = &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "v1",
+		"kind":       "ConfigMap",
+		"metadata": map[string]any{
+			"name":              testSysprepConfigMap,
+			"namespace":         testSourceNamespace,
+			"uid":               "8d1f4c22-9b3e-4f6a-a5d1-2c7e9b0f4a31",
+			"resourceVersion":   "158207",
+			"creationTimestamp": "2026-01-08T11:20:00Z",
+			"generation":        int64(2),
+			"managedFields": []any{
+				map[string]any{
+					"manager":    "kube-apiserver",
+					"operation":  "Update",
+					"apiVersion": "v1",
+					"time":       "2026-02-03T08:41:12Z",
+					"fieldsType": "FieldsV1",
+					"fieldsV1":   map[string]any{"f:data": map[string]any{}},
+				},
+			},
+			"labels":      map[string]any{"app.kubernetes.io/part-of": testVirtualMachineName},
+			"annotations": map[string]any{versionAnnotation: versionValue},
+		},
+		"data": map[string]any{"autounattend.xml": sysprepAnswer},
+	}}
+	return
+}
+
+// cloudInitSecret is the Secret holding the fixture machine's cloud-init
+// userdata, as the source cluster holds it. A deploy applies it unchanged
+// apart from the forced rewrites, so that the machine boots with its own
+// configuration.
+func cloudInitSecret() (held *unstructured.Unstructured) {
+	held = &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "v1",
+		"kind":       "Secret",
+		"metadata": map[string]any{
+			"name":              testCloudInitSecret,
+			"namespace":         testSourceNamespace,
+			"uid":               "3e7a5b19-c4d2-4c8e-9f60-1a5d8c2b7e44",
+			"resourceVersion":   "158204",
+			"creationTimestamp": "2026-01-08T11:19:58Z",
+			"generation":        int64(1),
+			"managedFields": []any{
+				map[string]any{
+					"manager":    "kube-apiserver",
+					"operation":  "Update",
+					"apiVersion": "v1",
+					"time":       "2026-02-03T08:41:10Z",
+					"fieldsType": "FieldsV1",
+					"fieldsV1":   map[string]any{"f:type": map[string]any{}},
+				},
+			},
+			"labels":      map[string]any{"app.kubernetes.io/part-of": testVirtualMachineName},
+			"annotations": map[string]any{versionAnnotation: versionValue},
+		},
+		"type": "Opaque",
+		"data": map[string]any{"userdata": cloudInitUserdata},
+	}}
+	return
+}
+
+// registrySecret is the Secret holding the credentials the fixture
+// machine's images are pulled with, as the source cluster holds it. Its
+// type is the one a registry credential Secret carries. Its single key
+// holds the docker config JSON, base64 as the cluster stores it.
+func registrySecret() (held *unstructured.Unstructured) {
+	held = &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "v1",
+		"kind":       "Secret",
+		"metadata": map[string]any{
+			"name":              testRegistrySecret,
+			"namespace":         testSourceNamespace,
+			"uid":               "b64c0e77-2f1a-4d3b-8e59-6c0f7a3d1b92",
+			"resourceVersion":   "158201",
+			"creationTimestamp": "2026-01-06T09:15:03Z",
+			"generation":        int64(1),
+			"managedFields": []any{
+				map[string]any{
+					"manager":    "kube-apiserver",
+					"operation":  "Update",
+					"apiVersion": "v1",
+					"time":       "2026-02-03T08:41:08Z",
+					"fieldsType": "FieldsV1",
+					"fieldsV1":   map[string]any{"f:type": map[string]any{}},
+				},
+			},
+			"labels":      map[string]any{"app.kubernetes.io/part-of": testVirtualMachineName},
+			"annotations": map[string]any{versionAnnotation: versionValue},
+		},
+		"type": "kubernetes.io/dockerconfigjson",
+		"data": map[string]any{".dockerconfigjson": registryCredentials},
+	}}
+	return
+}
+
+// serviceAccount is the ServiceAccount one of the fixture machine's
+// volumes names, as the source cluster holds it. It pulls the machine's
+// images with the registry Secret's credentials, which a deploy creates
+// alongside it. The reference therefore resolves on the target too.
+func serviceAccount() (held *unstructured.Unstructured) {
+	held = &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "v1",
+		"kind":       "ServiceAccount",
+		"metadata": map[string]any{
+			"name":              testServiceAccount,
+			"namespace":         testSourceNamespace,
+			"uid":               "f2b8d6a0-7c4e-4a19-b5d3-9e824f1c6a07",
+			"resourceVersion":   "158199",
+			"creationTimestamp": "2026-01-06T09:14:57Z",
+			"generation":        int64(1),
+			"managedFields": []any{
+				map[string]any{
+					"manager":    "kube-apiserver",
+					"operation":  "Update",
+					"apiVersion": "v1",
+					"time":       "2026-02-03T08:41:05Z",
+					"fieldsType": "FieldsV1",
+					"fieldsV1":   map[string]any{"f:imagePullSecrets": map[string]any{}},
+				},
+			},
+			"labels":      map[string]any{"app.kubernetes.io/part-of": testVirtualMachineName},
+			"annotations": map[string]any{versionAnnotation: versionValue},
+		},
+		"imagePullSecrets": []any{
+			map[string]any{"name": testRegistrySecret},
+		},
+	}}
+	return
+}
+
+// networkAttachmentDefinition is the definition behind one of the fixture
+// machine's networks, as the source cluster holds it. A deploy never
+// creates it: the network is mapped onto one of the target's own.
+func networkAttachmentDefinition() (held *unstructured.Unstructured) {
+	held = &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "k8s.cni.cncf.io/v1",
+		"kind":       "NetworkAttachmentDefinition",
+		"metadata": map[string]any{
+			"name":      "db-01-net",
+			"namespace": testSourceNamespace,
+		},
+		"spec": map[string]any{
+			"config": `{"cniVersion":"0.4.0","name":"db-01","type":"bridge"}`,
+		},
 	}}
 	return
 }

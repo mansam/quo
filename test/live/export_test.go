@@ -22,11 +22,12 @@ import (
 	"github.com/mansam/quo/pkg/cluster"
 )
 
-// sharedCapture is the one capture of the fixture VirtualMachine the tests share.
+// sharedCapture is the one capture of the fixture VirtualMachine the tests
+// share.
 //
-// A capture creates a real VirtualMachineExport and waits for the export
-// server to come up, which is by far the slowest thing the suite does, so the
-// tests take one between them rather than one each.
+// A capture creates a real VirtualMachineExport. It then waits until the
+// export server is up. That wait is by far the slowest thing the suite
+// does. So the tests take one capture between them rather than one each.
 type sharedCapture struct {
 	once     sync.Once
 	record   bundle.CaptureRecord
@@ -36,8 +37,8 @@ type sharedCapture struct {
 	err      error
 }
 
-// captured returns the one capture of the fixture VirtualMachine, taking it
-// the first time it is asked for.
+// captured returns the one capture of the fixture VirtualMachine. The first
+// call takes the capture.
 func (r *suite) captured(t *testing.T) (record bundle.CaptureRecord, manifest *bundle.Manifest) {
 	t.Helper()
 	r.capture.once.Do(func() {
@@ -54,14 +55,14 @@ func (r *suite) captured(t *testing.T) (record bundle.CaptureRecord, manifest *b
 // take captures the fixture VirtualMachine into a bundle and reads the bundle
 // back.
 //
-// It goes through the library entry point with the real cluster adapter,
-// which is the point of doing it here: the everyday suite substitutes a fake
-// for the adapter, so this is the only place the adapter's field names and
-// subresource paths are sent to an API that rejects the wrong ones.
+// take uses the library entry point with the real cluster adapter. That is
+// the point of doing it here. The everyday suite substitutes a fake for the
+// adapter. So this is the only place the adapter's field names and
+// subresource paths go to an API that rejects the wrong ones.
 //
-// The bundle is read through bundle.Read, which checks every member against
-// the digest the manifest records for it and refuses a bundle whose indexed
-// members have not all arrived.
+// take reads the bundle through bundle.Read. bundle.Read checks every member
+// against the digest the manifest records for it. It refuses a bundle whose
+// indexed members have not all arrived.
 func (r *sharedCapture) take(ctx context.Context, s *suite) {
 	r.scratch, r.err = os.MkdirTemp("", "quo-live-*")
 	if r.err != nil {
@@ -134,8 +135,8 @@ func TestCapturingARealVirtualMachineCollectsEverythingItRefersTo(t *testing.T) 
 		describe(s.fixture.ref(cluster.KindVirtualMachinePreference, partPreference)),
 	))
 	// KubeVirt pins the instancetype to a ControllerRevision of its own
-	// naming, which the fixture waits for before anything reads the
-	// VirtualMachine.
+	// naming. The fixture waits for that revision before anything reads
+	// the VirtualMachine.
 	g.Expect(held).To(gomega.ContainElement(
 		gomega.HavePrefix(cluster.KindControllerRevision + " " + s.fixture.namespace + "/")))
 }
@@ -152,8 +153,8 @@ func TestCapturingARealVirtualMachineCollectsWhatDescribesTheSourceCluster(t *te
 	g.Expect(kinds).To(gomega.ContainElement(cluster.KindKubeVirt))
 	// The storage behind the claim, which is cluster-scoped.
 	g.Expect(kinds).To(gomega.ContainElement(cluster.KindStorageClass))
-	// The expand-spec subresource, which is the one subresource a capture
-	// reads and is served by virt-api rather than by the API server. It is a
+	// The expand-spec subresource. It is the one subresource a capture
+	// reads, and virt-api serves it rather than the API server. It is a
 	// member of its own rather than a resource.
 	g.Expect(manifest.ExpandedSpec).To(gomega.Equal(bundle.ExpandedSpecPath))
 }
@@ -169,8 +170,8 @@ func TestCapturingARealVirtualMachineCarriesItsDisk(t *testing.T) {
 	g.Expect(disk.Claim).To(gomega.Equal(s.fixture.named(partDisk)))
 	g.Expect(disk.Volumes).To(gomega.Equal([]string{volumeDisk}))
 	g.Expect(disk.Format).To(gomega.BeElementOf(bundle.DiskGzip, bundle.DiskArchiveGzip))
-	// bundle.Read has already checked the member against its digest, so what
-	// is left to say is that the export server sent something.
+	// bundle.Read has already checked the member against its digest. So
+	// what is left to say is that the export server sent something.
 	g.Expect(memberSize(manifest.Members, disk.Path)).To(gomega.BeNumerically(">", 0))
 }
 
@@ -250,7 +251,7 @@ func (r *suite) member(t *testing.T, path string) (content []byte) {
 }
 
 // describeObjects names every object a bundle holds, the way the difference report names
-// one, so that a failure reads the same whichever test produced it.
+// one. So a failure reads the same whichever test produced it.
 func describeObjects(objects []bundle.Resource) (names []string) {
 	for i := range objects {
 		names = append(names, describe(cluster.ObjectRef{

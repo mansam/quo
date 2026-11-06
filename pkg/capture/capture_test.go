@@ -456,8 +456,9 @@ func TestExportReportsTransferProgress(t *testing.T) {
 	_, err := captureInto(t, c, opt)
 
 	g.Expect(err).ToNot(gomega.HaveOccurred())
-	// Each disk is reported as it starts and again once it has all arrived,
-	// so a capture that is moving can be told from one that has hung.
+	// Each disk is reported as it starts, and again once it has all
+	// arrived. A capture that is moving can therefore be told from one
+	// that has hung.
 	g.Expect(reported).To(gomega.Equal([]Progress{
 		{Claim: rootClaim, Volumes: []string{"rootdisk", "rootdisk-again"}, Disk: 1, Disks: 2},
 		{
@@ -572,7 +573,7 @@ func TestExportToFileFailsWhenTheOutputPathCannotBeWritten(t *testing.T) {
 }
 
 // captureBundle captures the fixture VirtualMachine and returns the members
-// of the bundle that came out, in the order they appear.
+// of the resulting bundle, in the order they appear.
 func captureBundle(t *testing.T) (order []string, content map[string][]byte) {
 	t.Helper()
 	captured, err := captureInto(t, stoppedCluster(t), testOptions())
@@ -583,8 +584,8 @@ func captureBundle(t *testing.T) (order []string, content map[string][]byte) {
 	return
 }
 
-// captureWithDisks captures a VirtualMachine that has disks, staging them in
-// a directory of their own so that a test can see what was in it.
+// captureWithDisks captures a VirtualMachine that has disks. It stages them
+// in a directory of their own, so that a test can see what was in it.
 func captureWithDisks(t *testing.T, c *fakeCluster, opt Options) (order []string, content map[string][]byte) {
 	t.Helper()
 	captured, err := captureInto(t, c, stagingIn(t, c, opt))
@@ -615,8 +616,8 @@ func captureInto(t *testing.T, c cluster.Cluster, opt Options) (captured []byte,
 // captureRecording captures into a file and returns the capture record along
 // with whatever was written.
 //
-// The destination is a file rather than a buffer because a bundle's manifest
-// is written into room reserved at the front, which a stream cannot offer.
+// The destination is a file rather than a buffer. A bundle's manifest is
+// written into room reserved at the front, which a stream cannot offer.
 func captureRecording(
 	t *testing.T,
 	c cluster.Cluster,
@@ -729,8 +730,9 @@ func nested(t *testing.T, object map[string]any, keys ...string) (found map[stri
 
 // withSourceCluster returns the members a bundle holds when the given
 // resources were collected and the given disks staged. What describes the
-// source cluster sits between the two, which is where a capture writes it:
-// after the referenced resources have been read and before any disk arrives.
+// source cluster sits between the two. That is where a capture writes it:
+// after the referenced resources have been read, and before any disk
+// arrives.
 func withSourceCluster(resources []string, disks ...string) (order []string) {
 	order = append(order, resources...)
 	order = append(order, testKubeVirtMember, testExpandedMember)

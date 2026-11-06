@@ -17,19 +17,19 @@ import (
 // Check writes to out what a capture of the named VirtualMachine would
 // collect and what it would skip, and stops there.
 //
-// It reads what a capture reads — the VirtualMachine, the resources it
-// refers to, and what describes the source cluster — and gives every object
+// It reads what a capture reads: the VirtualMachine, the resources it
+// refers to, and what describes the source cluster. It gives every object
 // the outcome a capture would give it, under the reasons a capture record
-// uses. A permissions problem is then found in seconds rather than at the end
-// of a transfer that took hours.
+// uses. A permissions problem is then found in seconds rather than at the
+// end of a transfer that took hours.
 //
 // Nothing is transferred and no VirtualMachineExport is created. The disks are
 // reported from the claims behind them.
 //
 // A VirtualMachine that is not stopped is reported rather than refused.
 // Saying that a capture would refuse it is the most useful thing a check can
-// say about a running VirtualMachine, and the rest of what a capture would do
-// is worth knowing before it is stopped.
+// say about a running VirtualMachine. The rest of what a capture would do is
+// worth knowing before it is stopped.
 //
 // An object that could not be read is the finding a check exists to produce,
 // not a failure of the check. The error returned is for a check that could
@@ -131,12 +131,12 @@ func parseSize(recorded string) (size int64, known bool) {
 // diskSpace returns the local scratch space a capture would need and the total
 // provisioned size of the disks it would transfer.
 //
-// Scratch space is the largest single disk rather than the total, because a
-// capture stages one disk at a time and deletes it before the next starts.
+// Scratch space is the largest single disk rather than the total. A capture
+// stages one disk at a time and deletes it before the next starts.
 //
 // complete is false when a claim quo could not read left a disk with no size,
 // which makes both figures lower bounds. The disk is still held in a bundle,
-// so leaving it out of the total would understate the transfer.
+// so omitting it from the total would understate the transfer.
 func diskSpace(disks []checkedDisk) (scratch, provisioned int64, complete bool) {
 	complete = true
 	for i := range disks {
@@ -158,7 +158,7 @@ func diskSpace(disks []checkedDisk) (scratch, provisioned int64, complete bool) 
 // from Flush, which is checked.
 func (r *check) describe(out io.Writer) (err error) {
 	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintf(tw, "Check of VirtualMachine %s/%s\n", r.opt.Namespace, r.opt.Name)
+	_, _ = fmt.Fprintf(tw, "Dry run of a capture of VirtualMachine %s/%s\n", r.opt.Namespace, r.opt.Name)
 	_, _ = fmt.Fprintf(tw, "  Status:\t%s\n", orUnreported(r.status))
 	r.describeRefusal(tw)
 	r.describeCollected(tw)
@@ -174,8 +174,9 @@ func (r *check) describe(out io.Writer) (err error) {
 }
 
 // describeRefusal says whether a capture would go ahead. Fixing permissions
-// will not clear a VirtualMachine that is not stopped, so it is written at
-// the top rather than left to the bottom with the rest of the findings.
+// will not clear a VirtualMachine that is not stopped. It is therefore
+// written at the top rather than left to the bottom with the rest of the
+// findings.
 //
 // The rest of the check is written either way: it says what a capture would
 // collect once the VirtualMachine has been stopped. What it cannot show is a
@@ -229,9 +230,9 @@ func (r *check) describeRequired(out io.Writer) {
 // describeSkipped lists everything a capture would not collect, with the
 // reason a capture record would give for it.
 //
-// The heading is written even when nothing would be skipped, because the
-// engineer running a check is asking exactly that question and no section at
-// all would leave them wondering whether quo had looked.
+// The heading is written even when nothing would be skipped. The engineer
+// running a check is asking exactly that question. No section at all would
+// leave them wondering whether quo had looked.
 func (r *check) describeSkipped(out io.Writer) {
 	skipped := r.record.Skipped()
 	_, _ = fmt.Fprintf(out, "\nWould be skipped (%d)\n", len(skipped))
@@ -246,13 +247,14 @@ func (r *check) describeSkipped(out io.Writer) {
 	}
 }
 
-// describeDisks writes the disks a capture would transfer and what they would
-// cost: the local scratch space, and the total a reader needs in order to
-// judge the scale of what they are about to transfer.
+// describeDisks writes the disks a capture would transfer and what they
+// would cost. It writes the local scratch space. It also writes the total,
+// which a reader needs to judge the scale of what they are about to
+// transfer.
 //
-// Both are provisioned sizes. A disk is transferred compressed, so a sparsely
-// used volume costs a fraction of this, and the figures are an upper bound
-// rather than a prediction.
+// Both are provisioned sizes. A disk is transferred compressed, so a
+// sparsely used volume costs a fraction of this. The figures are therefore
+// an upper bound rather than a prediction.
 func (r *check) describeDisks(out io.Writer) {
 	_, _ = fmt.Fprintf(out, "\nDisks (%d)\n", len(r.disks))
 	if len(r.disks) == 0 {
@@ -279,9 +281,9 @@ func (r *check) describeDisks(out io.Writer) {
 
 // named renders the name of the object one entry of the record is about.
 //
-// A namespace is shown only when it is not the one being captured from, which
-// is how a reader spots an object from elsewhere in the cluster. An entry
-// carrying no name is one quo never learned the name of: KubeVirt's
+// A namespace is shown only when it is not the one being captured from.
+// That is how a reader spots an object from elsewhere in the cluster. An
+// entry carrying no name is one quo never learned the name of. KubeVirt's
 // configuration is a singleton whose name only reading it supplies, so a read
 // that failed leaves the name empty.
 func (r *check) named(attempt bundle.Attempt) (named string) {
@@ -309,13 +311,13 @@ func renderDiskSize(disk checkedDisk) (rendered string) {
 	return
 }
 
-// renderSpace renders an amount of disk space a capture would need. A figure
-// quo could only partly account for is given as a lower bound, and one it
-// could not account for at all is not given as a number.
+// renderSpace renders an amount of disk space a capture would need. A
+// figure quo could only partly account for is given as a lower bound. A
+// figure it could not account for at all is not given as a number.
 //
-// These are quo's own arithmetic over sizes the claims gave in whatever units
-// each was written in, so they are rendered the way quo renders a transfer
-// rather than as a Kubernetes quantity.
+// These are quo's own arithmetic over sizes the claims gave in whatever
+// units each was written in. They are therefore rendered the way quo renders
+// a transfer rather than as a Kubernetes quantity.
 func renderSpace(size int64, complete bool) (rendered string) {
 	rendered = FormatSize(size)
 	if complete {

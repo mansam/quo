@@ -136,3 +136,59 @@ func TestExportSaysNothingAboutSkippedObjectsWhenItCollectedEverything(t *testin
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	g.Expect(reported.String()).To(gomega.BeEmpty())
 }
+
+func TestExportWarnsThatABundleWithoutAnExpandedSpecCannotBeDeployed(t *testing.T) {
+	g := gomega.NewGomegaWithT(t)
+	record := bundle.CaptureRecord{
+		{
+			Kind:    "VirtualMachine",
+			Name:    "db-01",
+			Outcome: bundle.OutcomeCollected,
+		},
+		{
+			Kind:    bundle.KindExpandedSpec,
+			Name:    "db-01",
+			Outcome: bundle.OutcomeSkipped,
+			Reason:  bundle.SkipForbidden,
+			Message: `virtualmachines "db-01" is forbidden`,
+		},
+	}
+	reported := &bytes.Buffer{}
+
+	err := warnUndeployable(reported, record)
+
+	// The capture has still succeeded. So the warning is said plainly
+	// rather than as a failure. It names why the read failed, because the
+	// missing permission is what a person capturing the bundle can fix
+	// before running it again.
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	g.Expect(reported.String()).To(gomega.ContainSubstring(
+		`The capture could not read the expanded spec ` +
+			`(forbidden: virtualmachines "db-01" is forbidden), ` +
+			"so the bundle cannot be deployed.\n"))
+}
+
+func TestExportSaysNothingAboutDeployingWhenTheCaptureReadTheExpandedSpec(t *testing.T) {
+	g := gomega.NewGomegaWithT(t)
+	record := bundle.CaptureRecord{
+		{
+			Kind:    bundle.KindExpandedSpec,
+			Name:    "db-01",
+			Outcome: bundle.OutcomeCollected,
+		},
+		{
+			// A skipped object of any other kind says nothing about
+			// deploying. Only the expansion is what a deploy applies.
+			Kind:    "Secret",
+			Name:    "db-01-cloudinit",
+			Outcome: bundle.OutcomeSkipped,
+			Reason:  bundle.SkipForbidden,
+		},
+	}
+	reported := &bytes.Buffer{}
+
+	err := warnUndeployable(reported, record)
+
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	g.Expect(reported.String()).To(gomega.BeEmpty())
+}

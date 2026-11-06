@@ -30,7 +30,7 @@ func TestDeployAppliesTheExpandedSpecAsTheVirtualMachine(t *testing.T) {
 
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	// The deploy record says what the run did.
-	g.Expect(record).To(gomega.Equal(Record{
+	g.Expect(record.Steps).To(gomega.Equal([]Step{
 		{
 			Kind:      cluster.KindVirtualMachine,
 			Namespace: testDeployNamespace,
@@ -38,16 +38,16 @@ func TestDeployAppliesTheExpandedSpecAsTheVirtualMachine(t *testing.T) {
 			Outcome:   OutcomeCreated,
 		},
 	}))
-	// One object is created, and only one: the bundle also holds the
+	// One object is created, and only one. The bundle also holds the
 	// captured declaration, an instancetype, a preference and a
 	// ControllerRevision, none of which a deploy creates.
 	g.Expect(fake.created).To(gomega.HaveLen(1))
 	created := fake.created[0]
 	g.Expect(created.GetKind()).To(gomega.Equal(cluster.KindVirtualMachine))
 	g.Expect(created.GetName()).To(gomega.Equal(testVirtualMachineName))
-	// What landed is the source cluster's resolution, not the declaration:
-	// the machine type only the resolution knows is there, and no
-	// instancetype or preference matcher is.
+	// What arrived is the source cluster's resolution, not the
+	// declaration. The machine type only the resolution knows is there,
+	// and no instancetype or preference matcher is.
 	machineType, found, _ := unstructured.NestedString(
 		created.Object, "spec", "template", "spec", "domain", "machine", "type")
 	g.Expect(found).To(gomega.BeTrue())
@@ -90,16 +90,16 @@ func TestDeployCarriesOnlyTheForcedRewrites(t *testing.T) {
 			record, err := Deploy(context.TODO(), fake, opt)
 
 			g.Expect(err).ToNot(gomega.HaveOccurred())
-			g.Expect(record).To(gomega.HaveLen(1))
-			g.Expect(record[0].Name).To(gomega.Equal(tt.want))
+			g.Expect(record.Steps).To(gomega.HaveLen(1))
+			g.Expect(record.Steps[0].Name).To(gomega.Equal(tt.want))
 			g.Expect(fake.created).To(gomega.HaveLen(1))
-			// What lands is the expanded spec carrying the forced
-			// rewrites — the name, the namespace, the labels, the
-			// annotations, and the source cluster's metadata cleared —
-			// and everything else exactly as the bundle holds it. The
-			// deploy time is the one value a fixture cannot know in
-			// advance, so it is taken off before the comparison and
-			// asserted on its own.
+			// What arrives is the expanded spec carrying the forced
+			// rewrites, and everything else exactly as the bundle holds
+			// it. The forced rewrites are the name, the namespace, the
+			// labels, the annotations, and the source cluster's metadata
+			// cleared. The deploy time is the one value a fixture cannot
+			// know in advance. The test therefore takes it off before the
+			// comparison and asserts it on its own.
 			created := fake.created[0]
 			annotations := created.GetAnnotations()
 			deployedAt, found := annotations["quo.mansam.dev/deployed-at"]
@@ -123,10 +123,10 @@ func TestDeployClearsMetadataTheTargetCannotRecreate(t *testing.T) {
 	_, err := Deploy(context.TODO(), fake, testOptions(path))
 
 	// The expansion carries the metadata the source cluster assigned it,
-	// and none of it is sent: the target mints its own uid, creation
-	// timestamp, generation and resourceVersion when it creates, records
-	// its own managed fields, and refuses outright a create that arrives
-	// with a resourceVersion.
+	// and none of it is sent. The target mints its own uid, creation
+	// timestamp, generation and resourceVersion when it creates. It
+	// records its own managed fields. It refuses outright a create that
+	// arrives with a resourceVersion.
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	created := fake.created[0]
 	for _, field := range []string{
@@ -149,15 +149,15 @@ func TestDeployLabelsAndAnnotatesWhatItCreates(t *testing.T) {
 	labels := created.GetLabels()
 	g.Expect(labels["app.kubernetes.io/managed-by"]).To(gomega.Equal("quo"))
 	// The bundle label is the manifest's digest as a label value can hold
-	// it: a hex SHA-256 is 64 characters and label values are limited to
-	// 63, so the hash is base64url and prefixed, making 50.
+	// it. A hex SHA-256 is 64 characters and label values are limited to
+	// 63. The hash is therefore base64url and prefixed, making 50.
 	identity := labels["quo.mansam.dev/bundle"]
 	g.Expect(identity).To(gomega.HavePrefix("sha256-"))
 	g.Expect(identity).To(gomega.HaveLen(len("sha256-") + 43))
 	g.Expect(identity).To(gomega.Equal(bundleLabelOf(t, path)))
 	annotations := created.GetAnnotations()
-	// The exact bundle filename, so a running machine can be tied back to
-	// the bundle — and the case — it came from.
+	// The exact bundle filename, so a running machine can be traced to
+	// the bundle, and the case, it came from.
 	g.Expect(annotations["quo.mansam.dev/bundle-file"]).To(gomega.Equal(path))
 	// Where it came from and when.
 	g.Expect(annotations["quo.mansam.dev/source-cluster"]).To(gomega.Equal(testSourceCluster))
@@ -243,25 +243,30 @@ func TestDeployRefusesABundleItCannotDeploy(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			g := gomega.NewGomegaWithT(t)
-			fake := target()
+		for _, mode := range runModes {
+			t.Run(mode.name+" of "+tt.name, func(t *testing.T) {
+				g := gomega.NewGomegaWithT(t)
+				fake := target()
+				opt := testOptions(tt.bundle)
+				opt.DryRun = mode.dryRun
 
-			record, err := Deploy(context.TODO(), fake, testOptions(tt.bundle))
+				record, err := Deploy(context.TODO(), fake, opt)
 
-			if tt.want == nil {
-				g.Expect(err).To(gomega.HaveOccurred())
-			} else {
-				g.Expect(err).To(gomega.MatchError(tt.want))
-			}
-			// The refusal names what it found.
-			if tt.names != "" {
-				g.Expect(err.Error()).To(gomega.ContainSubstring(tt.names))
-			}
-			// Nothing was attempted, so nothing was created.
-			g.Expect(record).To(gomega.BeEmpty())
-			g.Expect(fake.created).To(gomega.BeEmpty())
-		})
+				if tt.want == nil {
+					g.Expect(err).To(gomega.HaveOccurred())
+				} else {
+					g.Expect(err).To(gomega.MatchError(tt.want))
+				}
+				// The refusal names what it found.
+				if tt.names != "" {
+					g.Expect(err.Error()).To(gomega.ContainSubstring(tt.names))
+				}
+				// Nothing was attempted, so nothing reached the target.
+				g.Expect(record.Steps).To(gomega.BeEmpty())
+				g.Expect(record.Requirements).To(gomega.BeEmpty())
+				wroteNothing(g, fake)
+			})
+		}
 	}
 }
 
@@ -290,44 +295,68 @@ func TestDeployRefusesWhenTheTargetCannotTakeIt(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			g := gomega.NewGomegaWithT(t)
-			fake := target()
-			opt := testOptions(path)
-			if tt.namespace != "" {
-				opt.Namespace = tt.namespace
-			}
-			if tt.taken {
-				fake.hold(cluster.ObjectRef{
-					Kind:      cluster.KindVirtualMachine,
-					Namespace: testDeployNamespace,
-					Name:      testVirtualMachineName,
-				}, declaration())
-			}
+		for _, mode := range runModes {
+			t.Run(mode.name+" of "+tt.name, func(t *testing.T) {
+				g := gomega.NewGomegaWithT(t)
+				fake := target()
+				opt := testOptions(path)
+				opt.DryRun = mode.dryRun
+				if tt.namespace != "" {
+					opt.Namespace = tt.namespace
+				}
+				if tt.taken {
+					fake.hold(cluster.ObjectRef{
+						Kind:      cluster.KindVirtualMachine,
+						Namespace: testDeployNamespace,
+						Name:      testVirtualMachineName,
+					}, declaration())
+				}
 
-			record, err := Deploy(context.TODO(), fake, opt)
+				record, err := Deploy(context.TODO(), fake, opt)
 
-			g.Expect(err).To(gomega.MatchError(tt.want))
-			// The refusal names what it found.
-			g.Expect(err.Error()).To(gomega.ContainSubstring(tt.names))
-			g.Expect(record).To(gomega.BeEmpty())
-			g.Expect(fake.created).To(gomega.BeEmpty())
-		})
+				g.Expect(err).To(gomega.MatchError(tt.want))
+				// The refusal names what it found.
+				g.Expect(err.Error()).To(gomega.ContainSubstring(tt.names))
+				// Nothing was attempted, so nothing reached the target.
+				g.Expect(record.Steps).To(gomega.BeEmpty())
+				g.Expect(record.Requirements).To(gomega.BeEmpty())
+				wroteNothing(g, fake)
+			})
+		}
 	}
+}
+
+func TestDeployRemovesTheMatchersTheExpansionStillCarries(t *testing.T) {
+	g := gomega.NewGomegaWithT(t)
+	// One of the shapes the expand-spec subresource produces: a resolution
+	// that still names the instancetype and preference it was asked for.
+	// The applied VirtualMachine names none either way, because the
+	// resolution is what arrives. A matcher would have the target create
+	// a ControllerRevision for a machine that needs none.
+	path := writeExpandedBundle(t, matcherExpandedSpec(t))
+	fake := target()
+
+	record, err := Deploy(context.TODO(), fake, testOptions(path))
+
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	g.Expect(record.Steps).To(gomega.HaveLen(1))
+	created := fake.created[0]
+	_, matched, _ := unstructured.NestedMap(created.Object, "spec", "instancetype")
+	g.Expect(matched).To(gomega.BeFalse())
+	_, matched, _ = unstructured.NestedMap(created.Object, "spec", "preference")
+	g.Expect(matched).To(gomega.BeFalse())
+	// What the matchers resolved to is still there: the machine type and
+	// CPU the source cluster folded in arrive with the rest of the spec.
+	machineType, found, _ := unstructured.NestedString(
+		created.Object, "spec", "template", "spec", "domain", "machine", "type")
+	g.Expect(found).To(gomega.BeTrue())
+	g.Expect(machineType).To(gomega.Equal(testMachineType))
 }
 
 func TestDeploySkipsAnExpandedSpecThatFailsItsDigest(t *testing.T) {
 	g := gomega.NewGomegaWithT(t)
-	// One byte of the expansion changed in transit. The machine type sits
-	// in the expansion alone — the declaration names an instancetype
-	// instead — so its last occurrence in the bundle is in the member.
-	corrupted := bytes.Clone(readFile(t, writeFixtureBundle(t, true)))
-	at := bytes.LastIndex(corrupted, []byte(testMachineType))
-	if at < 0 {
-		t.Fatal("the fixture bundle does not carry the machine type")
-	}
-	corrupted[at] = 'x'
-	path := writeBytes(t, "corrupted.quo", corrupted)
+	// One byte of the expansion changed in transit.
+	path := writeCorruptedExpansionBundle(t, writeFixtureBundle(t, true))
 	fake := target()
 
 	record, err := Deploy(context.TODO(), fake, testOptions(path))
@@ -335,10 +364,10 @@ func TestDeploySkipsAnExpandedSpecThatFailsItsDigest(t *testing.T) {
 	// The step is skipped and recorded, and nothing was created:
 	// corruption never reaches the target.
 	g.Expect(err).To(gomega.MatchError(&NotCreatedError{}))
-	g.Expect(record).To(gomega.HaveLen(1))
-	g.Expect(record[0].Kind).To(gomega.Equal(cluster.KindVirtualMachine))
-	g.Expect(record[0].Outcome).To(gomega.Equal(OutcomeSkipped))
-	g.Expect(record[0].Reason).To(gomega.ContainSubstring("does not match its digest"))
+	g.Expect(record.Steps).To(gomega.HaveLen(1))
+	g.Expect(record.Steps[0].Kind).To(gomega.Equal(cluster.KindVirtualMachine))
+	g.Expect(record.Steps[0].Outcome).To(gomega.Equal(OutcomeSkipped))
+	g.Expect(record.Steps[0].Reason).To(gomega.ContainSubstring("does not match its digest"))
 	g.Expect(fake.created).To(gomega.BeEmpty())
 }
 
@@ -350,14 +379,14 @@ func TestDeployRecordsACreateThatFailed(t *testing.T) {
 
 	record, err := Deploy(context.TODO(), fake, testOptions(path))
 
-	// The run ends with what it managed and the error says how much of it
-	// arrived, so that a script can tell a complete deploy from a partial
-	// one.
+	// The run ends with what it managed, and the error says how much of
+	// it arrived. A script can therefore tell a complete deploy from a
+	// partial one.
 	g.Expect(err).To(gomega.MatchError(&NotCreatedError{}))
 	g.Expect(err.Error()).To(gomega.ContainSubstring("0 of the 1 objects"))
-	g.Expect(record).To(gomega.HaveLen(1))
-	g.Expect(record[0].Outcome).To(gomega.Equal(OutcomeFailed))
-	g.Expect(record[0].Reason).To(gomega.ContainSubstring("the API server went away"))
+	g.Expect(record.Steps).To(gomega.HaveLen(1))
+	g.Expect(record.Steps[0].Outcome).To(gomega.Equal(OutcomeFailed))
+	g.Expect(record.Steps[0].Reason).To(gomega.ContainSubstring("the API server went away"))
 	g.Expect(fake.created).To(gomega.BeEmpty())
 }
 
@@ -376,7 +405,7 @@ func TestDeployStopsWhereItStandsWhenCancelled(t *testing.T) {
 		// target stays where it is: a deploy never rolls back.
 		g.Expect(err).To(gomega.HaveOccurred())
 		g.Expect(err.Error()).To(gomega.ContainSubstring("context canceled"))
-		g.Expect(record).To(gomega.BeEmpty())
+		g.Expect(record.Steps).To(gomega.BeEmpty())
 		g.Expect(fake.created).To(gomega.BeEmpty())
 	})
 
@@ -390,21 +419,21 @@ func TestDeployStopsWhereItStandsWhenCancelled(t *testing.T) {
 		record, err := Deploy(context.TODO(), fake, testOptions(path))
 
 		g.Expect(err).To(gomega.MatchError(&NotCreatedError{}))
-		g.Expect(record).To(gomega.HaveLen(1))
-		g.Expect(record[0].Outcome).To(gomega.Equal(OutcomeFailed))
-		g.Expect(record[0].Reason).To(gomega.ContainSubstring("context canceled"))
+		g.Expect(record.Steps).To(gomega.HaveLen(1))
+		g.Expect(record.Steps[0].Outcome).To(gomega.Equal(OutcomeFailed))
+		g.Expect(record.Steps[0].Reason).To(gomega.ContainSubstring("context canceled"))
 		g.Expect(fake.created).To(gomega.BeEmpty())
 	})
 }
 
 // expectedVirtualMachine builds what the target should hold after a deploy
-// of the bundle at path: the fixture's expanded spec, decoded the way a
-// deploy decodes it, carrying the forced rewrites the test's deploy
+// of the bundle at path. It is the fixture's expanded spec, decoded the
+// way a deploy decodes it, carrying the forced rewrites the test's deploy
 // performed. The rewrites are stated here as literal values rather than by
-// calling the code under test, so this is an independent statement of the
-// contract rather than a restatement of it.
+// calling the code under test. This is therefore an independent statement
+// of the contract rather than a restatement of it.
 //
-// The deploy time is left out: it is the one value a fixture cannot know
+// The deploy time is left out. It is the one value a fixture cannot know
 // in advance, and the test asserts it on its own.
 func expectedVirtualMachine(t *testing.T, path, name string) (expected *unstructured.Unstructured) {
 	t.Helper()
@@ -445,8 +474,8 @@ func expectedVirtualMachine(t *testing.T, path, name string) (expected *unstruct
 }
 
 // bundleLabelOf is the bundle label value a deploy derives from the bundle
-// at path: the SHA-256 of the manifest member, encoded to fit a label
-// value.
+// at path. It is the SHA-256 of the manifest member, encoded to fit a
+// label value.
 func bundleLabelOf(t *testing.T, path string) (value string) {
 	t.Helper()
 	summed := sha256.Sum256(memberOf(t, path, bundle.ManifestPath))
