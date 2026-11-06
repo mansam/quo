@@ -13,8 +13,9 @@ type Options struct {
 	// system temporary directory. Only one disk is ever staged at a time, so
 	// it needs room for the largest single compressed disk.
 	Scratch string
-	// Progress, when set, is called while a disk transfers. The caller can
-	// then tell a capture that takes hours from one that has hung.
+	// Progress, when set, is called while a disk transfers, and while
+	// the export it comes from becomes ready. The caller can then tell
+	// a capture that takes hours from one that is hung.
 	Progress func(p Progress)
 }
 
@@ -28,11 +29,31 @@ type Progress struct {
 	// and Disks is how many there are.
 	Disk  int
 	Disks int
-	// Transferred is how many bytes have arrived so far.
+	// State is what the capture is doing with the disk: waiting for the
+	// export to serve, transferring the disk, or done.
+	State State
+	// Transferred is the count of bytes that have arrived so far. It
+	// counts only bytes that have moved.
 	Transferred int64
-	// Done reports the disk as fully transferred.
-	Done bool
+	// Said is what the capture waits on, in the cluster's words. It is
+	// set only while the capture waits for the export.
+	Said string
 }
+
+// State is what a disk's transfer is doing.
+type State string
+
+// States
+const (
+	// StateWaiting is a capture whose export is not ready to serve its
+	// disks yet. Said says what it waits on.
+	StateWaiting State = "waiting"
+	// StateTransferring is a transfer whose bytes are moving.
+	StateTransferring State = "transferring"
+	// StateDone is a transfer whose bytes have all arrived. The end of
+	// the stream is the end of what the export had to give.
+	StateDone State = "done"
+)
 
 // Statuses
 const (

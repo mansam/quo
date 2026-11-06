@@ -2,6 +2,7 @@ package capture
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -28,7 +29,7 @@ type transfer struct {
 	export  cluster.DiskExport
 	disk    bundle.Disk
 	scratch string
-	report  func(transferred int64, done bool)
+	report  func(state State, received int64)
 }
 
 // writeBundle opens the bundle, stages every disk into it, and closes it.
@@ -137,11 +138,11 @@ func (r *transfer) stage(ctx context.Context, writer *bundle.Writer) (err error)
 	return
 }
 
-// download transfers one disk into the staged file, reporting progress as it
-// goes. The bytes are stored exactly as they arrive: the export server has
-// already compressed them and quo compresses nothing of its own.
+// download transfers one disk into the staged file, reporting progress
+// as the bytes arrive. The bytes are stored exactly as they arrive: the
+// export server has already compressed them and quo compresses nothing
+// of its own.
 func (r *transfer) download(ctx context.Context, staged io.Writer) (size int64, err error) {
-	r.report(0, false)
 	stream, err := r.export.OpenDisk(ctx, r.disk.Claim)
 	if err != nil {
 		return
@@ -156,15 +157,14 @@ func (r *transfer) download(ctx context.Context, staged io.Writer) (size int64, 
 		err = fmt.Errorf("transfer disk %q: %w", r.disk.Claim, err)
 		return
 	}
-	r.report(size, true)
 	return
 }
 
-// newReporter returns the function that reports one disk's progress, which
-// does nothing when the caller requested no progress.
-func newReporter(opt Options, transfers []transfer, at int) (report func(transferred int64, done bool)) {
+// newReporter returns the function that reports one disk's progress,
+// which does nothing when the caller asked for no progress.
+func newReporter(opt Options, transfers []transfer, at int) (report func(state State, received int64)) {
 	if opt.Progress == nil {
-		report = func(transferred int64, done bool) {}
+		report = func(state State, received int64) {}
 		return
 	}
 	p := Progress{
@@ -173,35 +173,50 @@ func newReporter(opt Options, transfers []transfer, at int) (report func(transfe
 		Disk:    at + 1,
 		Disks:   len(transfers),
 	}
-	report = func(transferred int64, done bool) {
-		p.Transferred = transferred
-		p.Done = done
+	report = func(state State, received int64) {
+		p.State = state
+		p.Transferred = received
+		p.Said = ""
 		opt.Progress(p)
 	}
 	return
 }
 
-// progressReader reports how much of a disk has arrived while it is being
-// read. Reports are separated in time, because a disk is read in small
-// pieces and a report per piece would be too many. The caller sets reported
-// to the time the transfer started, so a disk that arrives quickly is
-// reported only as started and as finished.
+// progressReader reports how much of a disk has arrived while it is
+// being read. Reports are separated in time, because a disk is read in
+// small pieces and a report per piece would be too many. The reader
+// that wraps the stream starts the clock, so a disk that arrives
+// quickly is reported only as finished. The end of the stream is the
+// end of what the export had to give, so it is reported as done. The
+// end is reported once. Nothing is reported after that.
 type progressReader struct {
 	in       io.Reader
-	report   func(transferred int64, done bool)
+	report   func(state State, received int64)
 	received int64
 	reported time.Time
+	// done says the end of the stream has been reported. Nothing is
+	// reported after it.
+	done bool
 }
 
-// Read passes the read through and reports what has arrived so far.
+// Read reads from the stream it wraps and reports what has arrived so
+// far.
 func (r *progressReader) Read(b []byte) (n int, err error) {
 	n, err = r.in.Read(b)
 	r.received += int64(n)
+	if r.done {
+		return
+	}
+	if errors.Is(err, io.EOF) {
+		r.done = true
+		r.report(StateDone, r.received)
+		return
+	}
 	if time.Since(r.reported) < progressInterval {
 		return
 	}
 	r.reported = time.Now()
-	r.report(r.received, false)
+	r.report(StateTransferring, r.received)
 	return
 }
 

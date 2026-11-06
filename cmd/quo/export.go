@@ -167,7 +167,7 @@ func newReporter(out io.Writer) (report func(p capture.Progress)) {
 		}
 		written = len(line)
 		ending := "\r"
-		if p.Done {
+		if p.State == capture.StateDone {
 			ending = "\n"
 			written = 0
 		}

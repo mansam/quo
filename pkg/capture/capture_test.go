@@ -456,27 +456,26 @@ func TestExportReportsTransferProgress(t *testing.T) {
 	_, err := captureInto(t, c, opt)
 
 	g.Expect(err).ToNot(gomega.HaveOccurred())
-	// Each disk is reported as it starts, and again once it has all
-	// arrived. A capture that is moving can therefore be told from one
-	// that has hung.
+	// Each disk is reported done when its bytes have all arrived. The
+	// report follows the bytes: nothing is said that did not happen. A
+	// capture that is moving can therefore be told from one that has
+	// hung.
 	g.Expect(reported).To(gomega.Equal([]Progress{
-		{Claim: rootClaim, Volumes: []string{"rootdisk", "rootdisk-again"}, Disk: 1, Disks: 2},
 		{
 			Claim:       rootClaim,
 			Volumes:     []string{"rootdisk", "rootdisk-again"},
 			Disk:        1,
 			Disks:       2,
+			State:       StateDone,
 			Transferred: int64(len(rootContent)),
-			Done:        true,
 		},
-		{Claim: dataClaim, Volumes: []string{"datadisk"}, Disk: 2, Disks: 2},
 		{
 			Claim:       dataClaim,
 			Volumes:     []string{"datadisk"},
 			Disk:        2,
 			Disks:       2,
+			State:       StateDone,
 			Transferred: int64(len(dataContent)),
-			Done:        true,
 		},
 	}))
 }

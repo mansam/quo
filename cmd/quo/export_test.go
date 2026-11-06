@@ -106,6 +106,7 @@ func TestExportProgressCoversTheLineItReplaces(t *testing.T) {
 		Volumes: []string{"vol-0"},
 		Disk:    1,
 		Disks:   1,
+		State:   capture.StateTransferring,
 	}
 
 	// 1023.5 MiB, then 1.1 GiB: the second line is shorter than the first.
