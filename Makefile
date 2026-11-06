@@ -46,7 +46,7 @@ vet-live:
 
 .PHONY: build-live
 build-live:
-	$(GO) test -tags live -run '^$$' ./test/live/...
+	$(GO) test -tags live -c -o /dev/null ./test/live
 
 # The live suite itself. This needs a KubeVirt cluster with the ObjectGraph
 # feature gate enabled. QUO_LIVE_KUBECONFIG names the kubeconfig to connect

@@ -23,10 +23,12 @@ jobs:
       - run: go vet ./...
       - run: go test ./...
       # The default run excludes the live suite. So these steps vet and
-      # build it, to catch a change that stops it compiling. Its tests that
-      # need a cluster skip and say so. The ones that do not still run.
+      # build it, to catch a change that stops it compiling. The suite is
+      # compiled rather than run: its setup contacts whatever cluster the
+      # ambient kubeconfig names, and a runner with credentials for one
+      # would build a fixture on it.
       - run: go vet -tags live ./...
-      - run: go test -tags live ./test/live/...
+      - run: go test -tags live -c -o /dev/null ./test/live
 
   # Whether this repository has credentials for a cluster the live suite can
   # use. A job-level `if` cannot read the secrets context. So this job finds
