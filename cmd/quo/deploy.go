@@ -59,6 +59,10 @@ func runDeploy(args []string) (err error) {
 // line when the disk finishes. So a person can tell a deploy that takes
 // hours from one that stopped making progress.
 //
+// The line says what the disk is doing. While the target waits for the
+// claim, the line says so, and says what the target waits on. Once bytes
+// move, the line counts them.
+//
 // Progress goes to standard error. So standard output stays the result of
 // the command.
 func newUploadReporter(out io.Writer) (report func(p deploy.Progress)) {
@@ -69,20 +73,27 @@ func newUploadReporter(out io.Writer) (report func(p deploy.Progress)) {
 	// "1.1 GiBMiB" without the padding.
 	written := 0
 	report = func(p deploy.Progress) {
+		var tail string
+		switch p.State {
+		case deploy.StateWaiting:
+			tail = "waiting, " + p.Said
+		default:
+			tail = capture.FormatSize(p.Transferred)
+		}
 		line := fmt.Sprintf(
 			"disk %d/%d %s (%s): %s",
 			p.Disk,
 			p.Disks,
 			p.Claim,
 			strings.Join(p.Volumes, ", "),
-			capture.FormatSize(p.Transferred))
+			tail)
 		padding := ""
 		if len(line) < written {
 			padding = strings.Repeat(" ", written-len(line))
 		}
 		written = len(line)
 		ending := "\r"
-		if p.Done {
+		if p.State == deploy.StateDone {
 			ending = "\n"
 			written = 0
 		}

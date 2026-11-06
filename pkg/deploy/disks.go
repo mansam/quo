@@ -427,9 +427,15 @@ func upload(
 		}
 		return
 	}
-	report := newReporter(opt, disks, at)
+	report, waiting := newReporter(opt, disks, at)
 	sent := &progressReader{in: stream, report: report, reported: time.Now()}
-	err = t.UploadDisk(ctx, opt.Namespace, disk.held.Claim, sent, stream.Size())
+	err = t.UploadDisk(ctx, cluster.Upload{
+		Namespace: opt.Namespace,
+		Name:      disk.held.Claim,
+		Content:   sent,
+		Size:      stream.Size(),
+		Waiting:   waiting,
+	})
 	if mismatch := stream.Mismatch(); mismatch != nil {
 		// The bytes that left the bundle were not the bytes the manifest
 		// recorded. What the target holds is therefore not the disk the
@@ -448,11 +454,18 @@ func upload(
 	// DataVolume is created and now holds its bytes.
 }
 
-// newReporter returns the function that reports one disk's upload
-// progress, which does nothing when the caller asked for no progress.
-func newReporter(opt Options, disks []plannedDisk, at int) (report func(sent int64, done bool)) {
+// newReporter returns the functions that report one disk's upload
+// progress: report says the bytes moving through the reader, and waiting
+// says what the target waits on before they move. Both do nothing when
+// the caller asked for no progress.
+func newReporter(
+	opt Options,
+	disks []plannedDisk,
+	at int) (report func(state State, sent int64), waiting func(said string)) {
+	//
 	if opt.Progress == nil {
-		report = func(sent int64, done bool) {}
+		report = func(state State, sent int64) {}
+		waiting = func(said string) {}
 		return
 	}
 	p := Progress{
@@ -461,9 +474,16 @@ func newReporter(opt Options, disks []plannedDisk, at int) (report func(sent int
 		Disk:    at + 1,
 		Disks:   len(disks),
 	}
-	report = func(sent int64, done bool) {
+	report = func(state State, sent int64) {
+		p.State = state
 		p.Transferred = sent
-		p.Done = done
+		p.Said = ""
+		opt.Progress(p)
+	}
+	waiting = func(said string) {
+		p.State = StateWaiting
+		p.Transferred = 0
+		p.Said = said
 		opt.Progress(p)
 	}
 	return
@@ -479,7 +499,7 @@ func newReporter(opt Options, disks []plannedDisk, at int) (report func(sent int
 // digest is therefore never reported done.
 type progressReader struct {
 	in       io.Reader
-	report   func(sent int64, done bool)
+	report   func(state State, sent int64)
 	sent     int64
 	reported time.Time
 }
@@ -490,13 +510,13 @@ func (r *progressReader) Read(b []byte) (n int, err error) {
 	n, err = r.in.Read(b)
 	r.sent += int64(n)
 	if errors.Is(err, io.EOF) {
-		r.report(r.sent, true)
+		r.report(StateDone, r.sent)
 		return
 	}
 	if time.Since(r.reported) < progressInterval {
 		return
 	}
 	r.reported = time.Now()
-	r.report(r.sent, false)
+	r.report(StateTransferring, r.sent)
 	return
 }

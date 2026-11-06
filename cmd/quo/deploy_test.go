@@ -400,6 +400,40 @@ func TestDeployRecordSaysNoUndeployCommandWhenNothingWasCreated(t *testing.T) {
 	g.Expect(reported.String()).ToNot(gomega.ContainSubstring("undeploy"))
 }
 
+func TestTheUploadReporterSaysWhatADiskIsDoing(t *testing.T) {
+	g := gomega.NewGomegaWithT(t)
+	reported := &bytes.Buffer{}
+	report := newUploadReporter(reported)
+	disk := deploy.Progress{
+		Disk:    1,
+		Disks:   2,
+		Claim:   "db-01-root",
+		Volumes: []string{"root", "logs"},
+	}
+
+	waiting := disk
+	waiting.State = deploy.StateWaiting
+	waiting.Said = `the DataVolume is "Pending"`
+	report(waiting)
+	moving := disk
+	moving.State = deploy.StateTransferring
+	moving.Transferred = 512
+	report(moving)
+	arrived := disk
+	arrived.State = deploy.StateDone
+	arrived.Transferred = 1024
+	report(arrived)
+
+	// The line says the disk waits and what it waits on. Once bytes
+	// move it counts them, and it says the disk done at the end of the
+	// stream. The byte count is shorter than the wait it replaces, so
+	// 31 spaces pad over it.
+	g.Expect(reported.String()).To(gomega.Equal(
+		`disk 1/2 db-01-root (root, logs): waiting, the DataVolume is "Pending"`+"\r"+
+			"disk 1/2 db-01-root (root, logs): 512 B"+strings.Repeat(" ", 31)+"\r"+
+			"disk 1/2 db-01-root (root, logs): 1.0 KiB"+"\n"))
+}
+
 func TestDeployDryRunPrintsTheRecordItWouldPrint(t *testing.T) {
 	g := gomega.NewGomegaWithT(t)
 	record := deploy.Record{

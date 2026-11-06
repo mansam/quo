@@ -735,7 +735,7 @@ func TestDeployReportsTheProgressOfEachUpload(t *testing.T) {
 		}
 		member := memberOf(t, path, bundle.DiskPath(claim, format))
 		g.Expect(reported[i].Claim).To(gomega.Equal(claim))
-		g.Expect(reported[i].Done).To(gomega.BeTrue())
+		g.Expect(reported[i].State).To(gomega.Equal(StateDone))
 		g.Expect(reported[i].Transferred).To(gomega.BeEquivalentTo(len(member)))
 		g.Expect(reported[i].Disk).To(gomega.Equal(i + 1))
 		g.Expect(reported[i].Disks).To(gomega.Equal(4))
@@ -762,6 +762,51 @@ func TestDeployReportsNothingForATargetThatTransfersNothing(t *testing.T) {
 	// once bytes have moved.
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	g.Expect(reported).To(gomega.BeEmpty())
+}
+
+func TestDeploySaysWhatAnUploadWaitsFor(t *testing.T) {
+	g := gomega.NewGomegaWithT(t)
+	// One disk, so the reports the run makes are its reports alone.
+	path := writeStorageFixtureBundle(t, bundle.StorageRequirement{
+		Claim:        testRootClaim,
+		StorageClass: testStorageClass,
+		Size:         "32Gi",
+		VolumeMode:   "Block",
+	})
+	fake := storageTarget()
+	// CDI has not made the claim ready yet. Each readiness check says
+	// what it waits on, the way a real target says the DataVolume's
+	// phase.
+	fake.uploadWaitsFor = []string{
+		"the DataVolume has no phase yet",
+		`the DataVolume is "Pending"`,
+		`the DataVolume is "ImportInProgress"`,
+	}
+	var reported []Progress
+	opt := testOptions(path)
+	opt.Progress = func(p Progress) {
+		reported = append(reported, p)
+	}
+
+	_, err := Deploy(context.TODO(), fake, opt)
+
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	// While the target waits, each check it makes is reported, saying
+	// what it waits on. No bytes have moved, so none are counted.
+	for i, said := range fake.uploadWaitsFor {
+		g.Expect(reported[i].State).To(gomega.Equal(StateWaiting))
+		g.Expect(reported[i].Said).To(gomega.Equal(said))
+		g.Expect(reported[i].Claim).To(gomega.Equal(testRootClaim))
+		g.Expect(reported[i].Transferred).To(gomega.BeZero())
+	}
+	// The wait ends and the bytes move. The disk's next report is its
+	// last: the reader the bytes pass through reports it done.
+	member := memberOf(t, path, bundle.DiskPath(testRootClaim, bundle.DiskGzip))
+	g.Expect(reported).To(gomega.HaveLen(len(fake.uploadWaitsFor) + 1))
+	last := reported[len(fake.uploadWaitsFor)]
+	g.Expect(last.State).To(gomega.Equal(StateDone))
+	g.Expect(last.Claim).To(gomega.Equal(testRootClaim))
+	g.Expect(last.Transferred).To(gomega.BeEquivalentTo(len(member)))
 }
 
 // errUploadRefused is what a transfer that died on the way to the upload
