@@ -90,7 +90,7 @@ func TestUndeployRejectsACommandLineItCannotActOn(t *testing.T) {
 	}
 }
 
-func TestUndeployPrintsWhatItDeleted(t *testing.T) {
+func TestUndeployPrintsAcceptedDeletionRequests(t *testing.T) {
 	g := gomega.NewGomegaWithT(t)
 	deleted := []deploy.Deletion{
 		{
@@ -106,11 +106,11 @@ func TestUndeployPrintsWhatItDeleted(t *testing.T) {
 	}
 	reported := &bytes.Buffer{}
 
-	err := printDeletions(reported, deleted, false)
+	err := printDeletions(reported, deleted, deploy.UndeployOptions{})
 
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	said := reported.String()
-	g.Expect(said).To(gomega.ContainSubstring("Deleted 2 objects:"))
+	g.Expect(said).To(gomega.ContainSubstring("Deletion requested for 2 objects:"))
 	g.Expect(said).To(gomega.ContainSubstring("DataVolume"))
 	g.Expect(said).To(gomega.ContainSubstring("diagnostics/db-01-root"))
 	g.Expect(said).To(gomega.ContainSubstring("VirtualMachine"))
@@ -128,18 +128,18 @@ func TestUndeployDryRunPrintsWhatItWouldDelete(t *testing.T) {
 	}
 	reported := &bytes.Buffer{}
 
-	err := printDeletions(reported, deleted, true)
+	err := printDeletions(reported, deleted, deploy.UndeployOptions{DryRun: true})
 
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	said := reported.String()
 	// It says what it would do, and that one thing, not many.
-	g.Expect(said).To(gomega.ContainSubstring("Would delete 1 object:"))
+	g.Expect(said).To(gomega.ContainSubstring("Would request deletion for 1 object:"))
 	g.Expect(said).To(gomega.ContainSubstring("VirtualMachine"))
 	g.Expect(said).To(gomega.ContainSubstring("diagnostics/db-01"))
 	g.Expect(said).ToNot(gomega.ContainSubstring("Deleted"))
 }
 
-func TestUndeployPrintsTheOneThatWasNotDeleted(t *testing.T) {
+func TestUndeployDistinguishesFailedAndAcceptedRequests(t *testing.T) {
 	g := gomega.NewGomegaWithT(t)
 	deleted := []deploy.Deletion{
 		{
@@ -156,22 +156,21 @@ func TestUndeployPrintsTheOneThatWasNotDeleted(t *testing.T) {
 	}
 	reported := &bytes.Buffer{}
 
-	err := printDeletions(reported, deleted, false)
+	err := printDeletions(reported, deleted, deploy.UndeployOptions{})
 
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	said := reported.String()
-	// The count says the undeploy was a partial one. The entry says why
-	// the object is still there.
-	g.Expect(said).To(gomega.ContainSubstring("Deleted 1 of 2 objects:"))
-	g.Expect(said).To(gomega.ContainSubstring("not deleted: the API server went away"))
+	g.Expect(said).To(gomega.ContainSubstring("Deletion results:"))
+	g.Expect(said).To(gomega.ContainSubstring("request accepted"))
+	g.Expect(said).To(gomega.ContainSubstring("request failed: the API server went away"))
 }
 
-func TestUndeployPrintsNothingWhenThereIsNothingToRemove(t *testing.T) {
+func TestUndeployReportsWhenNoObjectsMatch(t *testing.T) {
 	g := gomega.NewGomegaWithT(t)
 	reported := &bytes.Buffer{}
 
-	err := printDeletions(reported, nil, false)
+	err := printDeletions(reported, nil, deploy.UndeployOptions{Namespace: "diagnostics"})
 
 	g.Expect(err).ToNot(gomega.HaveOccurred())
-	g.Expect(reported.String()).To(gomega.BeEmpty())
+	g.Expect(reported.String()).To(gomega.Equal("No objects match this deployment in namespace \"diagnostics\".\n"))
 }

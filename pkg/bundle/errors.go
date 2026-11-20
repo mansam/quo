@@ -33,7 +33,7 @@ type DigestMismatchError struct {
 // Error names the member and both digests.
 func (r *DigestMismatchError) Error() string {
 	return fmt.Sprintf(
-		"member %q does not match its digest: manifest records %s, content is %s",
+		"member %q digest mismatch: expected %s, got %s",
 		r.Path,
 		r.Want,
 		r.Got)

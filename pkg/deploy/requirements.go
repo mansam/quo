@@ -86,8 +86,8 @@ func attachNetwork(
 			Kind:        KindNetwork,
 			Requirement: network,
 			Tried: fmt.Sprintf(
-				"--network maps it to %q, which the target cluster does not have",
-				named),
+				"no NetworkAttachmentDefinition %q on the target cluster. Use --network %s=<namespace>/<attachment> to select an existing attachment",
+				namespace+"/"+name, network),
 		}
 		return
 	}
@@ -117,8 +117,7 @@ func attachNetworkByName(
 			Kind:        KindNetwork,
 			Requirement: required.Name,
 			Tried: fmt.Sprintf(
-				"the bundle names no attachment for it and no --network maps it; "+
-					"attach it with --network %s=<namespace>/<attachment>",
+				"the bundle does not name an attachment. Set --network %s=<namespace>/<attachment>",
 				required.Name),
 		}
 		return
@@ -136,10 +135,8 @@ func attachNetworkByName(
 			Kind:        KindNetwork,
 			Requirement: required.Name,
 			Tried: fmt.Sprintf(
-				"the deploy namespace %s holds no NetworkAttachmentDefinition %q and no --network maps it; "+
-					"attach it with --network %s=<namespace>/<attachment>",
-				opt.Namespace,
-				required.Attachment,
+				"no NetworkAttachmentDefinition %q on the target cluster. Use --network %s=<namespace>/<attachment> to select an existing attachment",
+				opt.Namespace+"/"+required.Attachment,
 				required.Name),
 		}
 		return
@@ -182,10 +179,11 @@ func unmatchedMappings(opt Options, manifest *bundle.Manifest) (unmatched []Requ
 			continue
 		}
 		unmatched = append(unmatched, Requirement{
-			Kind: KindStorageClass,
-			From: source,
-			To:   opt.StorageClasses[source],
-			How:  "the bundle records no such storage class",
+			Kind:   KindStorageClass,
+			From:   source,
+			To:     opt.StorageClasses[source],
+			How:    "the bundle has no matching storage class",
+			Unused: true,
 		})
 	}
 	declared := make(map[string]bool, len(manifest.Requirements.Networks))
@@ -202,10 +200,11 @@ func unmatchedMappings(opt Options, manifest *bundle.Manifest) (unmatched []Requ
 			continue
 		}
 		unmatched = append(unmatched, Requirement{
-			Kind: KindNetwork,
-			From: network,
-			To:   opt.Networks[network],
-			How:  "the bundle declares no such network",
+			Kind:   KindNetwork,
+			From:   network,
+			To:     opt.Networks[network],
+			How:    "the bundle has no matching Multus network",
+			Unused: true,
 		})
 	}
 	return

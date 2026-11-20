@@ -30,6 +30,7 @@ func TestCheckNamesEveryObjectACaptureWouldCollect(t *testing.T) {
 	checked, err := runCheck(t, checkableCluster(t), testOptions())
 
 	g.Expect(err).ToNot(gomega.HaveOccurred())
+	g.Expect(checked).To(gomega.HavePrefix("Export dry run: VirtualMachine "))
 	g.Expect(checked).To(gomega.MatchRegexp(`VirtualMachine\s+db-01\n`))
 	g.Expect(checked).To(gomega.MatchRegexp(`PersistentVolumeClaim\s+db-01-root\n`))
 	g.Expect(checked).To(gomega.MatchRegexp(`PersistentVolumeClaim\s+db-01-data\n`))
@@ -54,7 +55,7 @@ func TestCheckKeepsWhatATargetWouldHaveToProvideApartFromWhatWouldBeCollected(t 
 	// because a target has to have one. Both are true at once, and a
 	// requirement is the one thing a bundle deliberately does not hold.
 	g.Expect(checked).To(gomega.MatchRegexp(
-		`Would be required from a target \(1\)\n` +
+		`Target requirements \(1\)\n` +
 			`\s+StorageClass\s+` + testStorageClass + `\n`))
 }
 
@@ -85,9 +86,9 @@ func TestCheckReportsTheScratchSpaceACaptureNeedsAndTheTotalItWouldTransfer(t *t
 	// Scratch space is the largest single disk rather than the total,
 	// because a capture stages one disk at a time.
 	g.Expect(checked).To(gomega.MatchRegexp(
-		`Scratch space needed:\s+` + regexp.QuoteMeta(testScratch)))
+		`Estimated local scratch space:\s+` + regexp.QuoteMeta(testScratch)))
 	g.Expect(checked).To(gomega.MatchRegexp(
-		`Total disk size:\s+` + regexp.QuoteMeta(testProvisioned)))
+		`Total provisioned disk size:\s+` + regexp.QuoteMeta(testProvisioned)))
 }
 
 func TestCheckReportsEveryForbiddenReadAndStillSucceeds(t *testing.T) {
@@ -199,9 +200,9 @@ func TestCheckReportsADiskWhoseClaimItCouldNotReadAsAnUnknownSize(t *testing.T) 
 	// rather than a number it can stand behind. The disk is still in the
 	// capture, so dropping it from the total would understate the transfer.
 	g.Expect(checked).To(gomega.MatchRegexp(
-		`Scratch space needed:\s+at least ` + regexp.QuoteMeta(testRootSpace)))
+		`Estimated local scratch space:\s+at least ` + regexp.QuoteMeta(testRootSpace)))
 	g.Expect(checked).To(gomega.MatchRegexp(
-		`Total disk size:\s+at least ` + regexp.QuoteMeta(testRootSpace)))
+		`Total provisioned disk size:\s+at least ` + regexp.QuoteMeta(testRootSpace)))
 }
 
 func TestCheckSaysWhenTheVirtualMachineHasNoDisks(t *testing.T) {

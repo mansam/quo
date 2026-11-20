@@ -2,26 +2,15 @@ package bundle
 
 import (
 	"archive/tar"
-	"crypto/sha256"
 	"errors"
 	"fmt"
-	"hash"
 	"io"
 
 	"sigs.k8s.io/yaml"
 )
 
-// Read reads a bundle from in and returns its manifest.
-//
-// It refuses a bundle whose first member is not the manifest. It refuses a
-// bundle whose format version this build does not understand. It verifies
-// that every member matches the digest the manifest records for it. Read
-// streams member content through the digest and discards it, so reading a
-// bundle costs no more memory than its largest member's header.
-//
-// A reader that wants the members one at a time uses Open instead. Open
-// verifies each member as the reader uses it, rather than the whole bundle
-// up front.
+// Read verifies every member against its recorded digest and returns the
+// manifest. Use Open to read individual members without checking digests.
 func Read(in io.Reader) (manifest *Manifest, err error) {
 	manifest, absent, err := readArrived(in)
 	if err != nil {
@@ -37,15 +26,8 @@ func Read(in io.Reader) (manifest *Manifest, err error) {
 	return
 }
 
-// readArrived reads the manifest at the front of a bundle. It verifies the
-// members that are there against the manifest. It returns the indexed
-// members that are not there.
-//
-// A bundle that ends early is not an error here. The manifest is the first
-// member so that a reader can learn what a bundle holds from the first bytes
-// of a transfer. The reader also learns what the bundle would need from a
-// target. A transfer still running ends part-way through the file by
-// definition.
+// readArrived returns the manifest and the paths of any missing members.
+// It verifies complete members so inspect can report on partial bundles.
 func readArrived(in io.Reader) (manifest *Manifest, absent []string, err error) {
 	tr := tar.NewReader(in)
 	manifest, _, err = readManifest(tr)
@@ -61,11 +43,8 @@ func readArrived(in io.Reader) (manifest *Manifest, absent []string, err error) 
 	return
 }
 
-// readManifest reads and verifies the first member of the bundle, returning
-// the manifest and the member's own content. The content is returned because
-// no member indexes the manifest, so nothing inside a bundle records its
-// digest. A reader that needs to say which bundle it is holding hashes these
-// bytes.
+// readManifest decodes the first tar member, checks the format version,
+// and returns the manifest and its original bytes.
 func readManifest(tr *tar.Reader) (manifest *Manifest, content []byte, err error) {
 	header, err := tr.Next()
 	if errors.Is(err, io.EOF) {
@@ -103,13 +82,8 @@ func readManifest(tr *tar.Reader) (manifest *Manifest, content []byte, err error
 	return
 }
 
-// verifyArrived verifies every member that is there against the manifest
-// index. It returns the indexed members that are not there.
-//
-// A bundle that stops part-way is read as far as it goes, whether it stops
-// between members or inside one. What follows the cut has not arrived rather
-// than failed. Telling a reader that is more use than refusing to say
-// anything about the part they have.
+// verifyArrived checks the digests of complete members. It lists a
+// truncated member and any subsequent indexed members as missing.
 func verifyArrived(tr *tar.Reader, manifest *Manifest) (absent []string, err error) {
 	indexed := make(map[string]Member, len(manifest.Members))
 	for i := range manifest.Members {
@@ -151,8 +125,7 @@ func verifyArrived(tr *tar.Reader, manifest *Manifest) (absent []string, err err
 	return
 }
 
-// cutShort reports a read that ran off the end of a bundle. That is what a
-// transfer still running looks like, rather than a bundle that is wrong.
+// cutShort reports whether a read reached the end of the input.
 func cutShort(err error) (short bool) {
 	short = errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF)
 	return
@@ -176,32 +149,20 @@ func verifyMember(tr *tar.Reader, member Member) (err error) {
 	return
 }
 
-// Reader reads a bundle one member at a time.
-//
-// The manifest is read and verified by Open. After that, the reader reads a
-// member only when the caller requests it. The reader verifies the member
-// against the digest the manifest records for it as the member is read. A
-// member whose digest does not match is reported rather than fatal to the
-// reader. The caller decides what a corrupted member means. A deploy records
-// the gap and continues to the members that follow.
-//
-// A member passed over on the way to a later one is not verified. Only what
-// is read is verified, which is what keeps a reader from hashing every disk
-// a bundle holds before it starts.
+// Reader reads bundle members in tar order without checking their digests.
+// Advancing to a later member skips intervening members. A member cannot be
+// opened again once the reader has reached or passed it.
 type Reader struct {
 	manifest       *Manifest
 	manifestMember []byte
 	tr             *tar.Reader
 	memberByPath   map[string]Member
-	// passed is the members a walk has already gone by, whether they were
-	// read or merely stepped over.
+	// passed tracks members the reader has reached or skipped.
 	passed map[string]bool
 }
 
-// Open starts reading a bundle from in. It reads the manifest at the front,
-// and refuses a bundle whose format version this build does not understand.
-// It returns a Reader positioned before the first member the manifest
-// indexes.
+// Open reads the manifest, checks its format version, and positions a Reader
+// before the remaining members.
 func Open(in io.Reader) (r *Reader, err error) {
 	tr := tar.NewReader(in)
 	manifest, manifestMember, err := readManifest(tr)
@@ -228,28 +189,16 @@ func (r *Reader) Manifest() (manifest *Manifest) {
 	return
 }
 
-// ManifestBytes returns the manifest's own content. No member indexes the
-// manifest, so nothing inside the bundle records its digest. A reader that
-// needs to say which bundle it is holding hashes these bytes. A deploy
-// labelling what it creates is one such reader.
+// ManifestBytes returns the original encoded manifest.
 func (r *Reader) ManifestBytes() (content []byte) {
 	content = r.manifestMember
 	return
 }
 
-// Read returns the content of the member at path, verified against the
-// digest the manifest records for it.
-//
-// A bundle is a tar, so members arrive in the order they were written and
-// can be read only once. Reading a member passes over every member before
-// it. A request for one already gone by is an error. Reading a member that
-// failed its digest leaves the reader positioned after it. A caller that
-// records the failure can continue to the members that follow.
-//
-// A member too large to hold in memory, such as a disk, is streamed instead,
-// through OpenStream.
+// Read returns the full contents of the member at path. Use OpenStream for
+// members too large to buffer in memory.
 func (r *Reader) Read(path string) (content []byte, err error) {
-	member, err := r.seekTo(path)
+	_, err = r.seekTo(path)
 	if err != nil {
 		return
 	}
@@ -260,45 +209,22 @@ func (r *Reader) Read(path string) (content []byte, err error) {
 	}
 	if err != nil {
 		err = fmt.Errorf("read member %q: %w", path, err)
-		return
-	}
-	found := digest(content)
-	if found != member.Digest {
-		err = &DigestMismatchError{Path: path, Want: member.Digest, Got: found}
-		return
 	}
 	return
 }
 
-// OpenStream returns the member at path as a stream. A member too large to
-// hold in memory, such as a disk, can then be consumed as it arrives.
-//
-// The stream verifies the member against the digest the manifest records
-// for it as it is read. A digest that does not match surfaces from Read at
-// the end of the stream, and from Mismatch afterwards. A caller may hand
-// the stream to something else which consumes it, such as an upload. The
-// caller still learns what the digest said, rather than depending on the
-// consumer to return the error.
-//
-// The positioning rules of Read apply. Members arrive in the order they
-// were written, and a request for one already gone by is an error.
-func (r *Reader) OpenStream(path string) (stream *VerifiedStream, err error) {
+// OpenStream opens the member at path for streaming. The stream is valid
+// only until the Reader advances to another member.
+func (r *Reader) OpenStream(path string) (stream *MemberStream, err error) {
 	member, err := r.seekTo(path)
 	if err != nil {
 		return
 	}
-	stream = &VerifiedStream{
-		tr:     r.tr,
-		member: member,
-		hashed: sha256.New(),
-	}
+	stream = &MemberStream{tr: r.tr, member: member}
 	return
 }
 
-// seekTo positions the reader at the member path and returns the member
-// the manifest records for it. The members before it are passed over
-// without being verified. Only what is read is verified, which is what
-// keeps a reader from hashing every disk a bundle holds before it starts.
+// seekTo advances to path and returns its manifest entry.
 func (r *Reader) seekTo(path string) (member Member, err error) {
 	member, indexed := r.memberByPath[path]
 	if !indexed {
@@ -335,60 +261,21 @@ func (r *Reader) seekTo(path string) (member Member, err error) {
 	}
 }
 
-// VerifiedStream is one bundle member as a stream, verified against the
-// digest the manifest records for it while it is read.
-type VerifiedStream struct {
+// MemberStream reads one bundle member and exposes its recorded size.
+type MemberStream struct {
 	tr     *tar.Reader
 	member Member
-	hashed hash.Hash
-	// mismatch is the digest verdict once the member has been read to its
-	// end. It holds a DigestMismatchError when the bytes were not what the
-	// manifest recorded. It holds nil when they were, and until the end is
-	// reached.
-	mismatch error
 }
 
-// Read passes bytes through and verifies the member once its end is
-// reached. A digest that does not match is reported in place of the end of
-// the stream. A caller consuming the stream therefore cannot miss it.
-func (r *VerifiedStream) Read(p []byte) (n int, err error) {
+// Read reads bytes from the member.
+func (r *MemberStream) Read(p []byte) (n int, err error) {
 	n, err = r.tr.Read(p)
-	if n > 0 {
-		_, _ = r.hashed.Write(p[:n])
-	}
-	if !errors.Is(err, io.EOF) {
-		return
-	}
-	if r.mismatch == nil {
-		found := encodeDigest(r.hashed)
-		if found != r.member.Digest {
-			r.mismatch = &DigestMismatchError{
-				Path: r.member.Path,
-				Want: r.member.Digest,
-				Got:  found,
-			}
-		}
-	}
-	if r.mismatch != nil {
-		err = r.mismatch
-	}
 	return
 }
 
-// Size is the byte count the manifest records for the member, which is
-// what the stream delivers when the bundle behind it is whole.
-func (r *VerifiedStream) Size() (size int64) {
+// Size returns the member size recorded in the manifest.
+func (r *MemberStream) Size() (size int64) {
 	size = r.member.Size
-	return
-}
-
-// Mismatch returns the digest verdict once the member has been read to its
-// end. It returns a DigestMismatchError when the bytes were not what the
-// manifest recorded. It returns nil when they were, and until the end is
-// reached. A caller that gave the stream to something else to consume reads
-// the verdict here.
-func (r *VerifiedStream) Mismatch() (err error) {
-	err = r.mismatch
 	return
 }
 

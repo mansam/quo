@@ -130,6 +130,7 @@ func TestUndeployContinuesWhenADeletionFails(t *testing.T) {
 	// And the error is what makes the exit code say the undeploy was a
 	// partial one.
 	g.Expect(err).To(gomega.MatchError(&NotDeletedError{NotDeleted: 1, Attempted: 3}))
+	g.Expect(err.Error()).To(gomega.Equal("undeploy incomplete: 2 of 3 deletion requests accepted"))
 	g.Expect(fake.holds(cluster.KindDataVolume, testDataClaim)).To(gomega.BeTrue())
 }
 

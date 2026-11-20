@@ -126,10 +126,10 @@ func TestTheExportReporterSaysWhatTheCaptureWaitsFor(t *testing.T) {
 	reported := &bytes.Buffer{}
 	report, _ := newReporter(reported)
 
-	waitingLine := `waiting for the export server, the VirtualMachineExport is "Pending"`
+	waitingLine := `Waiting for the export server (phase: "Pending")`
 	report(capture.Progress{
 		State: capture.StateWaiting,
-		Said:  `the VirtualMachineExport is "Pending"`,
+		Said:  `phase: "Pending"`,
 	})
 	// The first disk's first report closes the waiting line, so the
 	// disk starts on a line of its own.

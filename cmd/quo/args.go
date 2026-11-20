@@ -3,9 +3,20 @@ package main
 import (
 	"errors"
 	"flag"
+	"fmt"
 
 	"github.com/mansam/quo/pkg/capture"
 )
+
+// newCommandFlags includes positional arguments in subcommand help.
+func newCommandFlags(name, syntax string) (fs *flag.FlagSet) {
+	fs = flag.NewFlagSet(name, flag.ContinueOnError)
+	fs.Usage = func() {
+		_, _ = fmt.Fprintf(fs.Output(), "Usage: quo %s %s\n", name, syntax)
+		fs.PrintDefaults()
+	}
+	return
+}
 
 // validateVirtualMachine checks that a command line names a VirtualMachine.
 // Every command that acts on one needs both halves of its name.

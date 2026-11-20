@@ -11,8 +11,7 @@ import (
 	"os"
 )
 
-// errUsage reports a command line quo cannot act on. It is reported without
-// the "quo:" prefix, because usage text follows it.
+// errUsage reports an invalid command line after usage text has been printed.
 var errUsage = errors.New("usage")
 
 // errHelp reports a command line that asked for a command's flags. The flag
@@ -26,7 +25,6 @@ func main() {
 		return
 	}
 	if errors.Is(err, errUsage) {
-		usage(os.Stderr)
 		os.Exit(2)
 	}
 	if err != nil {
@@ -38,6 +36,7 @@ func main() {
 // run dispatches to the named subcommand.
 func run(args []string) (err error) {
 	if len(args) == 0 {
+		usage(os.Stderr)
 		err = errUsage
 		return
 	}
@@ -62,18 +61,17 @@ func run(args []string) (err error) {
 // the README. usage stays short, because a person who asks quo for help
 // wants the command line, not the whole manual.
 func usage(out *os.File) {
-	_, _ = fmt.Fprint(out, `quo captures a stopped KubeVirt VirtualMachine as a diagnostic bundle, and
-puts a captured bundle onto another cluster.
+	_, _ = fmt.Fprint(out, `quo captures and redeploys stopped KubeVirt VirtualMachines for diagnostics.
 
 Usage:
-  quo <command> [flags]
+  quo <command> [flags] [arguments]
 
 Commands:
   export     capture a VirtualMachine as a bundle
-  inspect    describe a bundle
-  deploy     put a bundle onto a cluster
-  undeploy   take a bundle off a cluster
+  inspect    describe a bundle and check its member digests
+  deploy     deploy a bundle to a cluster
+  undeploy   remove a deployment from a cluster
 
-Run "quo <command> -h" for a command's flags.
+Run "quo <command> -h" for command usage.
 `)
 }

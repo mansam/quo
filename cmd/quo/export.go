@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -177,7 +176,7 @@ func newReporter(out io.Writer) (report func(p capture.Progress), flush func()) 
 		}
 		var line string
 		if p.State == capture.StateWaiting {
-			line = "waiting for the export server, " + p.Said
+			line = "Waiting for the export server (" + p.Said + ")"
 		} else {
 			line = fmt.Sprintf(
 				"disk %d/%d %s (%s): %s",
@@ -215,12 +214,12 @@ func newReporter(out io.Writer) (report func(p capture.Progress), flush func()) 
 // parseExportArgs parses and checks an export command line. It contacts
 // nothing. So the whole command line is testable without a cluster.
 func parseExportArgs(args []string) (parsed exportArgs, err error) {
-	fs := flag.NewFlagSet("export", flag.ContinueOnError)
+	fs := newCommandFlags("export", "-n <namespace> <virtualmachine> [flags]")
 	fs.StringVar(&parsed.opt.Namespace, "n", "", "namespace of the VirtualMachine")
 	fs.StringVar(&parsed.opt.Namespace, "namespace", "", "namespace of the VirtualMachine")
 	fs.StringVar(&parsed.output, "o", "", "directory or file to write the bundle to")
 	fs.StringVar(&parsed.output, "output", "", "directory or file to write the bundle to")
-	fs.BoolVar(&parsed.dryRun, "dry-run", false, "say what would be collected and collect nothing")
+	fs.BoolVar(&parsed.dryRun, "dry-run", false, "preview the capture without writing a bundle or transferring disks")
 	fs.StringVar(&parsed.kubeconfig, "kubeconfig", "", "path to a kubeconfig file")
 	positional, err := parseFlags(fs, args)
 	if err != nil {

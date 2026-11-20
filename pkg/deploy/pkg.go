@@ -169,11 +169,8 @@ const (
 	KindContainerDisk Kind = "container disk"
 )
 
-// Requirement is one of the bundle's requirements as a deploy placed it
-// on the target. It says what the bundle asked for, what the target
-// provides for it, and how the two were put together. A requirement a
-// deploy cannot place is reported with nothing mapped. A container disk
-// image is such a requirement: the target has to be able to pull it.
+// Requirement describes a target requirement or a mapping that did not
+// match any bundle requirement.
 type Requirement struct {
 	// Kind says what sort of thing the requirement asks the target for:
 	// a storage class, a network, or a container disk image.
@@ -182,13 +179,12 @@ type Requirement struct {
 	// class the bundle records, the VirtualMachine's name for the
 	// network, or the image a container disk is served from.
 	From string
-	// To is what the target provides for it: the class the disks were
-	// placed on, or the NetworkAttachmentDefinition the network was
-	// attached to. The value is as the applied VirtualMachine names it.
-	// To is empty when nothing is mapped.
+	// To is the mapped target or the requested target for an unused mapping.
+	// It is empty for a container disk image.
 	To string
-	// How says how the mapping was made: the target's resource of the
-	// requirement's own name, or the flag that named it. When nothing is
-	// mapped, How says what the target has to do for it.
+	// How describes how the mapping was selected, why it was unused, or
+	// what the target must provide for an unmapped requirement.
 	How string
+	// Unused indicates that a requested mapping matched no requirement.
+	Unused bool
 }
