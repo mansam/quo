@@ -12,11 +12,8 @@ import (
 // Undeploy wrap the target they were given in one of these when their
 // options ask for a dry run.
 //
-// Its reads go to the target it wraps, so the refusals and the mappings
-// answer from the cluster behind it. Its writes keep nothing and report
-// success, so the record a dry run returns is the record a real deploy
-// would print: what the deploy would create is said as created, and
-// nothing reaches the cluster.
+// Reads go to the wrapped target. Writes report success without making
+// changes, so the command can report which actions it would take.
 //
 // Each read is delegated by name. Nothing is embedded. A write method
 // added to cluster.Target later cannot reach a cluster by default. It is

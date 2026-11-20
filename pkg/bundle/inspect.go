@@ -71,14 +71,14 @@ func describeMembers(out io.Writer, manifest *Manifest, absent []string) {
 	}
 	state := "digests verified"
 	if len(absent) > 0 {
-		state = fmt.Sprintf("%d not yet arrived", len(absent))
+		state = fmt.Sprintf("%d missing or incomplete", len(absent))
 	}
 	_, _ = fmt.Fprintf(out, "\nMembers (%d), %s\n", len(manifest.Members), state)
 	for i := range manifest.Members {
 		member := manifest.Members[i]
 		verified := member.Digest
 		if missing[member.Path] {
-			verified = "(not yet arrived)"
+			verified = "(missing or incomplete)"
 		}
 		_, _ = fmt.Fprintf(out, "  %s\t%d bytes\t%s\n", member.Path, member.Size, verified)
 	}

@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -22,9 +21,7 @@ type undeployArgs struct {
 // runUndeploy deletes one deployment from a cluster. The deployment is what
 // a deploy of the bundle put into the namespace.
 //
-// runUndeploy prints what was deleted however the run ended. So what the
-// namespace holds is the last thing said. The error is what makes the exit
-// code non-zero when anything was not deleted.
+// runUndeploy reports the results of the deletion requests.
 //
 // Unlike a deploy, runUndeploy wires no signals. An undeploy has nothing
 // long-running to interrupt. Each deletion is one call, and an undeploy
@@ -39,7 +36,11 @@ func runUndeploy(args []string) (err error) {
 		return
 	}
 	deleted, undeployErr := deploy.Undeploy(context.TODO(), t, parsed.opt)
-	printErr := printDeletions(os.Stdout, deleted, parsed.opt.DryRun)
+	if undeployErr != nil && len(deleted) == 0 {
+		err = undeployErr
+		return
+	}
+	printErr := printDeletions(os.Stdout, deleted, parsed.opt)
 	err = undeployErr
 	if err == nil {
 		err = printErr
@@ -47,34 +48,35 @@ func runUndeploy(args []string) (err error) {
 	return
 }
 
-// printDeletions writes what an undeploy deleted. On a dry run, it writes
-// what the undeploy would delete. A deletion the cluster refused is named
-// with why the object is still there. So what the namespace holds is the
-// last thing said.
+// printDeletions reports accepted and failed deletion requests, or the
+// requests a dry run would submit.
 //
 // Write errors are discarded per line. tabwriter reports them again from
 // Flush. printDeletions checks that error.
-func printDeletions(out io.Writer, deleted []deploy.Deletion, dryRun bool) (err error) {
+func printDeletions(out io.Writer, deleted []deploy.Deletion, opt deploy.UndeployOptions) (err error) {
 	if len(deleted) == 0 {
+		_, err = fmt.Fprintf(out, "No objects match this deployment in namespace %q.\n", opt.Namespace)
 		return
 	}
-	verb := "Deleted"
-	if dryRun {
-		verb = "Would delete"
-	}
-	removed := 0
+	failed := false
 	for i := range deleted {
-		if deleted[i].Err == nil {
-			removed++
+		if deleted[i].Err != nil {
+			failed = true
+			break
 		}
 	}
 	objects := "objects"
 	if len(deleted) == 1 {
 		objects = "object"
 	}
-	heading := fmt.Sprintf("%s %d %s", verb, len(deleted), objects)
-	if removed < len(deleted) {
-		heading = fmt.Sprintf("%s %d of %d %s", verb, removed, len(deleted), objects)
+	var heading string
+	switch {
+	case opt.DryRun:
+		heading = fmt.Sprintf("Would request deletion for %d %s", len(deleted), objects)
+	case failed:
+		heading = "Deletion results"
+	default:
+		heading = fmt.Sprintf("Deletion requested for %d %s", len(deleted), objects)
 	}
 	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 	_, _ = fmt.Fprintf(tw, "%s:\n", heading)
@@ -84,13 +86,15 @@ func printDeletions(out io.Writer, deleted []deploy.Deletion, dryRun bool) (err 
 			deleted[i].Kind,
 			named(deleted[i].Namespace, deleted[i].Name))
 		if deleted[i].Err != nil {
-			line += "\tnot deleted: " + deleted[i].Err.Error()
+			line += "\trequest failed: " + deleted[i].Err.Error()
+		} else if failed {
+			line += "\trequest accepted"
 		}
 		_, _ = fmt.Fprintf(tw, "%s\n", line)
 	}
 	err = tw.Flush()
 	if err != nil {
-		err = fmt.Errorf("write what the undeploy deleted: %w", err)
+		err = fmt.Errorf("write deletion results: %w", err)
 		return
 	}
 	return
@@ -100,10 +104,10 @@ func printDeletions(out io.Writer, deleted []deploy.Deletion, dryRun bool) (err 
 // contacts nothing. So the whole command line is testable without a
 // cluster.
 func parseUndeployArgs(args []string) (parsed undeployArgs, err error) {
-	fs := flag.NewFlagSet("undeploy", flag.ContinueOnError)
+	fs := newCommandFlags("undeploy", "-n <namespace> <bundle> [flags]")
 	fs.StringVar(&parsed.opt.Namespace, "n", "", "namespace to undeploy from")
 	fs.StringVar(&parsed.opt.Namespace, "namespace", "", "namespace to undeploy from")
-	fs.BoolVar(&parsed.opt.DryRun, "dry-run", false, "say what would be deleted and delete nothing")
+	fs.BoolVar(&parsed.opt.DryRun, "dry-run", false, "list matching objects without requesting deletion")
 	fs.StringVar(&parsed.kubeconfig, "kubeconfig", "", "path to a kubeconfig file")
 	positional, err := parseFlags(fs, args)
 	if err != nil {

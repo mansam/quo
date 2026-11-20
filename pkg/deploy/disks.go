@@ -231,9 +231,9 @@ func placeStorageClass(
 			Kind:        KindStorageClass,
 			Requirement: source,
 			Tried: fmt.Sprintf(
-				"no storage class of that name is there and no mapping names another; "+
-					"place it with --storage-class %s=<target>, or every class that does not match by name with --storage-class *=<target>",
-				source),
+				"no target storage class named %q. Use --storage-class %s=<target> "+
+					"or --storage-class '*=<target>' for unmatched classes",
+				source, source),
 		}
 		return
 	}
@@ -265,7 +265,7 @@ func verifyStorageClass(
 		Kind:        KindStorageClass,
 		Requirement: source,
 		Tried: fmt.Sprintf(
-			"the mapping %s names a class the target does not have", named),
+			"target storage class %q does not exist. Choose an existing class in %s", target, named),
 	}
 	return
 }
@@ -371,16 +371,8 @@ func uploadDisks(
 	}
 }
 
-// upload streams one disk's member into its DataVolume, and records
-// what became of it. The outcome is created only when the bytes the
-// bundle holds arrived whole. The outcome is skipped when they were
-// not the bytes the manifest recorded. The outcome is failed when the
-// upload itself failed.
-//
-// Every progress report follows something that happened rather than
-// something the code assumed. The target reports what it waits on,
-// because the target is what waits. The reader the bytes pass through
-// reports how many have passed, because it is what sees them.
+// upload streams a disk to an existing DataVolume. A member-open or upload
+// error marks the step failed without removing the DataVolume.
 func upload(
 	ctx context.Context,
 	t cluster.Target,
@@ -392,11 +384,8 @@ func upload(
 	disk := &disks[at]
 	stream, err := reader.OpenStream(disk.held.Path)
 	if err != nil {
-		// The member is indexed but the bundle does not carry it as far
-		// as this reader has read. That is what a transfer that stopped
-		// looks like. Nothing was uploaded from it.
-		disk.step.Outcome = OutcomeSkipped
-		disk.step.Reason = err.Error()
+		disk.step.Outcome = OutcomeFailed
+		disk.step.Reason = "open disk member: " + err.Error()
 		return
 	}
 	report, waiting := newReporter(opt, disks, at)
@@ -408,22 +397,11 @@ func upload(
 		Size:      stream.Size(),
 		Waiting:   waiting,
 	})
-	if mismatch := stream.Mismatch(); mismatch != nil {
-		// The bytes that left the bundle were not the bytes the manifest
-		// recorded. What the target holds is therefore not the disk the
-		// machine ran on. The step is skipped rather than failed: what
-		// was deployed is not what the bundle holds.
-		disk.step.Outcome = OutcomeSkipped
-		disk.step.Reason = mismatch.Error()
-		return
-	}
 	if err != nil {
 		disk.step.Outcome = OutcomeFailed
-		disk.step.Reason = "the upload failed: " + err.Error()
+		disk.step.Reason = err.Error()
 		return
 	}
-	// The step keeps the outcome createDataVolumes gave it: the
-	// DataVolume is created and now holds its bytes.
 }
 
 // newReporter returns the functions that report one disk's upload
@@ -461,16 +439,8 @@ func newReporter(
 	return
 }
 
-// progressReader reports how much of a disk is sent while it is read.
-// Reports are spaced in time, because a disk is read in small pieces and
-// a report per piece would be too many. The reader that wraps the member
-// starts the clock, so a disk that arrives quickly is reported only as
-// finished. The end of the stream is the end of what the bundle had to
-// give, so it is reported as done. The target may still be finishing
-// with the bytes. The end is reported once. Nothing is reported after
-// it, whatever the reader is asked. The bundle's VerifiedStream reports
-// a digest mismatch in place of the end of the stream. A member that
-// fails its digest is therefore never reported done.
+// progressReader reports bytes read at intervals and reports completion
+// once at EOF. The target may still be processing the upload at EOF.
 type progressReader struct {
 	in       io.Reader
 	report   func(state State, sent int64)

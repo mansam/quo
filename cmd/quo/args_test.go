@@ -1,8 +1,7 @@
 package main
 
 import (
-	"flag"
-	"io"
+	"bytes"
 	"testing"
 
 	"github.com/onsi/gomega"
@@ -182,11 +181,13 @@ func TestParseFlagsTellsHelpFromAUsageError(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			g := gomega.NewGomegaWithT(t)
 
-			fs := flag.NewFlagSet("export", flag.ContinueOnError)
-			fs.SetOutput(io.Discard)
+			var out bytes.Buffer
+			fs := newCommandFlags("export", "-n <namespace> <virtualmachine> [flags]")
+			fs.SetOutput(&out)
 			_, err := parseFlags(fs, tt.args)
 
 			g.Expect(err).To(gomega.Equal(tt.want))
+			g.Expect(out.String()).To(gomega.ContainSubstring("Usage: quo export -n <namespace> <virtualmachine> [flags]"))
 		})
 	}
 }

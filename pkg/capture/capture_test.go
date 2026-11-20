@@ -484,8 +484,8 @@ func TestExportReportsWhatTheExportWaitsFor(t *testing.T) {
 	g := gomega.NewGomegaWithT(t)
 	c := clusterWithTwoDisks(t)
 	c.exportWaitsFor = []string{
-		`the VirtualMachineExport is "Pending"`,
-		"the VirtualMachineExport has no phase yet",
+		`phase: "Pending"`,
+		"phase not reported",
 	}
 	opt := stagingIn(t, c, testOptions())
 	var reported []Progress
@@ -500,8 +500,8 @@ func TestExportReportsWhatTheExportWaitsFor(t *testing.T) {
 	// cluster said, in the cluster's words, and nothing else: no disk
 	// is named, because none is moving yet.
 	g.Expect(reported[:2]).To(gomega.Equal([]Progress{
-		{State: StateWaiting, Said: `the VirtualMachineExport is "Pending"`},
-		{State: StateWaiting, Said: "the VirtualMachineExport has no phase yet"},
+		{State: StateWaiting, Said: `phase: "Pending"`},
+		{State: StateWaiting, Said: "phase not reported"},
 	}))
 }
 
