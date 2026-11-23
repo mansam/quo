@@ -158,7 +158,7 @@ func diskSpace(disks []checkedDisk) (scratch, provisioned int64, complete bool) 
 // from Flush, which is checked.
 func (r *check) describe(out io.Writer) (err error) {
 	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintf(tw, "Dry run of a capture of VirtualMachine %s/%s\n", r.opt.Namespace, r.opt.Name)
+	_, _ = fmt.Fprintf(tw, "Export dry run: VirtualMachine %s/%s\n", r.opt.Namespace, r.opt.Name)
 	_, _ = fmt.Fprintf(tw, "  Status:\t%s\n", orUnreported(r.status))
 	r.describeRefusal(tw)
 	r.describeCollected(tw)
@@ -221,7 +221,7 @@ func (r *check) describeRequired(out io.Writer) {
 	if len(required) == 0 {
 		return
 	}
-	_, _ = fmt.Fprintf(out, "\nWould be required from a target (%d)\n", len(required))
+	_, _ = fmt.Fprintf(out, "\nTarget requirements (%d)\n", len(required))
 	for i := range required {
 		_, _ = fmt.Fprintf(out, "  %s\t%s\n", required[i].Kind, r.named(required[i]))
 	}
@@ -271,11 +271,11 @@ func (r *check) describeDisks(out io.Writer) {
 	scratch, provisioned, complete := diskSpace(r.disks)
 	_, _ = fmt.Fprintf(
 		out,
-		"\n  Scratch space needed:\t%s\n",
+		"\n  Estimated local scratch space:\t%s\n",
 		renderSpace(scratch, complete))
 	_, _ = fmt.Fprintf(
 		out,
-		"  Total disk size:\t%s\n",
+		"  Total provisioned disk size:\t%s\n",
 		renderSpace(provisioned, complete))
 }
 

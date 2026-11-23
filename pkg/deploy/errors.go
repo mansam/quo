@@ -37,8 +37,7 @@ type MissingNamespaceError struct {
 // Error names the namespace and says how to make it.
 func (r *MissingNamespaceError) Error() string {
 	return fmt.Sprintf(
-		"namespace %q does not exist on the target cluster; create it first: kubectl create namespace %q",
-		r.Namespace,
+		"namespace %q does not exist on the target cluster. Create it on that cluster before deploying",
 		r.Namespace)
 }
 
@@ -90,14 +89,18 @@ func (r *AlreadyExistsError) Is(err error) (matched bool) {
 type NotCreatedError struct {
 	NotCreated int
 	Attempted  int
+	DryRun     bool
 }
 
-// Error says how much of the deploy arrived.
-func (r *NotCreatedError) Error() string {
-	return fmt.Sprintf(
-		"the deploy created %d of the %d objects it tried to",
-		r.Attempted-r.NotCreated,
-		r.Attempted)
+// Error reports the count of completed or planned deploy steps.
+func (r *NotCreatedError) Error() (message string) {
+	completed := r.Attempted - r.NotCreated
+	if r.DryRun {
+		message = fmt.Sprintf("dry run: %d of %d deploy steps planned", completed, r.Attempted)
+		return
+	}
+	message = fmt.Sprintf("deploy incomplete: %d of %d steps completed", completed, r.Attempted)
+	return
 }
 
 // Is reports whether err is a NotCreatedError.
@@ -106,20 +109,16 @@ func (r *NotCreatedError) Is(err error) (matched bool) {
 	return
 }
 
-// NotDeletedError reports an undeploy that ran but did not delete
-// everything it tried to. What the undeploy deleted names each object
-// and what became of it. This error is what makes the exit code
-// non-zero, so that a script can tell a complete undeploy from a
-// partial one.
+// NotDeletedError reports an undeploy with one or more failed deletion requests.
 type NotDeletedError struct {
 	NotDeleted int
 	Attempted  int
 }
 
-// Error says how much of the undeploy arrived.
+// Error reports how many deletion requests the cluster accepted.
 func (r *NotDeletedError) Error() string {
 	return fmt.Sprintf(
-		"the undeploy deleted %d of the %d objects it tried to",
+		"undeploy incomplete: %d of %d deletion requests accepted",
 		r.Attempted-r.NotDeleted,
 		r.Attempted)
 }
@@ -177,7 +176,7 @@ type UnmappedRequirementError struct {
 // Error names the requirement and what was tried.
 func (r *UnmappedRequirementError) Error() string {
 	return fmt.Sprintf(
-		"%s %q maps to nothing on the target cluster: %s",
+		"%s %q: %s",
 		r.Kind,
 		r.Requirement,
 		r.Tried)

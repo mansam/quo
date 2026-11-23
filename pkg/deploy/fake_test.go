@@ -248,14 +248,7 @@ func (r *fakeTarget) Create(ctx context.Context, object *unstructured.Unstructur
 	return
 }
 
-// UploadDisk receives the disk the way CDI would: it reads the whole
-// stream, so a member that fails its digest fails here too. It asks the
-// stream once more after its end, because the transport that carries a
-// real upload drains what is left. It records what arrived. Before the
-// bytes move it says what it waits on, once per readiness check, when
-// the cluster it models has not made the claim ready yet. A cancelled
-// context is reported the way a real client does once the deploy is
-// interrupted.
+// UploadDisk simulates readiness checks and records the uploaded bytes.
 func (r *fakeTarget) UploadDisk(ctx context.Context, upload cluster.Upload) (err error) {
 	//
 	err = ctx.Err()
@@ -275,8 +268,7 @@ func (r *fakeTarget) UploadDisk(ctx context.Context, upload cluster.Upload) (err
 	if err != nil {
 		return
 	}
-	// A real upload asks the body again after its end. The ask reads
-	// nothing and returns the end again.
+	// Exercise progress reporting when a consumer reads again after EOF.
 	_, _ = upload.Content.Read(make([]byte, 1))
 	if failFor, found := r.uploadErrFor[upload.Name]; found {
 		err = failFor
@@ -755,11 +747,8 @@ func writeStorageFixtureBundle(
 	return
 }
 
-// writeCorruptedClosureBundle writes the closure fixture bundle with
-// the sysprep answer file changed in transit. The answer's stand-in
-// content sits in the ConfigMap member alone. Replacing it keeps the
-// tar the manifest indexes aligned, while changing what the digest is
-// computed over.
+// writeCorruptedClosureBundle changes the ConfigMap's sysprep answer
+// without updating the recorded digest.
 func writeCorruptedClosureBundle(t *testing.T) (path string) {
 	t.Helper()
 	path = writeBytes(t, "corrupted-closure.quo", bytes.ReplaceAll(
@@ -769,11 +758,8 @@ func writeCorruptedClosureBundle(t *testing.T) (path string) {
 	return
 }
 
-// writeCorruptedExpansionBundle writes the bundle at path with one byte
-// of its expansion changed in transit. The machine type sits in the
-// expansion alone, because the declaration names an instancetype
-// instead. Its last occurrence in the bundle is therefore in the
-// member.
+// writeCorruptedExpansionBundle changes the expanded spec's machine type
+// without updating the recorded digest.
 func writeCorruptedExpansionBundle(t *testing.T, path string) (corrupted string) {
 	t.Helper()
 	content := bytes.Clone(readFile(t, path))
@@ -786,10 +772,8 @@ func writeCorruptedExpansionBundle(t *testing.T, path string) (corrupted string)
 	return
 }
 
-// writeCorruptedDiskBundle writes the disk fixture bundle with the root
-// disk's bytes changed in transit. The claim's name is in every line of
-// the member's stand-in content. Replacing it has the effect
-// writeCorruptedClosureBundle describes.
+// writeCorruptedDiskBundle changes the root disk's bytes without updating
+// the recorded digest.
 func writeCorruptedDiskBundle(t *testing.T) (path string) {
 	t.Helper()
 	path = writeBytes(t, "corrupted-disk.quo", bytes.ReplaceAll(
@@ -1251,10 +1235,7 @@ func controllerRevision() (held *unstructured.Unstructured) {
 	return
 }
 
-// sysprepAnswer is the stand-in content of the sysprep ConfigMap's answer
-// file. It sits in that member alone. A test can therefore corrupt it,
-// with a same-length stand-in. The corruption makes the member fail its
-// digest while the tar the manifest indexes stays aligned.
+// The replacement answer has the same length to preserve the tar layout.
 const (
 	sysprepAnswer  = "<unattend/>"
 	sysprepMangled = "<unattEnd/>"

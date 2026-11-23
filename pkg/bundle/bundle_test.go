@@ -276,8 +276,8 @@ func TestInspectPrintsWhatABundleNeedsFromItsLeadingManifestAlone(t *testing.T) 
 	report := described.String()
 	// The test extracted nothing and waited for no disk. What a target
 	// would have to provide is in the first member.
-	g.Expect(report).To(gomega.ContainSubstring("Members (1), 1 not yet arrived"))
-	g.Expect(report).To(gomega.MatchRegexp(resourcePath + `\s+\d+ bytes\s+\(not yet arrived\)\n`))
+	g.Expect(report).To(gomega.ContainSubstring("Members (1), 1 missing or incomplete"))
+	g.Expect(report).To(gomega.MatchRegexp(resourcePath + `\s+\d+ bytes\s+\(missing or incomplete\)\n`))
 	g.Expect(report).To(gomega.ContainSubstring("Networks required (2)"))
 	// Every cluster has a pod network. A secondary network names the
 	// attachment the source cluster backed it with.
@@ -311,9 +311,9 @@ func TestInspectDescribesATransferThatStoppedPartWayThroughADisk(t *testing.T) {
 	// rest of it.
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	report := described.String()
-	g.Expect(report).To(gomega.ContainSubstring("Members (2), 1 not yet arrived"))
+	g.Expect(report).To(gomega.ContainSubstring("Members (2), 1 missing or incomplete"))
 	g.Expect(report).To(gomega.MatchRegexp(resourcePath + `\s+\d+ bytes\s+sha256:`))
-	g.Expect(report).To(gomega.MatchRegexp(disk.Path + `\s+\d+ bytes\s+\(not yet arrived\)\n`))
+	g.Expect(report).To(gomega.MatchRegexp(disk.Path + `\s+\d+ bytes\s+\(missing or incomplete\)\n`))
 }
 
 func TestReadStillRefusesABundleThatStoppedPartWayThroughADisk(t *testing.T) {
@@ -554,12 +554,10 @@ func TestReaderReadsTheManifestAndHandsBackTheMembersOneAtATime(t *testing.T) {
 	g.Expect(reader.Manifest().Members).To(gomega.HaveLen(1))
 	content, err := reader.Read(resourcePath)
 	g.Expect(err).ToNot(gomega.HaveOccurred())
-	// The member is verified against the digest the manifest records for
-	// it, and its content is what is returned.
 	g.Expect(content).To(gomega.Equal(objectBody))
 }
 
-func TestReaderReportsAMemberThatFailsItsDigestAndGoesOnReading(t *testing.T) {
+func TestReaderHandsBackAMemberWhoseDigestDoesNotMatch(t *testing.T) {
 	g := gomega.NewGomegaWithT(t)
 	manifest := indexing(t)
 	manifest.Members = append(manifest.Members, Member{
@@ -574,14 +572,11 @@ func TestReaderReportsAMemberThatFailsItsDigestAndGoesOnReading(t *testing.T) {
 
 	reader, err := Open(bytes.NewReader(archive))
 	g.Expect(err).ToNot(gomega.HaveOccurred())
-	_, err = reader.Read(resourcePath)
-	g.Expect(err).To(gomega.MatchError(&DigestMismatchError{}))
-	g.Expect(err.Error()).To(gomega.ContainSubstring(resourcePath))
 
-	// The failed member is behind the reader, so the members that follow
-	// are still readable. A caller that records the corruption can continue
-	// to what arrived whole.
-	content, err := reader.Read(ExpandedSpecPath)
+	content, err := reader.Read(resourcePath)
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	g.Expect(content).To(gomega.Equal([]byte("corrupted in transit")))
+	content, err = reader.Read(ExpandedSpecPath)
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	g.Expect(content).To(gomega.Equal(expandedBody))
 }
@@ -661,7 +656,7 @@ func TestReaderHandsBackTheManifestsOwnBytes(t *testing.T) {
 	g.Expect(reader.ManifestBytes()).To(gomega.Equal(data))
 }
 
-func TestReaderStreamsAMemberAndVerifiesItAsItIsRead(t *testing.T) {
+func TestReaderStreamsAMember(t *testing.T) {
 	g := gomega.NewGomegaWithT(t)
 	archive := tarball(t,
 		rawMember{path: ManifestPath, data: encodeManifest(t, indexing(t))},
@@ -674,17 +669,14 @@ func TestReaderStreamsAMemberAndVerifiesItAsItIsRead(t *testing.T) {
 	// The member's recorded size is told up front, so a caller that hands
 	// the stream to a transfer can say what the total will be.
 	g.Expect(stream.Size()).To(gomega.BeEquivalentTo(len(objectBody)))
-	// Until the stream is consumed there is no digest to report.
-	g.Expect(stream.Mismatch()).ToNot(gomega.HaveOccurred())
 
 	content, err := io.ReadAll(stream)
 
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	g.Expect(content).To(gomega.Equal(objectBody))
-	g.Expect(stream.Mismatch()).ToNot(gomega.HaveOccurred())
 }
 
-func TestReaderReportsAStreamedMemberThatFailsItsDigestAtItsEnd(t *testing.T) {
+func TestReaderStreamsAMemberWhoseDigestDoesNotMatchToItsEnd(t *testing.T) {
 	g := gomega.NewGomegaWithT(t)
 	manifest := indexing(t)
 	manifest.Members = append(manifest.Members, Member{
@@ -702,20 +694,12 @@ func TestReaderReportsAStreamedMemberThatFailsItsDigestAtItsEnd(t *testing.T) {
 	stream, err := reader.OpenStream(ExpandedSpecPath)
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 
-	// The whole member is read before the digest can be compared. The
-	// mismatch therefore surfaces from the read at the end of the stream,
-	// and not before any of it.
-	_, err = io.ReadAll(stream)
-	g.Expect(err).To(gomega.MatchError(&DigestMismatchError{}))
-	g.Expect(err.Error()).To(gomega.ContainSubstring(ExpandedSpecPath))
-	// The mismatch is still readable afterwards. A caller that handed the
-	// stream to something else which consumed it learns the verdict here.
-	// Such a consumer may be an upload, which may wrap the error beyond
-	// recognising.
-	g.Expect(stream.Mismatch()).To(gomega.MatchError(&DigestMismatchError{}))
+	content, err := io.ReadAll(stream)
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	g.Expect(content).To(gomega.Equal([]byte("corrupted in transit")))
 }
 
-func TestReaderStreamsTheMembersOneAtATimeLikeReadDoes(t *testing.T) {
+func TestReaderStreamsMembersInOrder(t *testing.T) {
 	g := gomega.NewGomegaWithT(t)
 	manifest := indexing(t)
 	manifest.Members = append(manifest.Members, Member{
@@ -735,17 +719,12 @@ func TestReaderStreamsTheMembersOneAtATimeLikeReadDoes(t *testing.T) {
 	_, err = io.ReadAll(stream)
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 
-	// The members arrive in written order, and the reader walks forward
-	// only. A streamed member therefore leaves the reader positioned after
-	// it. The members that follow are still streamable.
 	next, err := reader.OpenStream(ExpandedSpecPath)
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	content, err := io.ReadAll(next)
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	g.Expect(content).To(gomega.Equal(expandedBody))
 
-	// A member already gone by is refused as well, exactly as Read refuses
-	// one.
 	_, err = reader.OpenStream(resourcePath)
 	g.Expect(err).To(gomega.HaveOccurred())
 	g.Expect(err.Error()).To(gomega.ContainSubstring("has already been read"))

@@ -138,11 +138,15 @@ func (r *KubeVirt) UploadDisk(ctx context.Context, upload Upload) (err error) {
 	if response.StatusCode != http.StatusOK {
 		var said []byte
 		said, _ = io.ReadAll(io.LimitReader(response.Body, uploadSaidLimit))
+		detail := strings.TrimSpace(string(said))
+		if detail != "" {
+			detail = ": " + detail
+		}
 		err = fmt.Errorf(
-			"upload disk %q: the upload proxy answered %s: %s",
+			"upload disk %q: CDI upload proxy returned HTTP %s%s",
 			upload.Name,
 			response.Status,
-			strings.TrimSpace(string(said)))
+			detail)
 		return
 	}
 	return
@@ -174,7 +178,7 @@ func (r *KubeVirt) awaitUploadReady(ctx context.Context, upload Upload) (err err
 			return
 		case phaseFailed:
 			err = fmt.Errorf(
-				"DataVolume %s/%s failed, so it cannot receive the disk; its status says why",
+				"DataVolume %s/%s is in phase Failed. Check the DataVolume status for details",
 				upload.Namespace,
 				upload.Name)
 			return
@@ -184,12 +188,9 @@ func (r *KubeVirt) awaitUploadReady(ctx context.Context, upload Upload) (err err
 		}
 		if upload.Waiting != nil {
 			if phase == "" {
-				// A DataVolume straight from a create carries no phase
-				// until CDI gives it one. That is a wait like any
-				// other, and is said as one.
-				upload.Waiting("the DataVolume has no phase yet")
+				upload.Waiting("phase not reported")
 			} else {
-				upload.Waiting(fmt.Sprintf("the DataVolume is %q", phase))
+			upload.Waiting(fmt.Sprintf("phase: %q", phase))
 			}
 		}
 		if time.Now().After(deadline) {

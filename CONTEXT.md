@@ -105,7 +105,7 @@ _Avoid_: expanded VirtualMachine, resolved spec, rendered spec
 What a deploy prints when it ends. The deploy record lists every object
 with its outcome: created, failed, or skipped. Each outcome carries a
 reason. The deploy record also lists the forced rewrites performed, the
-mappings used, and the undeploy command for what exists. It is the
+mappings used, and instructions for removing the deployment. It is the
 deploy-side mirror of the capture record.
 _Avoid_: report, log, summary, results, output
 

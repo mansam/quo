@@ -13,64 +13,21 @@ import (
 	"github.com/mansam/quo/pkg/cluster"
 )
 
-// Deploy applies a bundle onto the cluster behind t and returns the deploy
-// record. The record holds every object Deploy attempted and what became
-// of each one. It also holds every requirement Deploy mapped onto the
-// target's resources.
+// Deploy creates a stopped VirtualMachine and its resources on the target.
+// The record includes object outcomes, requirement mappings, unused mappings,
+// and container disk images. Deploy does not try to pull those images.
 //
-// Deploy maps the bundle's requirements onto the target's resources. A
-// storage class or a multus network maps automatically when the target
-// holds one of the requirement's own name, and Options names the rest.
-// Every mapping is reported in the record, and so is a mapping the
-// options named that no requirement matched, because nothing maps
-// silently. The pod network is never mapped. A container disk image is
-// reported as a requirement and never pull-checked, because quo holds no
-// registry credentials.
+// Before creating objects, Deploy reads the manifest, decodes the related
+// resources and expanded spec, and checks the namespace, object names,
+// storage, and network mappings. Use quo inspect to verify member digests.
 //
-// quo refuses before creating anything when the bundle cannot be read or
-// its format version is unknown. quo refuses when the bundle holds no
-// expanded spec, and when the namespace does not exist. quo refuses when
-// any object it would create is already there: a DataVolume, a closure
-// object, or the VirtualMachine. One refusal names them all.
+// Deploy creates DataVolumes, attempts disk uploads, creates related resources,
+// and creates the VirtualMachine last. After the preflight checks, failures
+// are recorded and subsequent steps still run. A partial deploy returns a
+// non-nil error. Deploy does not roll back, even if the context is canceled.
 //
-// A bundle holding disks to upload is refused as well when the target has
-// no CDI. The target keeps its own account of the class a disk's storage
-// was mapped onto. Such a bundle is refused too when that account rules
-// out the volume mode the disk needs. A requirement that maps to nothing,
-// a storage class or a multus network, is a refusal too, naming what was
-// tried. Nothing is created whose needs cannot be placed.
-//
-// A dry run, Options.DryRun, runs the complete refusal set. It returns
-// the record the real deploy would print. That record holds the objects
-// it would create, in the order it would create them, and the mappings it
-// would apply. The dry run creates nothing, uploads nothing, and applies
-// no labels. The target is only read. Deploy works through a target that
-// writes nothing, so one write path serves a dry run and a real deploy
-// alike.
-//
-// The closure members and the expansion are still read and still
-// verified, because a deploy reads them before it writes anything. The
-// disk members are not read, because no upload moves their bytes. A disk
-// member that fails its digest is therefore not a dry run's finding.
-// quo inspect is what verifies a bundle. It needs no cluster.
-//
-// Past the refusals the deploy is best-effort. A step that fails is
-// recorded, and the run continues. A bundle member that fails its digest
-// is skipped rather than applied, so corruption never reaches the target.
-//
-// The deploy creates the objects in order: the DataVolumes, then the
-// uploads, then the closure objects, then the VirtualMachine last. That
-// order keeps nothing in the namespace looking like a VirtualMachine
-// until its disks are in place. The machine's cloud-init, sysprep and
-// access credentials are present when it is examined.
-//
-// The record is returned however the run ended. The error is non-nil
-// when anything was not created, so that a caller can tell a complete
-// deploy from a partial one.
-//
-// The context bounds the run. Cancelling it stops the deploy where it
-// stands. Everything already created stays in place, because a deploy
-// never rolls back.
+// Options.DryRun runs the preflight checks and returns the planned record
+// without writing to the target or uploading disks.
 func Deploy(ctx context.Context, t cluster.Target, opt Options) (record Record, err error) {
 	//
 	if opt.DryRun {
@@ -99,28 +56,14 @@ func Deploy(ctx context.Context, t cluster.Target, opt Options) (record Record, 
 	if err != nil {
 		return
 	}
-	// A bundle is written with its resources first, its expansion after
-	// them and its disks last. The reader moves forward only. The closure
-	// members are read before the expansion is asked for: asking for the
-	// expansion moves past every resource member and leaves them
-	// unreadable. The expansion is read before the first disk is asked
-	// for. Both are read whole and held, because they are small. Both are
-	// applied after the disks, each at its turn.
+	// The reader moves forward only: read resources and the expanded spec
+	// in tar order and hold them until after the disk uploads.
 	err = readClosure(reader, closure)
 	if err != nil {
 		return
 	}
-	expanded, step, err := readVirtualMachine(reader, manifest, opt)
+	expanded, err := readVirtualMachine(reader, manifest, opt)
 	if err != nil {
-		return
-	}
-	if step.Outcome == OutcomeSkipped {
-		// The member failed its digest, so the machine it names cannot be
-		// created. The disks are not uploaded and the closure objects are
-		// not applied for a machine that cannot be. That is the same rule
-		// that refuses a bundle holding no expansion at all.
-		record.Steps = append(record.Steps, step)
-		err = &NotCreatedError{NotCreated: 1, Attempted: 1}
 		return
 	}
 	storage, err := placeDisks(ctx, t, disks, opt)
@@ -132,8 +75,6 @@ func Deploy(ctx context.Context, t cluster.Target, opt Options) (record Record, 
 		return
 	}
 	identity := bundleIdentity(reader.ManifestBytes())
-	// The DataVolumes, then the uploads, then the closure objects, then
-	// the VirtualMachine last.
 	createDataVolumes(ctx, t, disks, opt, identity)
 	uploadDisks(ctx, t, reader, disks, opt)
 	createClosure(ctx, t, closure, opt, identity)
@@ -144,36 +85,19 @@ func Deploy(ctx context.Context, t cluster.Target, opt Options) (record Record, 
 		record.Steps = append(record.Steps, closure[i].step)
 	}
 	record.Steps = append(record.Steps, createVirtualMachine(
-		ctx, t, expanded, step, opt, manifest.Provenance, identity, networks))
-	// Every requirement the bundle declared is reported with what it was
-	// mapped onto, or with what the target has to do for it. Nothing
-	// maps silently, and what is only reported is said too. A mapping
-	// the command line named that no requirement matched is said too,
-	// because a flag that took no effect is never silent either.
+		ctx, t, expanded, opt, manifest, identity, networks))
 	record.Requirements = append(record.Requirements, storage...)
 	record.Requirements = append(record.Requirements, networks...)
 	record.Requirements = append(
 		record.Requirements, reportedContainerDisks(manifest.Requirements.ContainerDisks)...)
 	record.Requirements = append(record.Requirements, unmatchedMappings(opt, manifest)...)
-	err = notCreated(record)
+	err = notCreated(record, opt.DryRun)
 	return
 }
 
-// validateTarget checks what a deploy can check about the target before it
-// creates anything. It refuses, naming what it found, when the deploy
-// cannot succeed.
-//
-// The namespace has to be there, because objects created into a namespace
-// that was never made have no place to go. Every name a deploy would take
-// has to be free: the DataVolumes it will create, the closure objects it
-// will apply, the VirtualMachine. Something already holding one is
-// someone else's work. A deploy neither overwrites nor builds around it.
-// One refusal names every colliding object.
-//
-// The check is made from the manifest alone, before any member is read.
-// What the manifest says the bundle holds is what the deploy would create.
-// A member that later fails its digest can only shrink that set, never
-// grow it.
+// validateTarget checks that the namespace exists and reports all planned
+// objects whose names are already taken. It uses the manifest before
+// reading object or disk members.
 func validateTarget(
 	ctx context.Context,
 	t cluster.Target,
@@ -194,7 +118,6 @@ func validateTarget(
 	for _, ref := range wouldCreate(opt, manifest, closure, disks) {
 		_, err = t.GetObject(ctx, ref)
 		if errors.Is(err, cluster.ErrNotFound) {
-			// A name that is free is what a deploy went looking for.
 			err = nil
 			continue
 		}
@@ -245,34 +168,14 @@ func wouldCreate(
 	return
 }
 
-// readVirtualMachine reads and decodes the bundle's expanded spec, and
-// returns the step the deploy record holds for the VirtualMachine.
-//
-// A member that fails its digest is a skipped step rather than an error.
-// The run records it and ends. A member that does not decode is a
-// refusal: a bundle whose expansion cannot be read as an object cannot be
-// deployed at all.
+// readVirtualMachine reads and decodes the bundle's expanded spec.
 func readVirtualMachine(
 	reader *bundle.Reader,
 	manifest *bundle.Manifest,
-	opt Options) (expanded *unstructured.Unstructured, step Step, err error) {
+	opt Options) (expanded *unstructured.Unstructured, err error) {
 	//
-	step = Step{
-		Kind:      cluster.KindVirtualMachine,
-		Namespace: opt.Namespace,
-		Name:      virtualMachineName(opt, manifest),
-	}
-	content, readErr := reader.Read(manifest.ExpandedSpec)
-	if readErr != nil {
-		var mismatch *bundle.DigestMismatchError
-		if !errors.As(readErr, &mismatch) {
-			err = readErr
-			return
-		}
-		// A member that fails its digest never reaches the target. The
-		// object is skipped and recorded, and the run continues.
-		step.Outcome = OutcomeSkipped
-		step.Reason = readErr.Error()
+	content, err := reader.Read(manifest.ExpandedSpec)
+	if err != nil {
 		return
 	}
 	expanded = &unstructured.Unstructured{}
@@ -284,29 +187,23 @@ func readVirtualMachine(
 	return
 }
 
-// createVirtualMachine creates the VirtualMachine a deploy is for and
-// finishes the deploy record's entry for it. The entry's object is the
-// bundle's expanded spec, the source cluster's own resolution of the
-// machine. It carries the forced rewrites and nothing else.
-//
-// The step is the one readVirtualMachine built. The entry a skipped
-// expansion would have recorded and the entry a created one records
-// therefore name the same object. The entry is recorded whatever became
-// of it.
-//
-// networks is what attachNetworks decided for the machine's multus
-// networks. The applied VirtualMachine carries the mappings.
+// createVirtualMachine creates the VirtualMachine from the expanded spec
+// with the forced rewrites and records the result.
 func createVirtualMachine(
 	ctx context.Context,
 	t cluster.Target,
 	expanded *unstructured.Unstructured,
-	step Step,
 	opt Options,
-	provenance bundle.Provenance,
+	manifest *bundle.Manifest,
 	identity string,
 	networks []Requirement) (finished Step) {
 	//
-	vm := buildVirtualMachine(expanded, opt, provenance, identity, networks)
+	step := Step{
+		Kind:      cluster.KindVirtualMachine,
+		Namespace: opt.Namespace,
+		Name:      virtualMachineName(opt, manifest),
+	}
+	vm := buildVirtualMachine(expanded, opt, manifest.Provenance, identity, networks)
 	createErr := t.Create(ctx, vm)
 	if createErr != nil {
 		step.Outcome = OutcomeFailed
@@ -321,7 +218,7 @@ func createVirtualMachine(
 // it tried to, nil when it did. The deploy record names each object and
 // what became of it. This error is what makes the exit code non-zero, so
 // that a script can tell a complete deploy from a partial one.
-func notCreated(record Record) (err error) {
+func notCreated(record Record, dryRun bool) (err error) {
 	missing := 0
 	for i := range record.Steps {
 		if record.Steps[i].Outcome != OutcomeCreated {
@@ -329,7 +226,7 @@ func notCreated(record Record) (err error) {
 		}
 	}
 	if missing > 0 {
-		err = &NotCreatedError{NotCreated: missing, Attempted: len(record.Steps)}
+		err = &NotCreatedError{NotCreated: missing, Attempted: len(record.Steps), DryRun: dryRun}
 	}
 	return
 }

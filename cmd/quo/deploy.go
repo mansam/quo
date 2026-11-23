@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"maps"
@@ -97,7 +96,7 @@ func newUploadReporter(out io.Writer) (report func(p deploy.Progress), flush fun
 		var tail string
 		switch p.State {
 		case deploy.StateWaiting:
-			tail = "waiting, " + p.Said
+			tail = "Waiting for DataVolume (" + p.Said + ")"
 		default:
 			tail = capture.FormatSize(p.Transferred)
 		}
@@ -139,15 +138,7 @@ func newUploadReporter(out io.Writer) (report func(p deploy.Progress), flush fun
 // refused before attempting anything has no record. So printRecord prints
 // nothing for one.
 //
-// A dry run prints the record the real deploy would print. The steps say
-// created, because that is what a real deploy would do with each object.
-// One line in front says that none of it happened. So the steps cannot be
-// read as actions.
-//
-// The record ends with the undeploy command for what exists. So the way to
-// remove the deployment again is the last thing said. printRecord prints
-// the command only when something was created. A deploy that put nothing on
-// the target leaves nothing to point an undeploy at.
+// A dry run labels planned creations and omits the cleanup instructions.
 //
 // Write errors are discarded per line. tabwriter reports them again from
 // Flush. printRecord checks that error.
@@ -157,16 +148,20 @@ func printRecord(out io.Writer, record deploy.Record, opt deploy.Options) (err e
 	}
 	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 	if opt.DryRun {
-		_, _ = fmt.Fprintln(tw, "Dry run: nothing is created, nothing is uploaded.")
+		_, _ = fmt.Fprintln(tw, "Dry run: no changes made.")
 	}
 	if len(record.Steps) > 0 {
 		_, _ = fmt.Fprintf(tw, "Deploy record (%d)\n", len(record.Steps))
 		for i := range record.Steps {
+			outcome := string(record.Steps[i].Outcome)
+			if opt.DryRun && record.Steps[i].Outcome == deploy.OutcomeCreated {
+				outcome = "would create"
+			}
 			line := fmt.Sprintf(
 				"  %s\t%s\t%s",
 				record.Steps[i].Kind,
 				named(record.Steps[i].Namespace, record.Steps[i].Name),
-				record.Steps[i].Outcome)
+				outcome)
 			if record.Steps[i].Reason != "" {
 				line += "\t" + record.Steps[i].Reason
 			}
@@ -180,19 +175,26 @@ func printRecord(out io.Writer, record deploy.Record, opt deploy.Options) (err e
 			if from == "" {
 				from = "(unnamed)"
 			}
-			placed := from
-			if record.Requirements[i].To != "" {
+			placed, how := from, record.Requirements[i].How
+			switch {
+			case record.Requirements[i].Unused:
+				placed += " (requested target: " + record.Requirements[i].To + ")"
+				how = "not applied: " + how
+			case record.Requirements[i].To != "":
 				placed += " -> " + record.Requirements[i].To
 			}
 			_, _ = fmt.Fprintf(tw, "  %s\t%s\t%s\n",
 				record.Requirements[i].Kind,
 				placed,
-				record.Requirements[i].How)
+				how)
 		}
 	}
 	err = tw.Flush()
 	if err != nil {
 		err = fmt.Errorf("write deploy record: %w", err)
+		return
+	}
+	if opt.DryRun {
 		return
 	}
 	created := false
@@ -205,20 +207,11 @@ func printRecord(out io.Writer, record deploy.Record, opt deploy.Options) (err e
 	if !created {
 		return
 	}
-	// A dry run points the command at what a real deploy would put there.
-	// That is not there yet. A real deploy points the command at what is.
-	lead := "Remove it again with:"
-	if opt.DryRun {
-		lead = "Remove what it would create with:"
-	}
-	_, err = fmt.Fprintf(
+	_, err = fmt.Fprintln(
 		out,
-		"\n%s\n  quo undeploy %s -n %s\n",
-		lead,
-		opt.Bundle,
-		opt.Namespace)
+		"\nTo remove this deployment, run quo undeploy with the same bundle, namespace, and kubeconfig.")
 	if err != nil {
-		err = fmt.Errorf("write the undeploy command: %w", err)
+		err = fmt.Errorf("write cleanup instructions: %w", err)
 		return
 	}
 	return
@@ -275,16 +268,16 @@ func (f *mappingFlag) String() (rendered string) {
 // parseDeployArgs parses and checks a deploy command line. It contacts
 // nothing. So the whole command line is testable without a cluster.
 func parseDeployArgs(args []string) (parsed deployArgs, err error) {
-	fs := flag.NewFlagSet("deploy", flag.ContinueOnError)
+	fs := newCommandFlags("deploy", "-n <namespace> <bundle> [flags]")
 	fs.StringVar(&parsed.opt.Namespace, "n", "", "namespace to deploy into")
 	fs.StringVar(&parsed.opt.Namespace, "namespace", "", "namespace to deploy into")
 	fs.StringVar(&parsed.opt.Name, "name", "", "name for the deployed VirtualMachine")
-	fs.BoolVar(&parsed.opt.DryRun, "dry-run", false, "say what would be created and create nothing")
+	fs.BoolVar(&parsed.opt.DryRun, "dry-run", false, "preview deployment without creating objects or uploading disks")
 	storageClasses := &mappingFlag{
 		want: "a storage class mapping wants <source>=<target>",
 	}
 	fs.Var(storageClasses, "storage-class",
-		"place the disks of one storage class onto a target class; * covers every class that does not match by name")
+		"map a source storage class to a target class (use * for unmatched source classes)")
 	networks := &mappingFlag{
 		want: "a network mapping wants <network>=<attachment>",
 	}

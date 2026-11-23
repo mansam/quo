@@ -223,7 +223,7 @@ func TestDeployPrintsTheRecordHoweverTheRunEnded(t *testing.T) {
 				Namespace: "diagnostics",
 				Name:      "db-01-root",
 				Outcome:   deploy.OutcomeSkipped,
-				Reason:    `member "disks/db-01-root.gz" does not match its digest`,
+				Reason:    "the bundle holds no bytes for it",
 			},
 			{
 				Kind:      "Secret",
@@ -247,7 +247,7 @@ func TestDeployPrintsTheRecordHoweverTheRunEnded(t *testing.T) {
 	g.Expect(said).To(gomega.ContainSubstring("skipped"))
 	g.Expect(said).To(gomega.ContainSubstring("failed"))
 	// A reason is said for anything not created.
-	g.Expect(said).To(gomega.ContainSubstring("does not match its digest"))
+	g.Expect(said).To(gomega.ContainSubstring("the bundle holds no bytes for it"))
 	g.Expect(said).To(gomega.ContainSubstring("the API server went away"))
 }
 
@@ -296,10 +296,11 @@ func TestDeployPrintsTheRequirementsARecordCarries(t *testing.T) {
 			{
 				// A mapping the command line named that no requirement
 				// matched: said rather than silently ignored.
-				Kind: "network",
-				From: "office",
-				To:   "office-net",
-				How:  "the bundle declares no such network",
+				Kind:   "network",
+				From:   "office",
+				To:     "office-net",
+				How:    "the bundle has no matching Multus network",
+				Unused: true,
 			},
 		},
 	}
@@ -324,8 +325,9 @@ func TestDeployPrintsTheRequirementsARecordCarries(t *testing.T) {
 	g.Expect(said).To(gomega.ContainSubstring("container disk"))
 	g.Expect(said).To(gomega.ContainSubstring("quay.io/example/support-tools:6.0"))
 	g.Expect(said).To(gomega.ContainSubstring("the target has to be able to pull it"))
-	g.Expect(said).To(gomega.ContainSubstring("office -> office-net"))
-	g.Expect(said).To(gomega.ContainSubstring("the bundle declares no such network"))
+	g.Expect(said).ToNot(gomega.ContainSubstring("office -> office-net"))
+	g.Expect(said).To(gomega.ContainSubstring("office (requested target: office-net)"))
+	g.Expect(said).To(gomega.ContainSubstring("not applied: the bundle has no matching Multus network"))
 }
 
 func TestDeployPrintsNothingForARunThatRefusedBeforeAttemptingAnything(t *testing.T) {
@@ -338,7 +340,7 @@ func TestDeployPrintsNothingForARunThatRefusedBeforeAttemptingAnything(t *testin
 	g.Expect(reported.String()).To(gomega.BeEmpty())
 }
 
-func TestDeployRecordEndsWithTheUndeployCommandForWhatExists(t *testing.T) {
+func TestDeployRecordExplainsHowToRemoveTheDeployment(t *testing.T) {
 	g := gomega.NewGomegaWithT(t)
 	record := deploy.Record{
 		Steps: []deploy.Step{
@@ -364,14 +366,8 @@ func TestDeployRecordEndsWithTheUndeployCommandForWhatExists(t *testing.T) {
 		deploy.Options{Bundle: "db-01.quo", Namespace: "diagnostics"})
 
 	g.Expect(err).ToNot(gomega.HaveOccurred())
-	// The last thing said is the command that removes what the deploy put
-	// there. It gives the exact bundle path and namespace. So it can be
-	// run as it reads.
-	said := reported.String()
-	g.Expect(said).To(gomega.ContainSubstring("Remove it again with:"))
-	g.Expect(said).To(gomega.ContainSubstring("quo undeploy db-01.quo -n diagnostics"))
-	lines := strings.Split(strings.TrimRight(said, "\n"), "\n")
-	g.Expect(lines[len(lines)-1]).To(gomega.Equal("  quo undeploy db-01.quo -n diagnostics"))
+	g.Expect(reported.String()).To(gomega.HaveSuffix(
+		"To remove this deployment, run quo undeploy with the same bundle, namespace, and kubeconfig.\n"))
 }
 
 func TestDeployRecordSaysNoUndeployCommandWhenNothingWasCreated(t *testing.T) {
@@ -413,7 +409,7 @@ func TestTheUploadReporterSaysWhatADiskIsDoing(t *testing.T) {
 
 	waiting := disk
 	waiting.State = deploy.StateWaiting
-	waiting.Said = `the DataVolume is "Pending"`
+	waiting.Said = `phase: "Pending"`
 	report(waiting)
 	moving := disk
 	moving.State = deploy.StateTransferring
@@ -424,13 +420,11 @@ func TestTheUploadReporterSaysWhatADiskIsDoing(t *testing.T) {
 	arrived.Transferred = 1024
 	report(arrived)
 
-	// The line says the disk waits and what it waits on. Once bytes
-	// move it counts them, and it says the disk done at the end of the
-	// stream. The byte count is shorter than the wait it replaces, so
-	// 31 spaces pad over it.
+	waitingLine := `disk 1/2 db-01-root (root, logs): Waiting for DataVolume (phase: "Pending")`
+	movingLine := "disk 1/2 db-01-root (root, logs): 512 B"
 	g.Expect(reported.String()).To(gomega.Equal(
-		`disk 1/2 db-01-root (root, logs): waiting, the DataVolume is "Pending"` + "\r" +
-			"disk 1/2 db-01-root (root, logs): 512 B" + strings.Repeat(" ", 31) + "\r" +
+		waitingLine + "\r" +
+			movingLine + strings.Repeat(" ", len(waitingLine)-len(movingLine)) + "\r" +
 			"disk 1/2 db-01-root (root, logs): 1.0 KiB" + "\n"))
 }
 
@@ -492,7 +486,7 @@ func TestTheUploadReporterFlushesNothingWhenEveryLineFinished(t *testing.T) {
 		"disk 1/1 db-01-root (root): 512 B\n"))
 }
 
-func TestDeployDryRunPrintsTheRecordItWouldPrint(t *testing.T) {
+func TestDeployDryRunReportsPlannedActionsWithoutCleanupInstructions(t *testing.T) {
 	g := gomega.NewGomegaWithT(t)
 	record := deploy.Record{
 		Steps: []deploy.Step{
@@ -528,24 +522,16 @@ func TestDeployDryRunPrintsTheRecordItWouldPrint(t *testing.T) {
 
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	said := reported.String()
-	// The first thing said is that nothing happened. The steps below say
-	// created, because the record is the one a real deploy would print.
-	// This line keeps them from being read as actions.
-	lines := strings.Split(said, "\n")
-	g.Expect(lines[0]).To(gomega.Equal("Dry run: nothing is created, nothing is uploaded."))
+	g.Expect(said).To(gomega.HavePrefix("Dry run: no changes made.\n"))
 	g.Expect(said).To(gomega.ContainSubstring("Deploy record (2)"))
 	g.Expect(said).To(gomega.ContainSubstring("diagnostics/db-01-root"))
-	g.Expect(said).To(gomega.ContainSubstring("created"))
+	g.Expect(strings.Count(said, "would create")).To(gomega.Equal(2))
+	g.Expect(said).ToNot(gomega.ContainSubstring("created"))
 	// The mappings are what a dry run is for checking first.
 	g.Expect(said).To(gomega.ContainSubstring("Requirements (1)"))
 	g.Expect(said).To(gomega.ContainSubstring("fast-rbd -> fast-rbd"))
 	g.Expect(said).To(gomega.ContainSubstring("by name"))
-	// The last thing said is the command that removes what a real deploy
-	// of this bundle would put there. The dry run gives that command as
-	// its own.
-	g.Expect(said).To(gomega.ContainSubstring("Remove what it would create with:"))
-	lines = strings.Split(strings.TrimRight(said, "\n"), "\n")
-	g.Expect(lines[len(lines)-1]).To(gomega.Equal("  quo undeploy db-01.quo -n diagnostics"))
+	g.Expect(said).ToNot(gomega.ContainSubstring("quo undeploy"))
 }
 
 func TestDeployDryRunPrintsNothingForARunThatRefusedBeforeAttemptingAnything(t *testing.T) {

@@ -164,7 +164,7 @@ func (r *vmExport) OpenDisk(ctx context.Context, claim string) (stream io.ReadCl
 	if response.StatusCode != http.StatusOK {
 		_ = response.Body.Close()
 		err = fmt.Errorf(
-			"download disk %q: the export server answered %s",
+			"download disk %q: export server returned HTTP %s",
 			claim,
 			response.Status)
 		return
@@ -282,13 +282,9 @@ func (r *vmExport) awaitReady(ctx context.Context) (export *unstructured.Unstruc
 		}
 		if r.waiting != nil {
 			if phase == "" {
-				// An export straight from a create carries no phase
-				// until the export controller gives it one. That is a
-				// wait like any other: it says so rather than saying
-				// nothing.
-				r.waiting("the VirtualMachineExport has no phase yet")
+				r.waiting("phase not reported")
 			} else {
-				r.waiting(fmt.Sprintf("the VirtualMachineExport is %q", phase))
+			r.waiting(fmt.Sprintf("phase: %q", phase))
 			}
 		}
 		if time.Now().After(deadline) {

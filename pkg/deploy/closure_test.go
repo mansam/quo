@@ -233,7 +233,7 @@ func TestDeployCreatesNothingTheBundleHoldsReadOnly(t *testing.T) {
 	g.Expect(matched).To(gomega.BeFalse())
 }
 
-func TestDeploySkipsAClosureMemberThatFailsItsDigest(t *testing.T) {
+func TestDeployAppliesAClosureMemberWhoseDigestDoesNotMatch(t *testing.T) {
 	for _, mode := range runModes {
 		t.Run(mode.name, func(t *testing.T) {
 			g := gomega.NewGomegaWithT(t)
@@ -244,32 +244,20 @@ func TestDeploySkipsAClosureMemberThatFailsItsDigest(t *testing.T) {
 
 			record, err := Deploy(context.TODO(), fake, opt)
 
-			// The corrupted member is skipped and recorded, and the run
-			// continues. The closure objects behind it, the disks and the
-			// machine all arrive. The error is what says the deploy was a
-			// partial one, and a dry run's is the same error: what the
-			// dry run describes is a partial deploy, and the exit code
-			// says so the same way.
-			g.Expect(err).To(gomega.MatchError(&NotCreatedError{}))
-			g.Expect(err.Error()).To(gomega.ContainSubstring("8 of the 9 objects"))
+			g.Expect(err).ToNot(gomega.HaveOccurred())
 			g.Expect(record.Steps).To(gomega.HaveLen(9))
-			g.Expect(record.Steps[4].Kind).To(gomega.Equal(cluster.KindConfigMap))
-			g.Expect(record.Steps[4].Name).To(gomega.Equal(testSysprepConfigMap))
-			g.Expect(record.Steps[4].Outcome).To(gomega.Equal(OutcomeSkipped))
-			g.Expect(record.Steps[4].Reason).To(gomega.ContainSubstring("does not match its digest"))
-			// Everything else is what a real deploy would create.
 			for i := range record.Steps {
-				if i == 4 {
-					continue
-				}
 				g.Expect(record.Steps[i].Outcome).To(gomega.Equal(OutcomeCreated))
 			}
 			if mode.dryRun {
-				// And nothing touched the target all the same.
 				wroteNothing(g, fake)
 				return
 			}
-			g.Expect(fake.created).To(gomega.HaveLen(8))
+			g.Expect(fake.created).To(gomega.HaveLen(9))
+			answer, found, _ := unstructured.NestedString(
+				fake.created[4].Object, "data", "autounattend.xml")
+			g.Expect(found).To(gomega.BeTrue())
+			g.Expect(answer).To(gomega.Equal(sysprepMangled))
 			g.Expect(fake.uploaded).To(gomega.HaveLen(4))
 		})
 	}
@@ -291,7 +279,7 @@ func TestDeployRecordsAClosureCreateThatFailed(t *testing.T) {
 	// The closure objects around it and the machine behind it all arrive.
 	// The error is what says the deploy was a partial one.
 	g.Expect(err).To(gomega.MatchError(&NotCreatedError{}))
-	g.Expect(err.Error()).To(gomega.ContainSubstring("8 of the 9 objects"))
+	g.Expect(err.Error()).To(gomega.ContainSubstring("8 of 9 steps completed"))
 	g.Expect(record.Steps).To(gomega.HaveLen(9))
 	g.Expect(record.Steps[5].Kind).To(gomega.Equal(cluster.KindSecret))
 	g.Expect(record.Steps[5].Name).To(gomega.Equal(testCloudInitSecret))
@@ -300,34 +288,6 @@ func TestDeployRecordsAClosureCreateThatFailed(t *testing.T) {
 	g.Expect(record.Steps[4].Outcome).To(gomega.Equal(OutcomeCreated))
 	g.Expect(record.Steps[8].Outcome).To(gomega.Equal(OutcomeCreated))
 	g.Expect(fake.created).To(gomega.HaveLen(8))
-}
-
-func TestDeployAppliesNoClosureForAMachineThatCannotBeCreated(t *testing.T) {
-	for _, mode := range runModes {
-		t.Run(mode.name, func(t *testing.T) {
-			g := gomega.NewGomegaWithT(t)
-			path := writeCorruptedExpansionBundle(t, writeClosureFixtureBundle(t))
-			fake := storageTarget()
-			opt := testOptions(path)
-			opt.DryRun = mode.dryRun
-
-			record, err := Deploy(context.TODO(), fake, opt)
-
-			// The run ends after recording the VirtualMachine's skipped
-			// step. The closure objects are not applied and the disks are
-			// not uploaded for a machine that cannot be created. That is
-			// the same rule that refuses a bundle holding no expansion at
-			// all. Neither mode touched the target: the run ended before
-			// the first write, and a dry run writes nothing anyway.
-			g.Expect(err).To(gomega.MatchError(&NotCreatedError{}))
-			g.Expect(err.Error()).To(gomega.ContainSubstring("0 of the 1 objects"))
-			g.Expect(record.Steps).To(gomega.HaveLen(1))
-			g.Expect(record.Steps[0].Kind).To(gomega.Equal(cluster.KindVirtualMachine))
-			g.Expect(record.Steps[0].Outcome).To(gomega.Equal(OutcomeSkipped))
-			g.Expect(record.Steps[0].Reason).To(gomega.ContainSubstring("does not match its digest"))
-			wroteNothing(g, fake)
-		})
-	}
 }
 
 func TestDeployRefusesWhenAnythingItWouldCreateIsAlreadyThere(t *testing.T) {

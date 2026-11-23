@@ -276,10 +276,11 @@ func TestDeployReportsANetworkMappingThatMatchedNoNetworkOfTheMachine(t *testing
 					How:  "by name",
 				},
 				{
-					Kind: "network",
-					From: tt.network,
-					To:   testAttachment,
-					How:  "the bundle declares no such network",
+					Kind:   "network",
+					From:   tt.network,
+					To:     testAttachment,
+					How:    "the bundle has no matching Multus network",
+					Unused: true,
 				},
 			}))
 			// The machine the bundle holds is created as ever.

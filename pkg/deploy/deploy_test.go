@@ -353,22 +353,20 @@ func TestDeployRemovesTheMatchersTheExpansionStillCarries(t *testing.T) {
 	g.Expect(machineType).To(gomega.Equal(testMachineType))
 }
 
-func TestDeploySkipsAnExpandedSpecThatFailsItsDigest(t *testing.T) {
+func TestDeployAppliesAnExpandedSpecWhoseDigestDoesNotMatch(t *testing.T) {
 	g := gomega.NewGomegaWithT(t)
-	// One byte of the expansion changed in transit.
 	path := writeCorruptedExpansionBundle(t, writeFixtureBundle(t, true))
 	fake := target()
 
 	record, err := Deploy(context.TODO(), fake, testOptions(path))
 
-	// The step is skipped and recorded, and nothing was created:
-	// corruption never reaches the target.
-	g.Expect(err).To(gomega.MatchError(&NotCreatedError{}))
+	g.Expect(err).ToNot(gomega.HaveOccurred())
 	g.Expect(record.Steps).To(gomega.HaveLen(1))
-	g.Expect(record.Steps[0].Kind).To(gomega.Equal(cluster.KindVirtualMachine))
-	g.Expect(record.Steps[0].Outcome).To(gomega.Equal(OutcomeSkipped))
-	g.Expect(record.Steps[0].Reason).To(gomega.ContainSubstring("does not match its digest"))
-	g.Expect(fake.created).To(gomega.BeEmpty())
+	g.Expect(record.Steps[0].Outcome).To(gomega.Equal(OutcomeCreated))
+	machineType, found, _ := unstructured.NestedString(
+		fake.created[0].Object, "spec", "template", "spec", "domain", "machine", "type")
+	g.Expect(found).To(gomega.BeTrue())
+	g.Expect(machineType).To(gomega.Equal("xc-q35-rhel9.4.0"))
 }
 
 func TestDeployRecordsACreateThatFailed(t *testing.T) {
@@ -383,7 +381,7 @@ func TestDeployRecordsACreateThatFailed(t *testing.T) {
 	// it arrived. A script can therefore tell a complete deploy from a
 	// partial one.
 	g.Expect(err).To(gomega.MatchError(&NotCreatedError{}))
-	g.Expect(err.Error()).To(gomega.ContainSubstring("0 of the 1 objects"))
+	g.Expect(err.Error()).To(gomega.ContainSubstring("0 of 1 steps completed"))
 	g.Expect(record.Steps).To(gomega.HaveLen(1))
 	g.Expect(record.Steps[0].Outcome).To(gomega.Equal(OutcomeFailed))
 	g.Expect(record.Steps[0].Reason).To(gomega.ContainSubstring("the API server went away"))

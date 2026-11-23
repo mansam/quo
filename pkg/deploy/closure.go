@@ -2,7 +2,6 @@ package deploy
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -32,8 +31,7 @@ type plannedClosure struct {
 	// resource is what the manifest says about the member: its kind, its
 	// namespace and name on the source cluster, and where it sits.
 	resource bundle.Resource
-	// object is the member decoded, nil until it is read and nil for good
-	// when the member failed its digest.
+	// object is the member decoded, nil until it is read.
 	object *unstructured.Unstructured
 	// step is the deploy record's entry, which the phases update as the
 	// object proceeds.
@@ -62,31 +60,14 @@ func planClosure(manifest *bundle.Manifest, opt Options) (closure []plannedClosu
 	return
 }
 
-// readClosure reads and decodes the closure members a deploy applies. It
-// runs before the expansion is asked for. A bundle is written with its
-// resources first and the expansion after them. The reader moves forward
-// only. Asking for the expansion first would move past every resource
-// member and leave these unreadable.
-//
-// A member that fails its digest is a skipped step rather than an error.
-// The run records the gap and continues. A member that does not decode,
-// or never arrived, is a refusal, as it is for the expansion. A bundle
-// whose member cannot be read as an object is not a bundle a capture of
-// quo produces.
+// readClosure decodes the related resources that deploy creates. A read or
+// decode error stops deployment before any writes.
 func readClosure(reader *bundle.Reader, closure []plannedClosure) (err error) {
 	for i := range closure {
 		content, readErr := reader.Read(closure[i].resource.Path)
 		if readErr != nil {
-			var mismatch *bundle.DigestMismatchError
-			if !errors.As(readErr, &mismatch) {
-				err = readErr
-				return
-			}
-			// A member that fails its digest never reaches the target.
-			// The object is skipped and recorded, and the run continues.
-			closure[i].step.Outcome = OutcomeSkipped
-			closure[i].step.Reason = readErr.Error()
-			continue
+			err = readErr
+			return
 		}
 		closure[i].object = &unstructured.Unstructured{}
 		err = yaml.Unmarshal(content, &closure[i].object.Object)
@@ -102,13 +83,8 @@ func readClosure(reader *bundle.Reader, closure []plannedClosure) (err error) {
 	return
 }
 
-// createClosure applies the closure objects a deploy read, each carrying
-// the forced rewrites that apply to every created object. createClosure
-// applies them after the uploads and before the VirtualMachine. The
-// machine's cloud-init, sysprep and access credentials are then present
-// when it is examined. An object that was skipped when it was read
-// creates nothing. A create that fails is recorded, and the run continues
-// to the objects behind it and the machine.
+// createClosure creates the related resources with the forced rewrites.
+// A create failure is recorded without stopping subsequent creates.
 func createClosure(
 	ctx context.Context,
 	t cluster.Target,
@@ -117,11 +93,6 @@ func createClosure(
 	identity string) {
 	//
 	for i := range closure {
-		if closure[i].step.Outcome == OutcomeSkipped {
-			// An object that creates nothing was decided when its member
-			// was read. The record already says why.
-			continue
-		}
 		object := buildClosureObject(closure[i].object, opt, identity)
 		err := t.Create(ctx, object)
 		if err != nil {

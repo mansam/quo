@@ -2,7 +2,6 @@ package main
 
 import (
 	"errors"
-	"flag"
 	"fmt"
 	"os"
 
@@ -11,7 +10,7 @@ import (
 
 // runInspect describes a bundle without contacting a cluster.
 func runInspect(args []string) (err error) {
-	fs := flag.NewFlagSet("inspect", flag.ContinueOnError)
+	fs := newCommandFlags("inspect", "<bundle>")
 	positional, err := parseFlags(fs, args)
 	if err != nil {
 		return

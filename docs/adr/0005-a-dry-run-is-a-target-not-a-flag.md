@@ -47,10 +47,8 @@ discarding the writes safe. Deploy performs every read before any write,
 and Undeploy lists before it deletes. Nothing reads back what it wrote,
 so a write that keeps nothing cannot mislead a read.
 
-The record a dry run returns is still the record a real deploy would
-print. The writes report success, so each object the deploy would create
-is said as created. The command says on the line before the record that
-none of it happened.
+Dry-run writes report success to the deploy code. The CLI labels the
+corresponding steps `would create` and omits cleanup instructions.
 
 The reads are delegated by name rather than by embedding. A write method
 added to `cluster.Target` later cannot reach a cluster by default. It is
@@ -59,15 +57,9 @@ adds one decides what a dry run does with it.
 
 ## What it costs
 
-A dry run no longer reads the bundle's disk bytes. It no longer reports
-a disk member that fails its digest. The small members, the closure
-objects and the expansion, are still read and still verified, because a
-deploy reads them before it writes anything.
-
-`quo inspect` is what verifies a bundle, and it needs no cluster. A dry
-run of a large bundle stops reading and hashing every byte the bundle
-holds. That is the point: it answers from the manifest and the cluster,
-not from the bytes.
+A dry run decodes the related resources and expanded spec without
+streaming the disks. [ADR 0006](0006-deploy-trusts-the-bundle.md) places
+digest verification in `quo inspect`.
 
 ## Status
 
